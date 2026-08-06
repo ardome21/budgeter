@@ -1,0 +1,26 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Node / Angular
+node_modules/
+frontend/dist/
+frontend/.angular/
+
+# CDK
+infra/cdk.out/
+infra/.cdk.staging/
+
+# Env — never commit real credentials
+.env
+.env.local
+*.env
+!*.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

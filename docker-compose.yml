@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:17
+    container_name: budgeter-db
+    restart: "no"          # never auto-start with the laptop
+    environment:
+      POSTGRES_USER: budgeter
+      POSTGRES_PASSWORD: budgeter_dev
+      POSTGRES_DB: budgeter
+    ports:
+      - "5432:5432"
+    volumes:
+      - budgeter_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U budgeter -d budgeter"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  budgeter_pg_data:
