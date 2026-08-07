@@ -88,6 +88,12 @@ class Account(Base):
     name: Mapped[str] = mapped_column(String(60))
     is_retirement: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Set when the account is settled or shut. The balance history stays — a
+    # paid-off loan is still part of how net worth got here — but the account
+    # stops being presented as though its last reading were current, and stops
+    # being asked for on the next snapshot.
+    closed_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+
     balances: Mapped[list["AccountBalance"]] = relationship(
         back_populates="account", cascade="all, delete-orphan"
     )

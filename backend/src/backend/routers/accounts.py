@@ -26,7 +26,12 @@ from ..schemas import (
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 
-def _to_out(session: Session, account: Account) -> AccountOut:
+def _latest_snapshot_date(session: Session):
+    return session.scalar(select(func.max(AccountBalance.as_of)))
+
+
+def _to_out(session: Session, account: Account, newest=None) -> AccountOut:
+    newest = newest if newest is not None else _latest_snapshot_date(session)
     rows = session.execute(
         select(AccountBalance.as_of, AccountBalance.balance)
         .where(AccountBalance.account_id == account.id)
@@ -35,13 +40,17 @@ def _to_out(session: Session, account: Account) -> AccountOut:
     ).all()
     latest = rows[0] if rows else None
     previous = rows[1] if len(rows) > 1 else None
+    behind = (newest - latest[0]).days if latest and newest else None
     return AccountOut(
         id=account.id,
         institution=account.institution,
         name=account.name,
         is_retirement=account.is_retirement,
+        closed_on=account.closed_on,
         latest_balance=latest[1] if latest else None,
         latest_as_of=latest[0] if latest else None,
+        is_stale=bool(behind),
+        days_behind=behind,
         change=(latest[1] - previous[1]) if latest and previous else None,
         snapshot_count=session.scalar(
             select(func.count(AccountBalance.id)).where(
@@ -60,7 +69,8 @@ def list_accounts(session: Session = Depends(get_session)):
             Account.is_retirement.desc(), Account.institution, Account.name
         )
     ).all()
-    return [_to_out(session, a) for a in accounts]
+    newest = _latest_snapshot_date(session)
+    return [_to_out(session, a, newest) for a in accounts]
 
 
 @router.post("", response_model=AccountOut, status_code=201)
@@ -93,7 +103,7 @@ def update_account(
     if account is None:
         raise HTTPException(404, "account not found")
 
-    data = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    data = dict(payload.model_dump(exclude_unset=True).items())
     for key in ("institution", "name"):
         if key in data:
             data[key] = data[key].strip()

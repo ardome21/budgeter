@@ -204,8 +204,13 @@ export interface AccountRow {
   institution: string;
   name: string;
   is_retirement: boolean;
+  closed_on: string | null;
   latest_balance: Money | null;
   latest_as_of: string | null;
+  /** Did not report on the most recent snapshot date, so this balance is
+   *  history rather than a current position. */
+  is_stale: boolean;
+  days_behind: number | null;
   change: Money | null;
   snapshot_count: number;
 }

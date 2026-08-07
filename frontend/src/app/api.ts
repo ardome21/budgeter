@@ -98,6 +98,13 @@ export class Api {
     return this.http.get<AccountRow[]>('/api/accounts');
   }
 
+  /** Settle an account: history stays, but it stops reading as current. */
+  closeAccount(id: number, closedOn: string | null): Observable<AccountRow> {
+    return this.http.patch<AccountRow>(`/api/accounts/${id}`, {
+      closed_on: closedOn,
+    });
+  }
+
   netWorth(): Observable<NetWorth> {
     return this.http.get<NetWorth>('/api/accounts/net-worth');
   }

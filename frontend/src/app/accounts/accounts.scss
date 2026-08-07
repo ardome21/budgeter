@@ -295,3 +295,18 @@ button.link {
 .small {
   font-size: 12.5px;
 }
+
+.stale-card {
+  border-color: color-mix(in srgb, var(--over) 40%, var(--border));
+}
+
+.lead {
+  margin: 0 0 0.8rem;
+  max-width: 44rem;
+}
+
+.pill.warn {
+  border-color: var(--over);
+  color: var(--over);
+  margin-left: 0.4rem;
+}

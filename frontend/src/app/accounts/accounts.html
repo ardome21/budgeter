@@ -21,7 +21,7 @@
       />
     </label>
     <div class="grid">
-      @for (a of accounts(); track a.id) {
+      @for (a of openAccounts(); track a.id) {
         <label class="field">
           <span class="dim small">
             {{ a.institution }} · {{ a.name }}
@@ -235,20 +235,20 @@
   </section>
 
   <section class="card">
-    <h2>Accounts</h2>
+    <h2>Counted in the latest net worth</h2>
     <div class="scroll-x">
       <table>
         <thead>
           <tr>
             <th>Account</th>
-            <th class="num">Latest</th>
+            <th class="num">Balance</th>
             <th class="num">Change</th>
-            <th>As of</th>
             <th class="num">Snapshots</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
-          @for (a of accounts(); track a.id) {
+          @for (a of currentAccounts(); track a.id) {
             <tr>
               <td>
                 <span class="acct">{{ a.institution }} · {{ a.name }}</span>
@@ -266,12 +266,91 @@
                   {{ +a.change > 0 ? "+" : "" }}{{ fmt(a.change) }}
                 }
               </td>
-              <td class="num dim">{{ a.latest_as_of ?? "—" }}</td>
               <td class="num dim">{{ a.snapshot_count }}</td>
+              <td class="num">
+                <button type="button" class="link" (click)="toggleClosed(a)">
+                  close
+                </button>
+              </td>
             </tr>
           }
         </tbody>
       </table>
     </div>
   </section>
+
+  @if (staleAccounts().length) {
+    <section class="card stale-card">
+      <h2>Not read recently</h2>
+      <p class="dim small lead">
+        These did not report on {{ longDate(latest()!.as_of) }}, so their
+        figures are history, not current positions — and they are
+        <strong>not</strong> part of the net worth above. If one is settled,
+        close it; if you still hold it, record a balance.
+      </p>
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>Account</th>
+              <th class="num">Last known</th>
+              <th>Last read</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (a of staleAccounts(); track a.id) {
+              <tr>
+                <td>
+                  <span class="acct">{{ a.institution }} · {{ a.name }}</span>
+                  @if (a.is_retirement) {
+                    <span class="pill">retirement</span>
+                  }
+                </td>
+                <td class="num dim" [class.over]="+(a.latest_balance ?? 0) < 0">
+                  {{ fmt(a.latest_balance) }}
+                </td>
+                <td>
+                  <span class="dim">{{ a.latest_as_of }}</span>
+                  <span class="pill warn">{{
+                    monthsBehind(a.days_behind)
+                  }}</span>
+                </td>
+                <td class="num">
+                  <button type="button" class="link" (click)="toggleClosed(a)">
+                    close
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  }
+
+  @if (closedAccounts().length) {
+    <section class="card">
+      <h2>Closed</h2>
+      <div class="scroll-x">
+        <table>
+          <tbody>
+            @for (a of closedAccounts(); track a.id) {
+              <tr>
+                <td class="dim">{{ a.institution }} · {{ a.name }}</td>
+                <td class="num dim">
+                  last known {{ fmt(a.latest_balance) }} on {{ a.latest_as_of }}
+                </td>
+                <td class="num">
+                  <button type="button" class="link" (click)="toggleClosed(a)">
+                    reopen
+                  </button>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  }
 }

@@ -814,3 +814,75 @@ class TestAccounts:
             ).status_code
             == 404
         )
+
+
+class TestStaleAndClosedAccounts:
+    """A balance from two years ago is history, not a position.
+
+    Shown under a column headed "Latest", a settled loan reads as money still
+    owed — which is how a debt that was paid off long ago keeps haunting a net
+    worth screen.
+    """
+
+    def test_an_account_behind_the_newest_snapshot_is_flagged_stale(self, client):
+        rows = client.get("/api/accounts").json()
+        stale = [r for r in rows if r["is_stale"]]
+        current = [r for r in rows if not r["is_stale"]]
+        assert current, "expected accounts read on the latest date"
+        for r in current:
+            assert r["days_behind"] in (0, None)
+        for r in stale:
+            assert r["days_behind"] and r["days_behind"] > 0
+
+    def test_stale_accounts_are_absent_from_the_latest_net_worth(self, client):
+        rows = client.get("/api/accounts").json()
+        points = client.get("/api/accounts/net-worth").json()["points"]
+        latest = points[-1]
+        reported = sum(1 for r in rows if not r["is_stale"] and r["latest_as_of"])
+        assert latest["accounts_reported"] == reported, (
+            "a stale balance must not be counted as a current position"
+        )
+
+    def test_closing_keeps_the_history(self, client):
+        acct = client.post(
+            "/api/accounts",
+            json={"institution": "ZZLoan", "name": "ZZPaidOff", "is_retirement": False},
+        ).json()
+        client.put(
+            f"/api/accounts/{acct['id']}/balances",
+            json={"as_of": "2024-03-02", "balance": "-6000.00"},
+        )
+
+        closed = client.patch(
+            f"/api/accounts/{acct['id']}", json={"closed_on": "2026-08-07"}
+        )
+        assert closed.status_code == 200
+        assert closed.json()["closed_on"] == "2026-08-07"
+        assert closed.json()["latest_balance"] == "-6000.00", "history survives"
+
+        balances = client.get(f"/api/accounts/{acct['id']}/balances").json()
+        assert len(balances) == 1
+
+    def test_closing_does_not_move_net_worth(self, client):
+        """Closing is a statement about now, not a rewrite of what happened."""
+        before = [
+            (p["as_of"], p["net_worth"])
+            for p in client.get("/api/accounts/net-worth").json()["points"]
+        ]
+        target = next(r for r in client.get("/api/accounts").json() if r["is_stale"])
+        client.patch(f"/api/accounts/{target['id']}", json={"closed_on": "2026-08-07"})
+        after = [
+            (p["as_of"], p["net_worth"])
+            for p in client.get("/api/accounts/net-worth").json()["points"]
+        ]
+        assert before == after
+
+    def test_reopening_clears_the_closed_date(self, client):
+        acct = client.post(
+            "/api/accounts",
+            json={"institution": "ZZReopen", "name": "ZZAcct", "is_retirement": False},
+        ).json()
+        client.patch(f"/api/accounts/{acct['id']}", json={"closed_on": "2026-08-07"})
+        r = client.patch(f"/api/accounts/{acct['id']}", json={"closed_on": None})
+        assert r.status_code == 200
+        assert r.json()["closed_on"] is None

@@ -61,8 +61,14 @@ class AccountOut(BaseModel):
     institution: str
     name: str
     is_retirement: bool
+    closed_on: date | None
     latest_balance: Money | None
     latest_as_of: date | None
+    # True when this account did not report on the most recent snapshot date,
+    # so its balance is history rather than a current position. A two-year-old
+    # loan balance presented as "latest" reads as money still owed.
+    is_stale: bool
+    days_behind: int | None
     # Movement since the previous snapshot — the only number that says whether
     # the account is going the right way.
     change: Money | None
@@ -79,6 +85,8 @@ class AccountPatch(BaseModel):
     institution: str | None = Field(default=None, min_length=1, max_length=60)
     name: str | None = Field(default=None, min_length=1, max_length=60)
     is_retirement: bool | None = None
+    # Pass a date to settle the account, or null to reopen it.
+    closed_on: date | None = None
 
 
 class BalanceIn(BaseModel):

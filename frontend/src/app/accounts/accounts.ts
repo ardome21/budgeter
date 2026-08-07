@@ -59,12 +59,24 @@ export class Accounts {
 
   latest = computed(() => this.points().at(-1) ?? null);
 
-  retirementAccounts = computed(() =>
-    this.accounts().filter((a) => a.is_retirement),
+  /** Counted in the most recent net worth figure. */
+  currentAccounts = computed(() =>
+    this.accounts().filter((a) => !a.is_stale && !a.closed_on),
   );
-  otherAccounts = computed(() =>
-    this.accounts().filter((a) => !a.is_retirement),
+
+  /**
+   * Read at some point, but not on the latest snapshot date — so the balance
+   * is history. A two-year-old loan shown as "latest" reads as money still
+   * owed, which is how a settled debt haunts a net worth screen.
+   */
+  staleAccounts = computed(() =>
+    this.accounts().filter((a) => a.is_stale && !a.closed_on),
   );
+
+  closedAccounts = computed(() => this.accounts().filter((a) => !!a.closed_on));
+
+  /** Accounts to ask for on the next snapshot: everything still open. */
+  openAccounts = computed(() => this.accounts().filter((a) => !a.closed_on));
 
   /** Y scale bounds. Zero is always included — a truncated axis exaggerates. */
   private bounds = computed(() => {
@@ -238,6 +250,39 @@ export class Accounts {
       month: 'short',
       year: 'numeric',
     });
+  }
+
+  monthsBehind(days: number | null): string {
+    if (!days) return '';
+    const months = Math.round(days / 30.44);
+    return months >= 12
+      ? `${(months / 12).toFixed(months % 12 === 0 ? 0 : 1)} years behind`
+      : `${months} months behind`;
+  }
+
+  /** Settle an account, or reopen one. History is untouched either way. */
+  toggleClosed(a: AccountRow): void {
+    const closing = !a.closed_on;
+    if (
+      closing &&
+      !confirm(
+        `Mark ${a.institution} / ${a.name} as closed?\n\n` +
+          'Its balance history stays and net worth is unchanged — it just ' +
+          'stops being shown as a current position, and stops being asked ' +
+          'for on the next snapshot.',
+      )
+    ) {
+      return;
+    }
+    this.api
+      .closeAccount(
+        a.id,
+        closing ? new Date().toISOString().slice(0, 10) : null,
+      )
+      .subscribe({
+        next: () => this.load(),
+        error: (e) => this.error.set(this.describe(e)),
+      });
   }
 
   setDraft(accountId: number, value: string): void {
