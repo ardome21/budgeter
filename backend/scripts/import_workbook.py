@@ -106,6 +106,24 @@ MONTHS = {
     )
 }
 
+# --------------------------------------------------------------------------
+# Accounts sheet corrections, all confirmed against the source on 2026-08-07
+# --------------------------------------------------------------------------
+
+# 'Vested Retirement' is the vested *portion* of the retirement account, not a
+# separate holding. The 2024 sheet proves it: its own 'Total' row excludes the
+# line, and its 'Total (vested)' row equals vested + non-retirement. Importing
+# it as an account double-counted net worth by up to $33,348.
+NOT_AN_ACCOUNT = {"vested retirement"}
+
+# The account was renamed between workbooks. Same money, one continuous series.
+ACCOUNT_ALIASES = {("Fidelity", "Retirement"): "Moody's PPP"}
+
+# The 2026 workbook's Accounts sheet was copied from the 2024 one and
+# relabelled with 2025 dates without the numbers changing — all seven columns
+# hold values identical to 2024's. The 2024 dates are the real ones.
+STALE_SNAPSHOT_YEARS = {"Budget 2026": {2025}}
+
 PAYCHECK_KINDS = {
     "income": PaycheckLineKind.INCOME,
     "insurance": PaycheckLineKind.INSURANCE,
@@ -410,11 +428,19 @@ class Importer:
         name_col = 3 if has_retirement_col else 2
         first_date_col = name_col + 1
 
+        stale_years = STALE_SNAPSHOT_YEARS.get(label, set())
         dates: dict[int, date] = {}
         for idx in range(first_date_col, len(header) + 1):
             parsed = parse_text_date(header[idx - 1], wb_year)
-            if parsed:
-                dates[idx] = parsed
+            if not parsed:
+                continue
+            if parsed.year in stale_years:
+                self.r.note(
+                    "stale copied snapshot column — skipped",
+                    f"{label}!{ws.title} col {idx}: {header[idx - 1]!r}",
+                )
+                continue
+            dates[idx] = parsed
 
         for row in ws.iter_rows(min_row=2):
             institution = row[0].value
@@ -424,6 +450,17 @@ class Importer:
             institution = str(institution).strip()
             name = str(name).strip() if name else institution
 
+            if name.lower() in NOT_AN_ACCOUNT:
+                self.r.note(
+                    "not a holding — skipped",
+                    f"{label}: {institution} / {name} is a portion of another "
+                    f"account, and the sheet's own Total excludes it",
+                )
+                continue
+
+            # Inferred from the name the sheet used, before any alias is
+            # applied: renaming 'Retirement' to "Moody's PPP" first would make
+            # the name stop containing 'retirement' and silently flip the flag.
             if has_retirement_col:
                 is_retirement = str(row[1].value).strip().lower() in {"true", "yes"}
             else:
@@ -432,6 +469,8 @@ class Importer:
                     "is_retirement inferred from account name",
                     f"{label}: {institution} / {name} -> {is_retirement}",
                 )
+
+            name = ACCOUNT_ALIASES.get((institution, name), name)
 
             key = (institution, name)
             if key not in self.accounts:
