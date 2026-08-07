@@ -486,21 +486,32 @@ class Importer:
     # -- current config ---------------------------------------------------
 
     def import_fixed_costs(self, ws, effective_from: date, label: str) -> None:
+        key = label + "!" + ws.title
+        self.capture_self_total(ws, key)
         for row in ws.iter_rows(min_row=2, max_col=4):
             desc, amount, cat, exact = (c.value for c in row)
             amount = money(amount)
             if not desc or amount is None:
                 continue
-            # 'Bundled-Utility' and 'Health' exist only on this sheet.
+            # 'Bundled-Utility', 'Utility' and 'Health' exist only on this sheet.
+            #
+            # Bundled utilities are internet and water, which the landlord bills
+            # inside the rent charge — Rent 1474.68 + Bundled-Utility 78.69 is
+            # exactly the 1553.37 on the Rent sheet, and it arrives as a single
+            # 'BILT CARD HOUSING' transaction. Filing them under Utilities would
+            # understate the rent commitment and inflate utilities by the same
+            # amount, and would not match how the money actually leaves the
+            # account. What each line is stays in `description`.
             raw = str(cat or "Misc")
             lookup = {
-                "bundled-utility": "Utilities",
+                "bundled-utility": "Rent",
                 "utility": "Utilities",
                 "health": "Self Care",
                 "subscription": "Subscriptions",
             }
             name = lookup.get(raw.strip().lower(), raw)
             category = self.category_for(name, "", f"{label}!{ws.title}!r{row[0].row}")
+            self.imported_totals[key] += amount
             self.s.add(
                 FixedCost(
                     description=str(desc).strip()[:80],

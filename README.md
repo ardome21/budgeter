@@ -80,11 +80,27 @@ anomaly report:
 2. **The right column was read** — each sheet's own rollup `Total` is compared too
 
 A difference in (2) is not necessarily an import bug. Those rollups are `SUMIF`
-over a fixed list of category names, so a typo in the category column makes a
-row invisible to the workbook's own total. That is exactly what happened to
-`May Spending` in 2024: a Charlotte Observer charge typed as `' Subscription'`
-instead of `'Subscriptions'` means the sheet under-reports that month by
-$28.94.
+over a hardcoded list of category names, so any category missing from that list
+is invisible to the total — the workbook silently under-reports and the import
+is the one telling the truth. Two confirmed cases:
+
+| Sheet | Under-reports by | Cause |
+|---|---|---|
+| `2024 May Spending` | $28.94 | A charge typed `' Subscription'`, not `'Subscriptions'` |
+| `2026 Monthly Fixed Costs` | $89.00 | Inner Peaks is category `Health`, absent from the rollup list |
+
+The second makes `Monthly Overview`'s disposable income optimistic by exactly
+$89/month.
+
+### Rent includes bundled utilities
+
+Internet and water are billed inside the rent charge, so `Rent 1474.68 +
+Bundled-Utility 78.69 = 1553.37` — the Rent sheet total, and the amount that
+arrives as a single `BILT CARD HOUSING` transaction. The importer files bundled
+utilities under **Rent**, not Utilities; what each line is stays in its
+`description`. Filing them under Utilities would understate the rent commitment
+and inflate utilities by the same amount, matching neither the Rent sheet nor
+how the money actually leaves the account.
 
 ## Migrations
 
