@@ -1,0 +1,18 @@
+[project]
+name = "infra"
+version = "0.1.0"
+description = "AWS CDK infrastructure for budgeter"
+requires-python = ">=3.12"
+dependencies = [
+    "aws-cdk-lib>=2.263.0,<3.0.0",
+    "constructs>=10.5.0,<11.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.uv]
+# Not a distributable package — just an app that CDK executes.
+package = false

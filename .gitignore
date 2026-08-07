@@ -2,13 +2,20 @@
 .venv/
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .ruff_cache/
 
 # Node / Angular
 node_modules/
-frontend/dist/
 frontend/.angular/
+npm-debug.log*
+
+# Build output
+dist/
+build/
+wheels/
+out-tsc/
 
 # CDK
 infra/cdk.out/
@@ -16,11 +23,11 @@ infra/.cdk.staging/
 
 # Env — never commit real credentials
 .env
-.env.local
-*.env
-!*.env.example
+.env.*
+!.env.example
 
 # OS / editor
 .DS_Store
 .idea/
 .vscode/
+*.swp
