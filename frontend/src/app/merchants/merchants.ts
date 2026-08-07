@@ -34,7 +34,12 @@ export class Merchants {
   error = signal<string | null>(null);
   done = signal(0);
 
+  skipped = signal(0);
+
   current = computed(() => this.queue()[this.index()] ?? null);
+
+  /** Groups still awaiting a decision, including any skipped this session. */
+  remaining = computed(() => Math.max(this.queue().length - this.index(), 0));
 
   keepName = computed(
     () =>
@@ -63,6 +68,7 @@ export class Merchants {
       next: (rows) => {
         this.queue.set(rows);
         this.index.set(0);
+        this.skipped.set(0);
         this.reset();
         this.loading.set(false);
       },
@@ -167,6 +173,7 @@ export class Merchants {
 
   /** Decide later. Nothing recorded, so it comes back next time. */
   skip(): void {
+    this.skipped.update((n) => n + 1);
     this.next();
   }
 

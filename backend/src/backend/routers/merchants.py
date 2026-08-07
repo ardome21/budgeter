@@ -26,7 +26,6 @@ from ..suggestions import group_names
 
 router = APIRouter(prefix="/merchants", tags=["merchants"])
 
-MAX_SUGGESTIONS = 25
 EXAMPLES_PER_MERCHANT = 4
 
 
@@ -45,6 +44,41 @@ def list_merchants(
         )
         for mid, name, cat, count in queries.merchant_rows(session, q, limit)
     ]
+
+
+def _examples_for(session: Session, merchant_ids: list[int]) -> dict[int, list[str]]:
+    """Descriptors for every merchant in one query.
+
+    One query per merchant is what forced the queue to be capped in the first
+    place; a few hundred round trips to render one screen is not a tradeoff
+    worth making when a window function does it in one.
+    """
+    if not merchant_ids:
+        return {}
+
+    distinct = (
+        select(Transaction.merchant_id, Transaction.raw_description)
+        .where(Transaction.merchant_id.in_(merchant_ids))
+        .distinct()
+        .subquery()
+    )
+    ranked = select(
+        distinct.c.merchant_id,
+        distinct.c.raw_description,
+        func.row_number()
+        .over(
+            partition_by=distinct.c.merchant_id,
+            order_by=distinct.c.raw_description,
+        )
+        .label("rank"),
+    ).subquery()
+
+    out: dict[int, list[str]] = {}
+    for merchant_id, description, _ in session.execute(
+        select(ranked).where(ranked.c.rank <= EXAMPLES_PER_MERCHANT)
+    ).all():
+        out.setdefault(merchant_id, []).append(description)
+    return out
 
 
 @router.get("/suggestions", response_model=list[Suggestion])
@@ -77,24 +111,24 @@ def suggestions(session: Session = Depends(get_session)):
     groups = group_names(list(by_name), rejected)
     groups.sort(key=lambda g: sum(by_name[n][1] for n in g), reverse=True)
 
+    # Every remaining group is returned. Capping the list made the queue look
+    # static — clearing one only pulled another up from below the cap, so
+    # fifteen merges left the header reading "1 of 25" exactly as before, and
+    # saved work looked like lost work.
+    ids = [by_name[name][0] for group in groups for name in group]
+    examples_by_merchant = _examples_for(session, ids)
+
     out: list[Suggestion] = []
-    for group in groups[:MAX_SUGGESTIONS]:
+    for group in groups:
         members = []
         for name in sorted(group, key=lambda n: by_name[n][1], reverse=True):
             merchant_id, count = by_name[name]
-            examples = session.scalars(
-                select(Transaction.raw_description)
-                .where(Transaction.merchant_id == merchant_id)
-                .distinct()
-                .order_by(Transaction.raw_description)
-                .limit(EXAMPLES_PER_MERCHANT)
-            ).all()
             members.append(
                 SuggestionMember(
                     id=merchant_id,
                     canonical_name=name,
                     transaction_count=count,
-                    examples=list(examples),
+                    examples=examples_by_merchant.get(merchant_id, []),
                 )
             )
         out.append(

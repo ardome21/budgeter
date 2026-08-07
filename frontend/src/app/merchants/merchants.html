@@ -2,14 +2,22 @@
   <h1>Merchants</h1>
   @if (!loading() && queue().length) {
     <span class="dim small">
-      {{ index() + 1 > queue().length ? queue().length : index() + 1 }} of
-      {{ queue().length }}
+      {{ remaining() }} left to review
       @if (done()) {
-        · {{ done() }} decided
+        · {{ done() }} decided this session
+      }
+      @if (skipped()) {
+        · {{ skipped() }} skipped
       }
     </span>
   }
 </div>
+
+<p class="dim small saved-note">
+  Every merge and every “none of these match” is saved the moment you click it —
+  closing the tab loses nothing. Skipping is the exception: it records no
+  decision, so a skipped group comes back next time.
+</p>
 
 @if (error()) {
   <div class="banner error">{{ error() }}</div>
