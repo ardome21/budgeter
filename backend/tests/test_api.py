@@ -984,6 +984,41 @@ class TestFixedCostEditing:
             "components must not appear at the top level, or the total doubles"
         )
 
+    def test_overview_counts_each_commitment_once(self, client):
+        """The overview's fixed-cost total must be the fixed-cost list's total.
+
+        These are the same money reached by two routes, and they disagreed:
+        the overview summed every effective row while the list returned only
+        top-level ones, so the rent breakdown was counted twice — 3586.27
+        against a real 2032.90, with disposable income short by the whole rent
+        charge. Both the total and the per-category groups are checked, because
+        the category groups are what the double-count was visible in.
+        """
+        costs = client.get("/api/fixed-costs").json()
+        overview = client.get("/api/overview").json()
+
+        assert Decimal(overview["fixed_costs"]) == sum(
+            Decimal(c["amount"]) for c in costs
+        ), "the overview and the fixed-cost list must agree on the total"
+
+        by_category: dict[str, Decimal] = {}
+        for cost in costs:
+            by_category[cost["category"]] = by_category.get(
+                cost["category"], Decimal("0.00")
+            ) + Decimal(cost["amount"])
+        assert {
+            g["category"]: Decimal(g["amount"]) for g in overview["fixed_by_category"]
+        } == by_category
+
+        # A component's description must not appear beside its parent's.
+        lines = [
+            line for group in overview["fixed_by_category"] for line in group["lines"]
+        ]
+        components = [c["description"] for cost in costs for c in cost["components"]]
+        assert not (set(lines) & set(components)), (
+            "a breakdown line is part of its parent, not a commitment beside it"
+        )
+
     def test_changing_the_amount_opens_a_new_row_and_ends_the_old(self, client):
         cats = client.get("/api/categories").json()
         created = client.post(

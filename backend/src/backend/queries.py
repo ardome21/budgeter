@@ -227,7 +227,13 @@ def overview(session: Session) -> OverviewOut:
                 func.array_agg(FixedCost.description),
             )
             .join(Category, Category.id == FixedCost.category_id)
-            .where(FixedCost.effective_to.is_(None))
+            # Top-level rows only. A component is part of its parent's amount —
+            # the rent breakdown's thirteen lines sum to the rent charge — so
+            # summing both counts that money twice. This query predates
+            # components and did exactly that, reporting fixed costs of 3586.27
+            # against a real 2032.90 and understating disposable income by the
+            # whole rent charge.
+            .where(FixedCost.effective_to.is_(None), FixedCost.parent_id.is_(None))
             .group_by(Category.name)
             .order_by(func.sum(FixedCost.amount).desc())
         ).all()
