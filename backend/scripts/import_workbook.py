@@ -75,6 +75,11 @@ CATEGORY_ALIASES = {
     "drinks": "Food and Drinks",
     "food": "Food and Drinks",
     "grocery": "Groceries",
+    # ' Subscription' — leading space, singular — appears once in May 2024 and
+    # cost that month $28.94. The workbook's own SUMIF missed it for the same
+    # reason; without this alias the import filed it under Misc, which is the
+    # same mistake in a different place.
+    "subscription": "Subscriptions",
     "london": "Travel",  # a trip-specific bucket, 39 transactions in 2024
 }
 
@@ -266,14 +271,12 @@ class Importer:
             self.periods[key] = p
         return self.periods[key]
 
-    def merchant(self, raw: str, category: Category) -> Merchant | None:
+    def merchant(self, raw: str) -> Merchant | None:
         key = normalize_merchant(raw)
         if not key:
             return None
         if key not in self.merchants:
-            m = Merchant(
-                canonical_name=display_name(key), default_category_id=category.id
-            )
+            m = Merchant(canonical_name=display_name(key))
             self.s.add(m)
             self.s.flush()
             self.s.add(MerchantPattern(merchant_id=m.id, pattern=key))
@@ -344,7 +347,7 @@ class Importer:
 
             description = str(desc).strip()
             category = self.category_for(raw_cat, description, where)
-            merchant = self.merchant(description, category)
+            merchant = self.merchant(description)
 
             self.s.add(
                 Transaction(

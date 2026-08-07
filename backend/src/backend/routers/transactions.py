@@ -32,13 +32,12 @@ def get_or_create_period(session: Session, year: int, month: int) -> BudgetPerio
     return period
 
 
-def resolve_merchant(
-    session: Session, description: str, category_id: int
-) -> Merchant | None:
+def resolve_merchant(session: Session, description: str) -> Merchant | None:
     """Find the merchant for a descriptor, creating one the first time.
 
-    A new merchant inherits the category it was first filed under, which is
-    what makes the next transaction from the same shop categorise itself.
+    The category is not recorded on the merchant. What makes the next
+    transaction from the same shop categorise itself is the shop's history,
+    read at the time it is needed — which cannot go stale.
     """
     key = normalize_merchant(description)
     if not key:
@@ -49,9 +48,7 @@ def resolve_merchant(
     if pattern is not None:
         return session.get(Merchant, pattern.merchant_id)
 
-    merchant = Merchant(
-        canonical_name=display_name(key), default_category_id=category_id
-    )
+    merchant = Merchant(canonical_name=display_name(key))
     session.add(merchant)
     session.flush()
     session.add(MerchantPattern(merchant_id=merchant.id, pattern=key))
@@ -125,7 +122,7 @@ def create_transaction(payload: TransactionIn, session: Session = Depends(get_se
         raise HTTPException(422, f"no category with id {payload.category_id}")
 
     period = get_or_create_period(session, year, month)
-    merchant = resolve_merchant(session, payload.raw_description, payload.category_id)
+    merchant = resolve_merchant(session, payload.raw_description)
 
     txn = Transaction(
         occurred_on=payload.occurred_on,

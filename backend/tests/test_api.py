@@ -554,24 +554,24 @@ class TestCategoryOptions:
         assert counts == sorted(counts, reverse=True)
         assert all(c > 0 for c in counts)
 
-    def test_suggestion_comes_from_history_not_the_stored_default(
-        self, client, session
-    ):
-        """merchants.default_category_id records whatever the first transaction
-        happened to be and does not follow a merge. History cannot go stale."""
+    def test_a_merchant_stores_no_category_at_all(self, client, session):
+        """The suggestion is history, and there is no stored default to drift
+        from it. merchants.default_category_id recorded whichever transaction
+        created the merchant and never moved — it disagreed with the merchant's
+        own history for twelve of them — so it is gone."""
         from backend.models import Merchant
+
+        assert not hasattr(Merchant, "default_category_id"), (
+            "a stored category is a second copy of something derivable, and the "
+            "two disagreed"
+        )
 
         row = next(r for r in self._rows(client) if "RHINO" in r["raw_description"])
         merchant = (
             session.query(Merchant).filter_by(canonical_name=row["merchant_name"]).one()
         )
-
-        top_id = row["category_options"][0]["id"]
-        assert row["suggested_category_id"] == top_id
-        if merchant.default_category_id != top_id:
-            # This is the real case in the imported data — the stored default
-            # disagrees, and the suggestion correctly ignores it.
-            assert row["suggested_category_id"] != merchant.default_category_id
+        assert merchant is not None
+        assert row["suggested_category_id"] == row["category_options"][0]["id"]
 
     def test_an_unknown_merchant_has_no_options_and_no_suggestion(self, client):
         row = next(

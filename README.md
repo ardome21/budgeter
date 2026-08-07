@@ -183,10 +183,12 @@ A merchant does not *have* a category, it has a **history** of categories.
 Rhino Market & Deli is Food and Drinks on a sandwich run and Groceries on a
 shop, and both are right. So the preview suggests the most-used one and offers
 every other category that merchant has genuinely been filed under as a
-one-click chip, each showing how often. The suggestion is computed from the
-transactions, not read from `merchants.default_category_id` — that column
-records whatever the merchant's *first* transaction happened to be and does not
-follow a merge, so it had gone stale for ten merchants. History cannot. Re-dropping the same file
+one-click chip, each showing how often.
+
+There is no stored default to drift from that history — the column that held
+one is gone. It recorded whichever transaction created the merchant, never
+followed a merge, and ended up contradicting the merchant's own history for
+twelve of them. Re-dropping the same file
 is a no-op: CSV rows carry a content hash, and rows already present come back
 ticked off as duplicates. **Hand-entered rows are never hashed and never
 deduplicated** — two identical charges at the same bar on one night are usually
@@ -194,8 +196,10 @@ two real rounds.
 
 ## Importing the Excel history
 
-The app replaces the `Budget YYYY.xlsx` workbooks. A one-shot importer loads
-them; it is a migration tool, not a product feature.
+**The database is the source of truth.** The workbooks are the three years of
+history it was built from, and corrections now land as migrations rather than
+as re-imports. The importer below is kept because it documents where every
+figure came from, not because it is the way to change anything.
 
 ```sh
 cd backend
@@ -224,7 +228,13 @@ is the one telling the truth. Two confirmed cases:
 | `2026 Monthly Fixed Costs` | $89.00 | Inner Peaks is category `Health`, absent from the rollup list |
 
 The second makes `Monthly Overview`'s disposable income optimistic by exactly
-$89/month.
+$89/month. Both are correct in the database: the misspelling is aliased to
+Subscriptions, and the gym is a fixed cost inside the $2,032.90 monthly total.
+
+Two further defects live only in the workbook and are not carried across. Its
+`July Budget` sheet reads `Paycheck!F2*2` for "Taxes" and `Paycheck!F4*2` for
+"Automatic Savings" — the insurance total and the tax total respectively. The
+app derives both from `paycheck_lines` and is unaffected.
 
 ### Committed vs flexible is a property of the transaction
 

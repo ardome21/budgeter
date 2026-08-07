@@ -308,7 +308,6 @@ def _merchant_out(session: Session, merchant: Merchant) -> MerchantOut:
     return MerchantOut(
         id=merchant.id,
         canonical_name=merchant.canonical_name,
-        default_category_id=merchant.default_category_id,
         transaction_count=count or 0,
     )
 

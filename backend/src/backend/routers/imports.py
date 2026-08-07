@@ -127,20 +127,17 @@ def _enrich(session: Session, rows: list[CandidateRow]) -> None:
 
     keys = {r.raw_description: normalize_merchant(r.raw_description) for r in rows}
     known = {
-        pattern: (merchant_id, name, default_category)
-        for pattern, merchant_id, name, default_category in session.execute(
+        pattern: (merchant_id, name)
+        for pattern, merchant_id, name in session.execute(
             select(
                 MerchantPattern.pattern,
                 Merchant.id,
                 Merchant.canonical_name,
-                Merchant.default_category_id,
             )
             .join(Merchant, Merchant.id == MerchantPattern.merchant_id)
             .where(MerchantPattern.pattern.in_(set(keys.values()) - {""}))
         ).all()
     }
-    category_names = dict(session.execute(select(Category.id, Category.name)).all())
-
     hashes = [r.import_hash for r in rows if r.import_hash]
     existing = dict(
         session.execute(
@@ -150,13 +147,13 @@ def _enrich(session: Session, rows: list[CandidateRow]) -> None:
         ).all()
     )
 
-    matched_ids = {merchant_id for merchant_id, _, _ in known.values()}
+    matched_ids = {merchant_id for merchant_id, _ in known.values()}
     history = _category_history(session, matched_ids)
 
     for row in rows:
         key = keys[row.raw_description]
         if key and key in known:
-            merchant_id, name, default_category = known[key]
+            merchant_id, name = known[key]
             row.merchant_id = merchant_id
             row.merchant_name = name
             row.category_options = history.get(merchant_id, [])
@@ -166,11 +163,6 @@ def _enrich(session: Session, rows: list[CandidateRow]) -> None:
                 category_id, category_name, _ = row.category_options[0]
                 row.suggested_category_id = category_id
                 row.suggested_category_name = category_name
-            elif default_category:
-                # No history yet — a merchant created by an earlier commit in
-                # this same session. Fall back to what it was created as.
-                row.suggested_category_id = default_category
-                row.suggested_category_name = category_names.get(default_category)
         elif key:
             row.notes.append("new merchant")
         row.duplicate_of = existing.get(row.import_hash)
@@ -261,7 +253,7 @@ def commit(payload: CommitIn, session: Session = Depends(get_session)):
             continue
 
         period = get_or_create_period(session, year, month)
-        merchant = _merchant_for(session, row.raw_description, row.category_id)
+        merchant = _merchant_for(session, row.raw_description)
         session.add(
             Transaction(
                 occurred_on=row.occurred_on,
@@ -281,9 +273,7 @@ def commit(payload: CommitIn, session: Session = Depends(get_session)):
     return CommitOut(created=created, skipped_duplicates=skipped, errors=errors)
 
 
-def _merchant_for(
-    session: Session, description: str, category_id: int
-) -> Merchant | None:
+def _merchant_for(session: Session, description: str) -> Merchant | None:
     key = normalize_merchant(description)
     if not key:
         return None
@@ -292,9 +282,7 @@ def _merchant_for(
     )
     if pattern is not None:
         return session.get(Merchant, pattern.merchant_id)
-    merchant = Merchant(
-        canonical_name=display_name(key), default_category_id=category_id
-    )
+    merchant = Merchant(canonical_name=display_name(key))
     session.add(merchant)
     session.flush()
     session.add(MerchantPattern(merchant_id=merchant.id, pattern=key))

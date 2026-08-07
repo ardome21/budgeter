@@ -130,11 +130,12 @@ class Merchant(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     canonical_name: Mapped[str] = mapped_column(String(120), unique=True)
-    default_category_id: Mapped[int | None] = mapped_column(
-        ForeignKey("categories.id"), nullable=True
-    )
 
-    default_category: Mapped[Category | None] = relationship()
+    # A merchant deliberately has no default category. It has a *history* of
+    # them, read from its transactions — Rhino Market & Deli is Food and Drinks
+    # 74 times and Groceries 39, and both are right. A stored default recorded
+    # whichever came first and never followed a merge; on this data it
+    # contradicted history for twelve merchants, the worst across 113 rows.
     patterns: Mapped[list["MerchantPattern"]] = relationship(
         back_populates="merchant", cascade="all, delete-orphan"
     )

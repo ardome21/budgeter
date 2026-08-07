@@ -37,7 +37,6 @@ class MerchantOut(BaseModel):
 
     id: int
     canonical_name: str
-    default_category_id: int | None = None
     transaction_count: int = 0
 
 

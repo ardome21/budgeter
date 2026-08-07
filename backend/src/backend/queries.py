@@ -324,11 +324,10 @@ def merchant_rows(session: Session, q: str | None, limit: int):
         select(
             Merchant.id,
             Merchant.canonical_name,
-            Merchant.default_category_id,
             func.count(Transaction.id),
         )
         .join(Transaction, Transaction.merchant_id == Merchant.id, isouter=True)
-        .group_by(Merchant.id, Merchant.canonical_name, Merchant.default_category_id)
+        .group_by(Merchant.id, Merchant.canonical_name)
         .order_by(func.count(Transaction.id).desc(), Merchant.canonical_name)
         .limit(limit)
     )

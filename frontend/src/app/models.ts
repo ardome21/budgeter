@@ -169,7 +169,6 @@ export type MerchantSort = 'spend' | 'count' | 'recent' | 'name';
 export interface Merchant {
   id: number;
   canonical_name: string;
-  default_category_id: number | null;
   transaction_count: number;
 }
 
