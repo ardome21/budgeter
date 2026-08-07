@@ -1,0 +1,277 @@
+<div class="head">
+  <h1>Accounts</h1>
+  <button type="button" (click)="entryOpen.set(!entryOpen())">
+    {{ entryOpen() ? "Close" : "Record balances" }}
+  </button>
+</div>
+
+@if (error()) {
+  <div class="banner error">{{ error() }}</div>
+}
+
+@if (entryOpen()) {
+  <section class="card entry">
+    <h2>Record a snapshot</h2>
+    <label class="date-row">
+      <span class="dim small">As of</span>
+      <input
+        type="date"
+        [ngModel]="snapshotDate()"
+        (ngModelChange)="snapshotDate.set($event)"
+      />
+    </label>
+    <div class="grid">
+      @for (a of accounts(); track a.id) {
+        <label class="field">
+          <span class="dim small">
+            {{ a.institution }} · {{ a.name }}
+            @if (a.is_retirement) {
+              <em>retirement</em>
+            }
+          </span>
+          <input
+            type="text"
+            inputmode="decimal"
+            [placeholder]="a.latest_balance ?? '0.00'"
+            [ngModel]="draft()[a.id] ?? ''"
+            (ngModelChange)="setDraft(a.id, $event)"
+          />
+        </label>
+      }
+    </div>
+    <div class="actions">
+      <button
+        class="primary"
+        type="button"
+        [disabled]="saving()"
+        (click)="saveSnapshot()"
+      >
+        {{ saving() ? "Saving…" : "Save snapshot" }}
+      </button>
+      <span class="dim small">
+        Leave a field blank to skip it. Recording a date twice replaces it.
+      </span>
+    </div>
+  </section>
+}
+
+@if (loading()) {
+  <p class="dim">Loading…</p>
+} @else if (latest(); as now) {
+  <section class="tiles">
+    <div class="tile accent">
+      <span class="k">Net worth</span>
+      <span class="v">{{ fmt(now.net_worth) }}</span>
+      <span class="dim small">as of {{ longDate(now.as_of) }}</span>
+    </div>
+    <div class="tile">
+      <span class="k">Retirement</span>
+      <span class="v">{{ fmt(now.retirement) }}</span>
+    </div>
+    <div class="tile">
+      <span class="k">Everything else</span>
+      <span class="v">{{ fmt(now.liquid) }}</span>
+    </div>
+  </section>
+
+  <section class="card chart-card">
+    <div class="chart-head">
+      <h2>Net worth over time</h2>
+      <div class="legend">
+        <span class="key"><i class="swatch s-retirement"></i>Retirement</span>
+        <span class="key"><i class="swatch s-liquid"></i>Everything else</span>
+      </div>
+    </div>
+
+    <svg
+      [attr.viewBox]="'0 0 ' + W + ' ' + H"
+      class="chart"
+      role="img"
+      aria-label="Retirement and other balances at each recorded snapshot"
+      (mouseleave)="hovered.set(null)"
+    >
+      <!-- Solid hairline grid, one shade off the surface. -->
+      @for (g of gridLines(); track g.value) {
+        <line
+          class="grid"
+          [attr.x1]="PAD.left"
+          [attr.x2]="PAD.left + PLOT_W"
+          [attr.y1]="g.y"
+          [attr.y2]="g.y"
+        />
+        <text class="tick" [attr.x]="PAD.left - 8" [attr.y]="g.y + 3.5">
+          {{ g.label }}
+        </text>
+      }
+
+      @for (t of xTicks(); track t.x) {
+        <text class="tick x" [attr.x]="t.x" [attr.y]="PAD.top + PLOT_H + 18">
+          {{ t.label }}
+        </text>
+      }
+
+      <!-- One path per segment so a real gap can be drawn dashed. -->
+      @for (s of segments(); track $index) {
+        <path
+          [attr.d]="s.d"
+          class="line"
+          [class.s-retirement]="s.series === 'retirement'"
+          [class.s-liquid]="s.series === 'liquid'"
+          [class.gap]="s.gap"
+        />
+      }
+
+      @if (hovered(); as h) {
+        <line
+          class="crosshair"
+          [attr.x1]="h.x"
+          [attr.x2]="h.x"
+          [attr.y1]="PAD.top"
+          [attr.y2]="PAD.top + PLOT_H"
+        />
+      }
+
+      @for (pt of plotted(); track pt.p.as_of) {
+        <circle
+          class="dot s-retirement"
+          [class.on]="hovered()?.p === pt.p"
+          [attr.cx]="pt.x"
+          [attr.cy]="pt.yRetirement"
+          r="4"
+        />
+        <circle
+          class="dot s-liquid"
+          [class.on]="hovered()?.p === pt.p"
+          [attr.cx]="pt.x"
+          [attr.cy]="pt.yLiquid"
+          r="4"
+        />
+      }
+
+      <!-- Endpoints are direct-labelled; the axis and tooltip carry the rest. -->
+      @if (plotted().length) {
+        @let last = plotted()[plotted().length - 1];
+        <text
+          class="endpoint s-retirement"
+          [attr.x]="last.x + 9"
+          [attr.y]="last.yRetirement + 3.5"
+        >
+          {{ axisLabel(last.retirement) }}
+        </text>
+        <text
+          class="endpoint s-liquid"
+          [attr.x]="last.x + 9"
+          [attr.y]="last.yLiquid + 3.5"
+        >
+          {{ axisLabel(last.liquid) }}
+        </text>
+      }
+
+      @for (b of bands(); track b.pt.p.as_of) {
+        <rect
+          class="hit"
+          [attr.x]="b.x"
+          [attr.y]="PAD.top"
+          [attr.width]="b.width"
+          [attr.height]="PLOT_H"
+          (mouseenter)="hovered.set(b.pt)"
+          tabindex="0"
+          (focus)="hovered.set(b.pt)"
+        />
+      }
+    </svg>
+
+    @if (hovered(); as h) {
+      <div class="readout">
+        <strong>{{ longDate(h.p.as_of) }}</strong>
+        <span
+          >Net worth <b>{{ fmt(h.p.net_worth) }}</b></span
+        >
+        <span
+          >Retirement <b>{{ fmt(h.p.retirement) }}</b></span
+        >
+        <span
+          >Everything else <b>{{ fmt(h.p.liquid) }}</b></span
+        >
+        <span class="dim">{{ h.p.accounts_reported }} accounts reported</span>
+      </div>
+    } @else {
+      <p class="dim small readout-hint">
+        Hover a point for the split. A dashed segment spans months with no
+        snapshot recorded — the line there is drawn, not measured.
+      </p>
+    }
+
+    <button type="button" class="link" (click)="showTable.set(!showTable())">
+      {{ showTable() ? "Hide" : "Show" }} the numbers
+    </button>
+
+    @if (showTable()) {
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th class="num">Net worth</th>
+              <th class="num">Retirement</th>
+              <th class="num">Everything else</th>
+              <th class="num">Accounts</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (p of points(); track p.as_of) {
+              <tr>
+                <td class="num dim">{{ p.as_of }}</td>
+                <td class="num">{{ fmt(p.net_worth) }}</td>
+                <td class="num">{{ fmt(p.retirement) }}</td>
+                <td class="num">{{ fmt(p.liquid) }}</td>
+                <td class="num dim">{{ p.accounts_reported }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
+
+  <section class="card">
+    <h2>Accounts</h2>
+    <div class="scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th>Account</th>
+            <th class="num">Latest</th>
+            <th class="num">Change</th>
+            <th>As of</th>
+            <th class="num">Snapshots</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (a of accounts(); track a.id) {
+            <tr>
+              <td>
+                <span class="acct">{{ a.institution }} · {{ a.name }}</span>
+                @if (a.is_retirement) {
+                  <span class="pill">retirement</span>
+                }
+              </td>
+              <td class="num" [class.over]="+(a.latest_balance ?? 0) < 0">
+                {{ fmt(a.latest_balance) }}
+              </td>
+              <td class="num" [class.over]="+(a.change ?? 0) < 0">
+                @if (a.change === null) {
+                  <span class="dim">—</span>
+                } @else {
+                  {{ +a.change > 0 ? "+" : "" }}{{ fmt(a.change) }}
+                }
+              </td>
+              <td class="num dim">{{ a.latest_as_of ?? "—" }}</td>
+              <td class="num dim">{{ a.snapshot_count }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  </section>
+}

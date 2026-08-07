@@ -1,0 +1,297 @@
+/* Series colours come from the validated categorical palette, slots 1 and 2,
+   stepped per mode. Verified with the palette validator against this app's own
+   surfaces (#ffffff light, #1e2124 dark): every check passes in both modes —
+   worst CVD ΔE 24.7 light / 26.8 dark against a target of 8. */
+:host {
+  --s-retirement: #2a78d6;
+  --s-liquid: #eb6834;
+  --grid: #ece9e4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :host {
+    --s-retirement: #3987e5;
+    --s-liquid: #d95926;
+    --grid: #2d3237;
+  }
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+
+  button {
+    margin-left: auto;
+  }
+}
+
+.banner {
+  margin-bottom: 1rem;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+
+  .k {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  /* Proportional figures on a hero value; tabular only where digits align. */
+  .v {
+    font-size: 1.35rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  &.accent {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+
+    .v {
+      color: var(--accent);
+    }
+  }
+}
+
+section.card {
+  margin-bottom: 1rem;
+
+  h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 0.7rem;
+  }
+}
+
+.chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.legend {
+  display: flex;
+  gap: 0.9rem;
+  font-size: 12.5px;
+  /* Legend text wears text ink; the swatch beside it carries identity. */
+  color: var(--text-dim);
+
+  .key {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .swatch {
+    width: 11px;
+    height: 3px;
+    border-radius: 2px;
+    display: inline-block;
+
+    &.s-retirement {
+      background: var(--s-retirement);
+    }
+    &.s-liquid {
+      background: var(--s-liquid);
+    }
+  }
+}
+
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+
+  .grid {
+    stroke: var(--grid);
+    stroke-width: 1;
+  }
+
+  .tick {
+    font-size: 10px;
+    fill: var(--text-dim);
+    text-anchor: end;
+
+    &.x {
+      text-anchor: middle;
+    }
+  }
+
+  .line {
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+
+    &.s-retirement {
+      stroke: var(--s-retirement);
+    }
+    &.s-liquid {
+      stroke: var(--s-liquid);
+    }
+
+    /* Months with no snapshot. Drawn, not measured. */
+    &.gap {
+      stroke-dasharray: 3 5;
+      opacity: 0.5;
+    }
+  }
+
+  .dot {
+    /* A 2px surface ring rather than a border, so overlaps stay readable. */
+    stroke: var(--surface);
+    stroke-width: 2;
+
+    &.s-retirement {
+      fill: var(--s-retirement);
+    }
+    &.s-liquid {
+      fill: var(--s-liquid);
+    }
+    &.on {
+      r: 5.5;
+    }
+  }
+
+  .endpoint {
+    font-size: 11px;
+    font-weight: 600;
+
+    &.s-retirement {
+      fill: var(--s-retirement);
+    }
+    &.s-liquid {
+      fill: var(--s-liquid);
+    }
+  }
+
+  .crosshair {
+    stroke: var(--text-dim);
+    stroke-width: 1;
+    opacity: 0.35;
+  }
+
+  .hit {
+    fill: transparent;
+    cursor: crosshair;
+
+    &:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+  }
+}
+
+.readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 1.1rem;
+  font-size: 13px;
+  padding: 0.55rem 0.7rem;
+  margin-top: 0.6rem;
+  background: var(--surface-2);
+  border-radius: 8px;
+
+  b {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+  }
+}
+
+.readout-hint {
+  margin: 0.6rem 0 0;
+  max-width: 40rem;
+}
+
+button.link {
+  background: none;
+  border: none;
+  padding: 0.4rem 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:hover {
+    background: none;
+    color: var(--accent);
+  }
+}
+
+.entry {
+  .date-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.8rem;
+
+    input {
+      width: auto;
+    }
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0.6rem;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+
+    em {
+      font-style: normal;
+      opacity: 0.7;
+    }
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+    margin-top: 0.9rem;
+  }
+}
+
+.acct {
+  font-weight: 500;
+}
+
+.pill {
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  margin-left: 0.4rem;
+}
+
+.small {
+  font-size: 12.5px;
+}

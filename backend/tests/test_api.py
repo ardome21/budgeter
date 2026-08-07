@@ -6,6 +6,8 @@ assert on real Postgres constraints rather than a stand-in.
 
 from decimal import Decimal
 
+import pytest
+
 
 class TestReadViews:
     def test_categories_are_ordered(self, client):
@@ -711,3 +713,104 @@ class TestWorkbench:
         after = client.get("/api/transactions?q=ZZMONEY").json()
         assert {t["raw_description"]: t["amount"] for t in after} == before
         assert len({t["merchant_id"] for t in after}) == 1, "both now share a merchant"
+
+
+class TestAccounts:
+    def test_net_worth_points_are_chronological(self, client):
+        points = client.get("/api/accounts/net-worth").json()["points"]
+        assert points, "expected imported snapshots"
+        dates = [p["as_of"] for p in points]
+        assert dates == sorted(dates)
+
+    def test_retirement_and_liquid_sum_to_net_worth(self, client):
+        for p in client.get("/api/accounts/net-worth").json()["points"]:
+            assert Decimal(p["retirement"]) + Decimal(p["liquid"]) == Decimal(
+                p["net_worth"]
+            ), f"split does not reconcile on {p['as_of']}"
+
+    def test_liabilities_pull_net_worth_down(self, client):
+        """The workbook's own Total row omitted the student loan and the credit
+        card balance. Net worth that ignores what you owe is not net worth."""
+        points = {
+            p["as_of"]: p
+            for p in client.get("/api/accounts/net-worth").json()["points"]
+        }
+        march = points.get("2024-03-02")
+        if march is None:
+            pytest.skip("March 2024 snapshot not present")
+        # The sheet reported 53,742.84 by leaving out a $6,000 loan.
+        assert Decimal(march["net_worth"]) == Decimal("47742.84")
+
+    def test_money_crosses_as_strings(self, client):
+        p = client.get("/api/accounts/net-worth").json()["points"][0]
+        assert all(isinstance(p[k], str) for k in ("net_worth", "retirement", "liquid"))
+
+    def test_accounts_report_latest_and_change(self, client):
+        rows = client.get("/api/accounts").json()
+        assert rows
+        multi = [r for r in rows if r["snapshot_count"] > 1]
+        assert multi, "expected an account with history"
+        assert multi[0]["change"] is not None
+        single = [r for r in rows if r["snapshot_count"] == 1]
+        if single:
+            assert single[0]["change"] is None, "one snapshot cannot show a change"
+
+    def test_recording_a_balance_twice_on_one_date_corrects_it(self, client):
+        acct = client.post(
+            "/api/accounts",
+            json={"institution": "ZZBank", "name": "ZZTest", "is_retirement": False},
+        ).json()
+
+        first = client.put(
+            f"/api/accounts/{acct['id']}/balances",
+            json={"as_of": "2026-01-15", "balance": "100.00"},
+        )
+        assert first.status_code == 200
+
+        second = client.put(
+            f"/api/accounts/{acct['id']}/balances",
+            json={"as_of": "2026-01-15", "balance": "250.00"},
+        )
+        assert second.status_code == 200
+        assert second.json()["balance"] == "250.00"
+
+        balances = client.get(f"/api/accounts/{acct['id']}/balances").json()
+        assert len(balances) == 1, "a second reading on one day is a correction"
+
+    def test_duplicate_account_is_a_conflict(self, client):
+        body = {"institution": "ZZDupe", "name": "ZZOnly", "is_retirement": False}
+        assert client.post("/api/accounts", json=body).status_code == 201
+        assert client.post("/api/accounts", json=body).status_code == 409
+
+    def test_renaming_onto_an_existing_pair_is_a_conflict(self, client):
+        a = client.post(
+            "/api/accounts",
+            json={"institution": "ZZC", "name": "One", "is_retirement": False},
+        ).json()
+        client.post(
+            "/api/accounts",
+            json={"institution": "ZZC", "name": "Two", "is_retirement": False},
+        )
+        r = client.patch(f"/api/accounts/{a['id']}", json={"name": "Two"})
+        assert r.status_code == 409
+
+    def test_deleting_an_account_takes_its_snapshots(self, client):
+        acct = client.post(
+            "/api/accounts",
+            json={"institution": "ZZGone", "name": "ZZGone", "is_retirement": False},
+        ).json()
+        client.put(
+            f"/api/accounts/{acct['id']}/balances",
+            json={"as_of": "2026-01-15", "balance": "5.00"},
+        )
+        assert client.delete(f"/api/accounts/{acct['id']}").status_code == 204
+        assert client.get(f"/api/accounts/{acct['id']}/balances").status_code == 404
+
+    def test_unknown_account_is_404(self, client):
+        assert (
+            client.put(
+                "/api/accounts/999999/balances",
+                json={"as_of": "2026-01-15", "balance": "1.00"},
+            ).status_code
+            == 404
+        )

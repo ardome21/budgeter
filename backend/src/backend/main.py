@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import get_session
-from .routers import imports, merchants, transactions, views
+from .routers import accounts, imports, merchants, transactions, views
 
 app = FastAPI(title="budgeter")
 
@@ -38,6 +38,7 @@ def health_db(session: Session = Depends(get_session)) -> dict[str, str]:
 
 
 api.include_router(views.router)
+api.include_router(accounts.router)
 api.include_router(transactions.router)
 api.include_router(merchants.router)
 api.include_router(imports.router)

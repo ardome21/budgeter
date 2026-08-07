@@ -54,6 +54,63 @@ class CategoryMix(BaseModel):
     count: int
 
 
+class AccountOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    institution: str
+    name: str
+    is_retirement: bool
+    latest_balance: Money | None
+    latest_as_of: date | None
+    # Movement since the previous snapshot — the only number that says whether
+    # the account is going the right way.
+    change: Money | None
+    snapshot_count: int
+
+
+class AccountIn(BaseModel):
+    institution: str = Field(min_length=1, max_length=60)
+    name: str = Field(min_length=1, max_length=60)
+    is_retirement: bool = False
+
+
+class AccountPatch(BaseModel):
+    institution: str | None = Field(default=None, min_length=1, max_length=60)
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    is_retirement: bool | None = None
+
+
+class BalanceIn(BaseModel):
+    as_of: date
+    balance: Decimal
+
+
+class BalanceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    account_id: int
+    as_of: date
+    balance: Money
+
+
+class NetWorthPoint(BaseModel):
+    as_of: date
+    net_worth: Money
+    retirement: Money
+    liquid: Money
+    # How many accounts reported on this date. A total built from five accounts
+    # is not comparable to one built from eight, and the chart should say so
+    # rather than drawing a cliff.
+    accounts_reported: int
+
+
+class NetWorthOut(BaseModel):
+    points: list[NetWorthPoint]
+    accounts_tracked: int
+
+
 class MerchantRow(BaseModel):
     """A merchant as it appears on the workbench: what it cost and when."""
 

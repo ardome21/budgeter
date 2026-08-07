@@ -11,8 +11,10 @@ import {
   Overview,
   Period,
   Preview,
+  AccountRow,
   MerchantPage,
   MerchantSort,
+  NetWorth,
   Suggestion,
   Transaction,
 } from './models';
@@ -90,6 +92,27 @@ export class Api {
 
   commitImport(rows: unknown[]): Observable<CommitResult> {
     return this.http.post<CommitResult>('/api/imports/commit', { rows });
+  }
+
+  accounts(): Observable<AccountRow[]> {
+    return this.http.get<AccountRow[]>('/api/accounts');
+  }
+
+  netWorth(): Observable<NetWorth> {
+    return this.http.get<NetWorth>('/api/accounts/net-worth');
+  }
+
+  /** PUT: a snapshot is identified by its date, so a second reading on the
+   *  same day is a correction rather than an additional holding. */
+  recordBalance(
+    accountId: number,
+    asOf: string,
+    balance: string,
+  ): Observable<unknown> {
+    return this.http.put(`/api/accounts/${accountId}/balances`, {
+      as_of: asOf,
+      balance,
+    });
   }
 
   merchants(

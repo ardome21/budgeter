@@ -19,9 +19,15 @@ export const routes: Routes = [
     loadComponent: () => import('./import/import').then((m) => m.Import),
   },
   {
+    path: 'accounts',
+    title: 'Accounts · budgeter',
+    loadComponent: () => import('./accounts/accounts').then((m) => m.Accounts),
+  },
+  {
     path: 'merchants',
     title: 'Merchants · budgeter',
-    loadComponent: () => import('./merchants/workbench').then((m) => m.Workbench),
+    loadComponent: () =>
+      import('./merchants/workbench').then((m) => m.Workbench),
   },
   {
     // The suggestion queue, reachable from the workbench when it has items.

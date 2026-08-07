@@ -74,6 +74,23 @@ imported into.
 | **Transactions** | The `*Spending` sheets — list, add by hand, recategorise inline |
 | **Import** | Pasting a bank export into a sheet, then categorising it by hand |
 | **Merchants** | Nothing. A workbench for what each merchant costs, plus the consolidation the spreadsheet had no way to do |
+| **Accounts** | The `Accounts` sheet — net worth over time, and recording a new snapshot |
+
+### Net worth
+
+The `Accounts` sheet stored balances wide, a new column per snapshot, which is
+why there were only eight in two years. As rows they are unbounded.
+
+The chart is scaled by **actual date**, not by evenly spaced snapshots, so a
+21-month gap looks like 21 months. Stretches with no reading are drawn dashed:
+the line there is drawn, not measured. Series colours come from a categorical
+palette validated against this app's own light and dark surfaces, and every
+value is also in a table below the chart — a tooltip is never the only way to
+read a number.
+
+Net worth counts what you owe. The workbook's own `Total` row omitted the
+student loan and the credit card balance, reporting 53,742.84 for March 2024
+against a real 47,742.84.
 
 ### The merchant workbench
 

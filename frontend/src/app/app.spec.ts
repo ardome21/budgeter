@@ -28,6 +28,7 @@ describe('App', () => {
       'Transactions',
       'Import',
       'Merchants',
+      'Accounts',
     ]);
   });
 });

@@ -1,3 +1,3 @@
-from . import imports, merchants, transactions, views
+from . import accounts, imports, merchants, transactions, views
 
-__all__ = ["imports", "merchants", "transactions", "views"]
+__all__ = ["accounts", "imports", "merchants", "transactions", "views"]

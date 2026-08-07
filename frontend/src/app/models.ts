@@ -197,3 +197,42 @@ export function formatMoney(value: Money | null | undefined): string {
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return `${negative ? '−' : ''}$${grouped}.${cents}`;
 }
+
+/** An account with its latest balance and the move since the previous one. */
+export interface AccountRow {
+  id: number;
+  institution: string;
+  name: string;
+  is_retirement: boolean;
+  latest_balance: Money | null;
+  latest_as_of: string | null;
+  change: Money | null;
+  snapshot_count: number;
+}
+
+export interface NetWorthPoint {
+  as_of: string;
+  net_worth: Money;
+  retirement: Money;
+  liquid: Money;
+  /** How many accounts reported on this date — a total from five is not
+   *  comparable to one from eight, and the chart should say so. */
+  accounts_reported: number;
+}
+
+export interface NetWorth {
+  points: NetWorthPoint[];
+  accounts_tracked: number;
+}
+
+/**
+ * Parse a YYYY-MM-DD calendar date as local time.
+ *
+ * `new Date('2024-09-04')` is parsed as UTC midnight and then rendered in the
+ * viewer's zone, so anywhere west of Greenwich it displays as the 3rd. A
+ * balance recorded on the 4th belongs to the 4th in every timezone.
+ */
+export function parseDay(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
