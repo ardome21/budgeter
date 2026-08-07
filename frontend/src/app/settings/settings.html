@@ -1,0 +1,216 @@
+<h1>Settings</h1>
+
+@if (error()) {
+  <div class="banner error">{{ error() }}</div>
+}
+@if (notice()) {
+  <div class="banner ok">{{ notice() }}</div>
+}
+
+@if (loading()) {
+  <p class="dim">Loading…</p>
+} @else {
+  <section class="card">
+    <div class="card-head">
+      <h2>Monthly fixed costs</h2>
+      <span class="total">{{ fmt(monthlyTotal()) }} / month</span>
+    </div>
+    <p class="dim small lead">
+      Changing an amount keeps the old one — last month still reconciles against
+      what rent actually was, which a spreadsheet cell can never do.
+    </p>
+    <div class="scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th>Commitment</th>
+            <th>Category</th>
+            <th class="num">Amount</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (c of costs(); track c.id) {
+            <tr>
+              <td>
+                <span class="name">{{ c.description }}</span>
+                @if (!c.is_exact) {
+                  <span class="pill">varies</span>
+                }
+                @if (c.components.length) {
+                  <button type="button" class="link" (click)="toggle(c.id)">
+                    {{ expanded().has(c.id) ? "hide" : "show" }}
+                    {{ c.components.length }} lines
+                  </button>
+                }
+              </td>
+              <td class="dim">{{ c.category }}</td>
+              <td class="num">
+                @if (editingCost() === c.id) {
+                  <span class="edit">
+                    <input
+                      type="text"
+                      inputmode="decimal"
+                      [ngModel]="draftAmount()"
+                      (ngModelChange)="draftAmount.set($event)"
+                      (keyup.enter)="saveAmount(c)"
+                      (keyup.escape)="cancelEdit()"
+                      [attr.aria-label]="'Amount for ' + c.description"
+                    />
+                    <button
+                      type="button"
+                      [disabled]="busy()"
+                      (click)="saveAmount(c)"
+                    >
+                      Save
+                    </button>
+                    <button type="button" class="ghost" (click)="cancelEdit()">
+                      Cancel
+                    </button>
+                  </span>
+                } @else {
+                  {{ fmt(c.amount) }}
+                }
+              </td>
+              <td class="num">
+                @if (editingCost() !== c.id) {
+                  <button type="button" class="link" (click)="startEdit(c)">
+                    edit
+                  </button>
+                }
+              </td>
+            </tr>
+            @if (expanded().has(c.id)) {
+              @for (part of c.components; track part.id) {
+                <tr class="component">
+                  <td class="indent">{{ part.description }}</td>
+                  <td></td>
+                  <td class="num dim">{{ fmt(part.amount) }}</td>
+                  <td></td>
+                </tr>
+              }
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Reconciliation</h2>
+      @if (periods().length) {
+        <select
+          [ngModel]="reconcilePeriod()"
+          (ngModelChange)="onReconcilePeriod($event)"
+          aria-label="Month to reconcile"
+        >
+          @for (p of periods(); track p.year + "-" + p.month) {
+            <option [value]="p.year + '-' + p.month">
+              {{ periodLabel(p) }}
+            </option>
+          }
+        </select>
+      }
+    </div>
+    <p class="dim small lead">
+      What each commitment expected, against what actually left the account. The
+      workbook had both numbers on different sheets and no way to compare them.
+    </p>
+
+    @if (drifted().length) {
+      <h3>Off by something</h3>
+      <div class="scroll-x">
+        <table>
+          <tbody>
+            @for (r of drifted(); track r.fixed_cost_id) {
+              <tr>
+                <td>{{ r.description }}</td>
+                <td class="dim">{{ r.merchant ?? "—" }}</td>
+                <td class="num dim">expected {{ fmt(r.expected) }}</td>
+                <td class="num">actual {{ fmt(r.actual) }}</td>
+                <td class="num" [class.over]="+(r.drift ?? 0) !== 0">
+                  {{ +(r.drift ?? 0) > 0 ? "+" : "" }}{{ fmt(r.drift) }}
+                </td>
+                <td class="dim small">{{ r.note ?? "" }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+
+    @if (unlinked().length) {
+      <h3>Not linked to a merchant</h3>
+      <p class="dim small">
+        These can't be checked until they know who charges for them. Guessing
+        from the name gets Netflix right and rent wrong — the bill is called
+        "Rent" and the charge says BILT CARD HOUSING.
+      </p>
+      <div class="scroll-x">
+        <table>
+          <tbody>
+            @for (r of unlinked(); track r.fixed_cost_id) {
+              <tr>
+                <td>{{ r.description }}</td>
+                <td class="num dim">{{ fmt(r.expected) }}</td>
+                <td>
+                  @if (r.suggestions.length) {
+                    <span class="dim small">is it</span>
+                    @for (s of r.suggestions; track s[0]) {
+                      <button
+                        type="button"
+                        class="chip"
+                        [disabled]="busy()"
+                        (click)="link(r, s[0], s[1])"
+                      >
+                        {{ s[1] }}
+                      </button>
+                    }
+                    <span class="dim small">?</span>
+                  } @else {
+                    <span class="dim small">no candidate found</span>
+                  }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+
+    @if (matched().length) {
+      <p class="dim small footnote">
+        {{ matched().length }} commitments matched to the cent.
+      </p>
+    }
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Paycheck</h2>
+      <span class="total">{{ fmt(takeHome()) }} take-home per cheque</span>
+    </div>
+    <div class="paycheck-grid">
+      @for (g of paycheckGroups(); track g.kind) {
+        <div class="group">
+          <div class="group-head">
+            <span>{{ g.kind.toLowerCase() }}</span>
+            <span class="num">{{ fmt(g.total) }}</span>
+          </div>
+          @for (l of g.lines; track l.id) {
+            <div class="line">
+              <span class="truncate">{{ l.description }}</span>
+              <span class="num dim">{{ fmt(l.amount) }}</span>
+            </div>
+          }
+        </div>
+      }
+    </div>
+    <p class="dim small footnote">
+      Two cheques a month. The workbook's July Budget sheet mislabels these —
+      its "Taxes" cell reads the insurance total and its "Automatic Savings"
+      cell reads the tax total.
+    </p>
+  </section>
+}

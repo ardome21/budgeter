@@ -75,6 +75,31 @@ imported into.
 | **Import** | Pasting a bank export into a sheet, then categorising it by hand |
 | **Merchants** | Nothing. A workbench for what each merchant costs, plus the consolidation the spreadsheet had no way to do |
 | **Accounts** | The `Accounts` sheet — net worth over time, and recording a new snapshot |
+| **Settings** | The `Monthly Fixed Costs`, `Paycheck` and `Rent` sheets, plus reconciliation |
+
+### Config is editable, and keeps its history
+
+Fixed costs and paycheck lines carry `effective_from` / `effective_to`.
+Changing an amount ends the current row and opens a new one, so last year's rent
+stays answerable; changing a description edits in place, because fixing a typo
+is not a price change. Deleting ends a commitment rather than erasing it — a
+cancelled subscription still explains last month.
+
+A bill can carry its own breakdown. Rent arrives as one charge but is really
+thirteen lines, and the components sum to exactly the parent, never counted
+beside it.
+
+### Reconciliation
+
+What each commitment expected against what actually left the account. The
+workbook had rent expected at 1553.37 on one sheet and BILT CARD HOUSING
+charging 1535.17 on another, with nothing connecting them.
+
+A commitment is matched to a merchant explicitly, because guessing from the
+description gets Netflix right and rent wrong — the bill is called "Rent" and
+the charge says BILT CARD HOUSING. Unmatched commitments say so and offer
+candidates rather than falling back to a category total, which made Energy and
+Phone both report the entire Utilities figure.
 
 ### Net worth
 

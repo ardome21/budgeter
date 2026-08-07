@@ -12,9 +12,13 @@ import {
   Period,
   Preview,
   AccountRow,
+  Allocations,
+  FixedCost,
   MerchantPage,
   MerchantSort,
   NetWorth,
+  PaycheckLine,
+  Reconciliation,
   Suggestion,
   Transaction,
 } from './models';
@@ -92,6 +96,74 @@ export class Api {
 
   commitImport(rows: unknown[]): Observable<CommitResult> {
     return this.http.post<CommitResult>('/api/imports/commit', { rows });
+  }
+
+  allocations(year: number, month: number): Observable<Allocations> {
+    return this.http.get<Allocations>(
+      `/api/periods/${year}/${month}/allocations`,
+    );
+  }
+
+  setAllocations(
+    year: number,
+    month: number,
+    allocations: { category_id: number; amount: string }[],
+  ): Observable<Allocations> {
+    return this.http.put<Allocations>(
+      `/api/periods/${year}/${month}/allocations`,
+      { allocations },
+    );
+  }
+
+  copyAllocations(
+    year: number,
+    month: number,
+    fromYear: number,
+    fromMonth: number,
+  ): Observable<Allocations> {
+    return this.http.post<Allocations>(
+      `/api/periods/${year}/${month}/allocations/copy?from_year=${fromYear}&from_month=${fromMonth}`,
+      {},
+    );
+  }
+
+  fixedCosts(includeEnded = false): Observable<FixedCost[]> {
+    return this.http.get<FixedCost[]>(
+      `/api/fixed-costs?include_ended=${includeEnded}`,
+    );
+  }
+
+  updateFixedCost(
+    id: number,
+    body: Partial<{
+      description: string;
+      amount: string;
+      category_id: number;
+      merchant_id: number | null;
+    }>,
+  ): Observable<FixedCost> {
+    return this.http.patch<FixedCost>(`/api/fixed-costs/${id}`, body);
+  }
+
+  endFixedCost(id: number): Observable<void> {
+    return this.http.delete<void>(`/api/fixed-costs/${id}`);
+  }
+
+  paycheck(): Observable<PaycheckLine[]> {
+    return this.http.get<PaycheckLine[]>('/api/paycheck');
+  }
+
+  updatePaycheckLine(
+    id: number,
+    body: Partial<{ description: string; amount: string }>,
+  ): Observable<PaycheckLine> {
+    return this.http.patch<PaycheckLine>(`/api/paycheck/${id}`, body);
+  }
+
+  reconcile(year: number, month: number): Observable<Reconciliation> {
+    return this.http.get<Reconciliation>(
+      `/api/periods/${year}/${month}/reconcile`,
+    );
   }
 
   accounts(): Observable<AccountRow[]> {

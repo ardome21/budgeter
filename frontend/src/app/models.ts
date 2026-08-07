@@ -241,3 +241,62 @@ export function parseDay(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
+
+export interface AllocationRow {
+  category_id: number;
+  category: string;
+  amount: Money;
+}
+
+export interface Allocations {
+  year: number;
+  month: number;
+  allocations: AllocationRow[];
+  total: Money;
+}
+
+export interface FixedCost {
+  id: number;
+  description: string;
+  amount: Money;
+  category_id: number;
+  category: string;
+  is_exact: boolean;
+  effective_from: string;
+  effective_to: string | null;
+  parent_id: number | null;
+  merchant_id: number | null;
+  /** The bill's own breakdown. Part of `amount`, never counted beside it. */
+  components: FixedCost[];
+}
+
+export interface PaycheckLine {
+  id: number;
+  description: string;
+  amount: Money;
+  kind: 'INCOME' | 'INSURANCE' | 'SAVINGS' | 'TAX';
+  effective_from: string;
+  effective_to: string | null;
+}
+
+export interface ReconcileRow {
+  fixed_cost_id: number;
+  description: string;
+  category: string;
+  expected: Money;
+  actual: Money | null;
+  drift: Money | null;
+  merchant: string | null;
+  charges: number;
+  note: string | null;
+  /** [merchant id, name] candidates for an unlinked commitment. */
+  suggestions: [number, string][];
+}
+
+export interface Reconciliation {
+  year: number;
+  month: number;
+  rows: ReconcileRow[];
+  expected_total: Money;
+  matched_total: Money;
+}

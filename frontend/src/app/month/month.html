@@ -73,7 +73,63 @@
   }
 
   <section class="card">
-    <h2>Categories</h2>
+    <div class="cat-head">
+      <h2>Categories</h2>
+      @if (!editing()) {
+        <button type="button" class="link" (click)="startEditing()">
+          {{ +s.allocated_total ? "Edit budget" : "Set a budget" }}
+        </button>
+      }
+    </div>
+
+    @if (editing()) {
+      <div class="budget-editor">
+        <p class="dim small">
+          Set what each category gets this month. Leave one blank to give it
+          nothing — spending still counts, it just has no target.
+        </p>
+        <div class="budget-grid">
+          @for (c of allCategories(); track c.id) {
+            <label class="budget-field">
+              <span class="dim small">{{ c.name }}</span>
+              <input
+                type="text"
+                inputmode="decimal"
+                placeholder="—"
+                [ngModel]="drafts()[c.id] ?? ''"
+                (ngModelChange)="setDraft(c.id, $event)"
+              />
+            </label>
+          }
+        </div>
+        <div class="budget-actions">
+          <button
+            class="primary"
+            type="button"
+            [disabled]="savingBudget()"
+            (click)="saveBudget()"
+          >
+            Save {{ fmt(draftTotal()) }} budget
+          </button>
+          @if (previousLabel()) {
+            <button
+              type="button"
+              [disabled]="savingBudget()"
+              (click)="copyPrevious()"
+            >
+              Copy {{ previousLabel() }}
+            </button>
+          }
+          <button type="button" class="ghost" (click)="cancelEditing()">
+            Cancel
+          </button>
+          <span class="dim small">
+            Take-home is {{ fmt(overview()?.take_home) }}.
+          </span>
+        </div>
+      </div>
+    }
+
     <div class="scroll-x">
       <table>
         <thead>

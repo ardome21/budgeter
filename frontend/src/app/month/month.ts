@@ -62,6 +62,90 @@ export class Month {
     });
   }
 
+  // ---- budget editing -------------------------------------------------
+  editing = signal(false);
+  drafts = signal<Partial<Record<number, string>>>({});
+  savingBudget = signal(false);
+  allCategories = signal<{ id: number; name: string }[]>([]);
+
+  draftTotal = computed(() =>
+    Object.values(this.drafts())
+      .reduce((sum: number, v) => sum + (Number(v) || 0), 0)
+      .toFixed(2),
+  );
+
+  startEditing(): void {
+    const seeded: Record<number, string> = {};
+    for (const line of this.summary()?.categories ?? []) {
+      if (Number(line.allocated) > 0) seeded[line.category_id] = line.allocated;
+    }
+    this.drafts.set(seeded);
+    this.editing.set(true);
+    if (!this.allCategories().length) {
+      this.api.categories().subscribe((c) => this.allCategories.set(c));
+    }
+  }
+
+  setDraft(categoryId: number, value: string): void {
+    this.drafts.update((d) => ({ ...d, [categoryId]: value }));
+  }
+
+  cancelEditing(): void {
+    this.editing.set(false);
+    this.drafts.set({});
+  }
+
+  saveBudget(): void {
+    const [year, month] = this.selected().split('-').map(Number);
+    const allocations = Object.entries(this.drafts())
+      .filter((e): e is [string, string] => !!e[1] && Number(e[1]) > 0)
+      .map(([id, v]) => ({ category_id: Number(id), amount: v }));
+
+    this.savingBudget.set(true);
+    this.api.setAllocations(year, month, allocations).subscribe({
+      next: () => {
+        this.savingBudget.set(false);
+        this.cancelEditing();
+        this.load();
+      },
+      error: (e) => {
+        this.savingBudget.set(false);
+        this.error.set(this.describe(e));
+      },
+    });
+  }
+
+  /** Most months are last month with a number or two changed. */
+  copyPrevious(): void {
+    const [year, month] = this.selected().split('-').map(Number);
+    const previous = this.periods().find(
+      (p) => !(p.year === year && p.month === month),
+    );
+    if (!previous) return;
+    this.savingBudget.set(true);
+    this.api
+      .copyAllocations(year, month, previous.year, previous.month)
+      .subscribe({
+        next: () => {
+          this.savingBudget.set(false);
+          this.cancelEditing();
+          this.load();
+        },
+        error: (e) => {
+          this.savingBudget.set(false);
+          this.error.set(this.describe(e));
+        },
+      });
+  }
+
+  previousLabel(): string {
+    const [year, month] = this.selected().split('-').map(Number);
+    const p = this.periods().find(
+      (x) => !(x.year === year && x.month === month),
+    );
+    return p ? `${MONTH_NAMES[p.month - 1]} ${p.year}` : '';
+  }
+
   onSelect(value: string): void {
     this.selected.set(value);
     this.load();
