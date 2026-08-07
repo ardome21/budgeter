@@ -65,6 +65,21 @@ class TestParseTextDate:
     def test_prose_headers_from_the_2024_accounts_sheet(self, header, expected):
         assert parse_text_date(header, 2024) == expected
 
+    @pytest.mark.parametrize(
+        ("header", "expected"),
+        [
+            # The 2026 Accounts sheet writes the year into the header text.
+            ("Sunday, February 2, 2025", date(2025, 2, 2)),
+            ("Thursday, September 4, 2025", date(2025, 9, 4)),
+            ("Thursday, August 6, 2026", date(2026, 8, 6)),
+        ],
+    )
+    def test_a_year_written_in_the_text_beats_the_workbook_year(self, header, expected):
+        """Passing 2026 here mimics reading the 2026 workbook. Taking the
+        workbook's year instead of the written one filed every 2025 snapshot
+        under 2026 and invented a year of net worth that never happened."""
+        assert parse_text_date(header, 2026) == expected
+
     def test_real_datetime_passes_through(self):
         assert parse_text_date(datetime(2024, 6, 3), 2024) == date(2024, 6, 3)
 

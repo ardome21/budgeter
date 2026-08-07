@@ -23,7 +23,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import openpyxl
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -157,20 +157,34 @@ def sheet_month(sheet_name: str) -> int | None:
 
 
 def parse_text_date(text: str, year: int) -> date | None:
-    """The 2024 Accounts sheet headers are prose: 'March 2nd', 'Amount As of Feb 2'."""
+    """Accounts sheet headers are prose, and inconsistently so.
+
+    2024 writes 'March 2nd' and 'Amount As of Feb 2' with no year at all; 2026
+    writes 'Sunday, February 2, 2025' with one. The written year wins when
+    present — taking the workbook's year instead filed every 2025 snapshot
+    under 2026 and invented a year of net worth history that never happened.
+    """
     if isinstance(text, datetime):
         return text.date()
     if not isinstance(text, str):
         return None
     low = text.lower()
     for name, num in MONTHS.items():
-        if name[:3] in low:
-            m = re.search(r"(\d{1,2})", low[low.index(name[:3]) :])
-            if m:
-                try:
-                    return date(year, num, int(m.group(1)))
-                except ValueError:
-                    return None
+        if name[:3] not in low:
+            continue
+        tail = low[low.index(name[:3]) :]
+        day = re.search(r"(\d{1,2})(?!\d)", tail)
+        if not day:
+            return None
+        written_year = re.search(r"\b(19|20)\d{2}\b", text)
+        try:
+            return date(
+                int(written_year.group()) if written_year else year,
+                num,
+                int(day.group(1)),
+            )
+        except ValueError:
+            return None
     return None
 
 
@@ -531,22 +545,54 @@ def reset(session: Session) -> None:
     session.commit()
 
 
+def reset_accounts(session: Session) -> None:
+    """Wipe only accounts and their snapshots.
+
+    A full --reset also destroys merchant merges and split decisions, which are
+    the user's own work and not reproducible from the workbooks. Re-importing
+    the Accounts sheets alone must not cost them that.
+    """
+    session.execute(delete(AccountBalance))
+    session.execute(delete(Account))
+    session.commit()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("workbooks", nargs="+", type=Path)
     ap.add_argument("--reset", action="store_true", help="wipe all data first")
+    ap.add_argument(
+        "--accounts-only",
+        action="store_true",
+        help="re-import just the Accounts sheets, preserving everything else",
+    )
     args = ap.parse_args()
 
     report = Report()
     with SessionLocal() as session:
-        if args.reset:
+        if args.accounts_only:
+            linked = session.scalar(
+                select(func.count(Transaction.id)).where(
+                    Transaction.account_id.is_not(None)
+                )
+            )
+            if linked:
+                print(
+                    f"{linked} transactions reference an account; refusing to "
+                    "delete accounts underneath them.",
+                    file=sys.stderr,
+                )
+                return 1
+            reset_accounts(session)
+        elif args.reset:
             reset(session)
         elif session.scalar(select(Category).limit(1)):
             print("Database already holds data. Re-run with --reset.", file=sys.stderr)
             return 1
 
         imp = Importer(session, report)
-        imp.seed_categories()
+        if not args.accounts_only:
+            imp.seed_categories()
 
         # Newest workbook last, so its config wins for the current period.
         for path in sorted(args.workbooks):
@@ -563,6 +609,10 @@ def main() -> int:
                 ws = wb[sheet]
                 if sheet.startswith("Yearly"):
                     continue  # derived rollup, recomputed on read
+                if args.accounts_only:
+                    if sheet == "Accounts":
+                        imp.import_accounts(ws, year, label)
+                    continue
                 if "Spending" in sheet:
                     imp.import_spending(ws, year, label)
                 elif "Budget" in sheet and sheet != "Monthly Overview":
@@ -570,7 +620,7 @@ def main() -> int:
                 elif sheet == "Accounts":
                     imp.import_accounts(ws, year, label)
 
-            if year == max(
+            if not args.accounts_only and year == max(
                 int(re.search(r"(\d{4})", p.stem).group(1))
                 for p in args.workbooks
                 if re.search(r"(\d{4})", p.stem)
