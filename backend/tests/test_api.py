@@ -1095,27 +1095,63 @@ class TestReconciliation:
                 assert r["actual"] is None
                 assert r["drift"] is None
 
-    def test_unmatched_rows_offer_candidates(self, client):
-        body = client.get("/api/periods/2026/7/reconcile").json()
-        unlinked = [
-            r for r in body["rows"] if r["note"] == "not linked to a merchant yet"
-        ]
-        assert any(r["suggestions"] for r in unlinked), (
+    def test_unmatched_rows_offer_candidates(self, client, category_id):
+        """An unmatched commitment must offer a way out of being unmatched.
+
+        This creates the unlinked row it needs rather than hunting for one in
+        the data. It used to search, and passed only because seven real
+        commitments were pointing at merchants nobody bills under; once those
+        were linked there was nothing left to find and the assertion started
+        proving nothing.
+        """
+        merchants = client.get("/api/merchants?limit=1").json()["rows"]
+        assert merchants, "expected merchants in the database"
+        name = merchants[0]["canonical_name"]
+
+        created = client.post(
+            "/api/fixed-costs",
+            json={
+                "description": f"ZZ {name} Membership",
+                "amount": "5.00",
+                "category_id": category_id,
+                "effective_from": "2020-01-01",
+            },
+        ).json()
+
+        row = next(
+            r
+            for r in client.get("/api/periods/2026/7/reconcile").json()["rows"]
+            if r["fixed_cost_id"] == created["id"]
+        )
+        assert row["note"] == "not linked to a merchant yet"
+        assert row["actual"] is None
+        assert row["suggestions"], (
             "an unmatched commitment with no suggestion is a dead end"
         )
 
-    def test_linking_a_merchant_makes_the_row_reconcile(self, client):
+    def test_linking_a_merchant_makes_the_row_reconcile(self, client, category_id):
+        """Accepting a suggested candidate is what closes an unmatched row.
+
+        Like the test above, this builds its own unlinked commitment. It used
+        to look for one and skipped when it found none, so once the real
+        commitments were linked it stopped running at all — a test that
+        silently stops testing is worse than one that fails.
+        """
+        merchant = client.get("/api/merchants?limit=1").json()["rows"][0]
+        created = client.post(
+            "/api/fixed-costs",
+            json={
+                "description": f"ZZ {merchant['canonical_name']} Membership",
+                "amount": "5.00",
+                "category_id": category_id,
+                "effective_from": "2020-01-01",
+            },
+        ).json()
+
         body = client.get("/api/periods/2026/7/reconcile").json()
-        target = next(
-            (
-                r
-                for r in body["rows"]
-                if r["note"] == "not linked to a merchant yet" and r["suggestions"]
-            ),
-            None,
-        )
-        if target is None:
-            pytest.skip("nothing unlinked to link")
+        target = next(r for r in body["rows"] if r["fixed_cost_id"] == created["id"])
+        assert target["note"] == "not linked to a merchant yet"
+        assert target["suggestions"], "expected a candidate to accept"
 
         merchant_id = target["suggestions"][0][0]
         client.patch(
@@ -1135,3 +1171,116 @@ class TestReconciliation:
         assert Decimal(body["expected_total"]) == sum(
             Decimal(c["amount"]) for c in costs
         )
+
+
+class TestRecurringBackfill:
+    """`recurring_candidates`, which the backfill script drives."""
+
+    def test_an_explicit_merchant_link_is_honoured(self, session, category_id):
+        """The link must win over the description, as it does in reconcile.
+
+        Reading only the description found nothing for rent, phone or the
+        paper — the commitments whose bill is named differently from their
+        charge, which is to say the ones that matter. Those are exactly the
+        rows a committed-vs-flexible split is wrong without.
+        """
+        from datetime import date
+
+        from backend.models import (
+            BudgetPeriod,
+            FixedCost,
+            Merchant,
+            Transaction,
+            TransactionSource,
+        )
+        from backend.reconcile import recurring_candidates
+
+        merchant = Merchant(canonical_name="ZZ Test Landlord Card")
+        period = session.query(BudgetPeriod).first()
+        if period is None:
+            pytest.skip("no periods in the database — run the importer first")
+        session.add(merchant)
+        session.flush()
+
+        txn = Transaction(
+            period_id=period.id,
+            raw_description="ZZ LANDLORD CARD HOUSING",
+            merchant_id=merchant.id,
+            category_id=category_id,
+            amount=Decimal("1000.00"),
+            is_recurring=False,
+            source=TransactionSource.CSV,
+        )
+        # The name nobody bills under — this is the whole point.
+        cost = FixedCost(
+            description="ZZ Test Rent",
+            amount=Decimal("1000.00"),
+            category_id=category_id,
+            effective_from=date(2020, 1, 1),
+            merchant_id=merchant.id,
+        )
+        session.add_all([txn, cost])
+        session.flush()
+
+        found = {t[0] for t in recurring_candidates(session)}
+        assert txn.id in found, (
+            "a transaction charged by a linked merchant must be a candidate "
+            "even though the commitment's description matches nothing"
+        )
+
+    def test_a_breakdown_line_is_not_treated_as_a_payee(self, session, category_id):
+        """Components are invoice lines, not merchants.
+
+        'Internet' and 'Valet Trash' are what the rent is made of. Matching a
+        merchant against them would mark someone else's transactions recurring
+        and attribute them to a line item.
+        """
+        from datetime import date
+
+        from backend.models import (
+            BudgetPeriod,
+            FixedCost,
+            Merchant,
+            Transaction,
+            TransactionSource,
+        )
+        from backend.reconcile import recurring_candidates
+
+        period = session.query(BudgetPeriod).first()
+        if period is None:
+            pytest.skip("no periods in the database — run the importer first")
+
+        merchant = Merchant(canonical_name="Zzcomponent")
+        session.add(merchant)
+        session.flush()
+
+        parent = FixedCost(
+            description="ZZ Parent Bill",
+            amount=Decimal("50.00"),
+            category_id=category_id,
+            effective_from=date(2020, 1, 1),
+        )
+        session.add(parent)
+        session.flush()
+        session.add(
+            FixedCost(
+                description="Zzcomponent",
+                amount=Decimal("50.00"),
+                category_id=category_id,
+                effective_from=date(2020, 1, 1),
+                parent_id=parent.id,
+            )
+        )
+        txn = Transaction(
+            period_id=period.id,
+            raw_description="ZZCOMPONENT SOMETHING",
+            merchant_id=merchant.id,
+            category_id=category_id,
+            amount=Decimal("50.00"),
+            is_recurring=False,
+            source=TransactionSource.CSV,
+        )
+        session.add(txn)
+        session.flush()
+
+        assert txn.id not in {t[0] for t in recurring_candidates(session)}

@@ -174,35 +174,48 @@ def recurring_candidates(session: Session) -> list[tuple[int, str, str]]:
 
     Returns (transaction id, description, which fixed cost matched).
     """
-    keys: dict[str, str] = {}
+    # An explicit link wins over the description, exactly as reconcile_month
+    # treats it. Reading only the description missed every commitment whose
+    # bill is named differently from its charge — rent, phone, the paper — and
+    # those are the standing commitments, so the backfill skipped precisely the
+    # rows it exists to find.
+    by_merchant: dict[int, str] = {}
+    unlinked: dict[str, str] = {}
     for fc in session.scalars(
-        select(FixedCost).where(FixedCost.effective_to.is_(None))
+        # Top-level only. A component is part of its parent's bill, and its
+        # description is a line on an invoice ('Internet', 'Valet Trash'), not
+        # the name of anyone who charges you.
+        select(FixedCost).where(
+            FixedCost.effective_to.is_(None), FixedCost.parent_id.is_(None)
+        )
     ).all():
+        if fc.merchant_id is not None:
+            by_merchant.setdefault(fc.merchant_id, fc.description)
+            continue
         key = normalize_merchant(fc.description)
         if key:
-            keys.setdefault(key, fc.description)
-    if not keys:
-        return []
+            unlinked.setdefault(key, fc.description)
 
-    merchant_ids = dict(
-        session.execute(
+    if unlinked:
+        for merchant_id, pattern in session.execute(
             select(MerchantPattern.merchant_id, MerchantPattern.pattern).where(
-                MerchantPattern.pattern.in_(keys)
+                MerchantPattern.pattern.in_(unlinked)
             )
-        ).all()
-    )
-    if not merchant_ids:
+        ).all():
+            by_merchant.setdefault(merchant_id, unlinked[pattern])
+
+    if not by_merchant:
         return []
 
     rows = session.execute(
         select(Transaction.id, Transaction.raw_description, Transaction.merchant_id)
         .where(
-            Transaction.merchant_id.in_(merchant_ids),
+            Transaction.merchant_id.in_(by_merchant),
             ~Transaction.is_recurring,
         )
         .order_by(Transaction.id)
     ).all()
     return [
-        (txn_id, description, keys[merchant_ids[merchant_id]])
+        (txn_id, description, by_merchant[merchant_id])
         for txn_id, description, merchant_id in rows
     ]
