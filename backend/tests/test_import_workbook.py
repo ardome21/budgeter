@@ -113,6 +113,38 @@ class TestNormalizeMerchant:
         b = normalize_merchant("APPLE.COM/BILL 866-712-7753 CAMMGGQWSBX6A0")
         assert a == b
 
+    def test_a_long_name_in_capitals_is_not_mistaken_for_an_id(self):
+        """Descriptors arrive in capitals, so a long word is not an id.
+
+        Stripping any 8+ character run of capitals removed the merchant itself:
+        'DUKEENERGY BILL PAY 910175813041' became 'bill pay', which shares a
+        first word with 'BILT CARD HOUSING' to within one typo — so the power
+        bill and the rent were offered as the same merchant. An id has a digit
+        in it; a name does not.
+        """
+        assert normalize_merchant("DUKEENERGY BILL PAY 910175813041") == (
+            "dukeenergy bill pay"
+        )
+        assert normalize_merchant("CHARLOTTE OBSERVER") == "observer"
+        assert normalize_merchant("GRANDFATHER MOUNTAIN LINVILLE NC") == (
+            "grandfather mountain linville"
+        )
+        assert normalize_merchant("TST* POTBELLY SANDWICH SH") == "potbelly sandwich"
+
+    def test_a_name_never_normalizes_to_nothing(self):
+        """An empty key means the transaction gets no merchant at all.
+
+        Five rows in the imported history had one, which is why the Observer
+        subscription reconciled against nothing.
+        """
+        for descriptor in (
+            "GUESTRS*BELLAGIO",
+            "CHARLOTTE OBSERVER",
+            "TST* POTBELLY SANDWICH SH",
+            "GRANDFATHER MOUNTAIN LINVILLE NC",
+        ):
+            assert normalize_merchant(descriptor) != "", descriptor
+
     def test_distinct_merchants_are_not_merged(self):
         # The normalizer is deliberately conservative: leaving two spellings
         # unmerged is recoverable, merging two real merchants is not.

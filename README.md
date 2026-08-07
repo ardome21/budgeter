@@ -101,6 +101,20 @@ the charge says BILT CARD HOUSING. Unmatched commitments say so and offer
 candidates rather than falling back to a category total, which made Energy and
 Phone both report the entire Utilities figure.
 
+The link is worth setting for every commitment. Seven were pointing at names
+nobody bills under — the workbook typed `Phone` and `NYT` by hand for three
+years while the bank writes `Spectrum Mobile` and `NYTIMES*` — and a commitment
+linked to a dead name reports "expected but not charged this month" forever,
+which reads like a missed payment and is not one. Linked, July 2026 reconciles
+15 of 16, and the rent drift the workbook could not see is on screen: 1553.37
+expected against 1535.17 charged.
+
+`iCloud` is deliberately left unlinked. It bills as `APPLE.COM/BILL`, the same
+descriptor as Apple TV, so both resolve to one merchant and no link can tell
+0.99 from 12.99. Apple TV therefore carries a 0.99 drift that is really the
+iCloud charge. An unmatched row that says so beats a link that quietly reports
+one subscription's cost as another's.
+
 ### Net worth
 
 The `Accounts` sheet stored balances wide, a new column per snapshot, which is
@@ -137,6 +151,18 @@ it has items.
 Normalization is conservative and under-merges on purpose: wrongly merging two
 shops silently corrupts every total they appear in and cannot be undone, while
 leaving one shop split is a click to fix.
+
+The one thing normalization must not do is discard the name. It strips the
+opaque reference a bank appends — `APPLE.COM/BILL`'s `CAMMGGH21Q0DA0` — by
+looking for **a long run containing a digit**, because that is what separates
+an identifier from a word. Matching on length alone ate the merchant instead:
+descriptors arrive in capitals, so `DUKEENERGY BILL PAY 910175813041` became
+`bill pay`, which is one typo from `BILT CARD HOUSING`, and the power bill and
+the rent were duly proposed as one merchant and merged. Four other names —
+`CHARLOTTE OBSERVER`, `POTBELLY SANDWICH`, `GRANDFATHER MOUNTAIN`,
+`GUESTRS*BELLAGIO` — normalized to nothing at all and their charges got no
+merchant, which is why the Observer subscription reconciled against an empty
+month while the charge sat one table away.
 
 A proposal is built from one rule — **two merchants are proposed when their
 first word is the same brand**, allowing one character of typo. In a bank
@@ -244,10 +270,22 @@ discretionary rows in it. So `categories.kind` does not encode commitment — it
 only distinguishes `SPENDING` from `SAVINGS` (moved, not spent) and `OTHER`.
 
 Commitment comes from `transactions.is_recurring` and from the `fixed_costs`
-list. Note that `is_recurring` is under-recorded in the source workbooks — rent
-is flagged on only 3 of 19 rows — so the transaction-level committed figure is
-currently a floor. Matching transactions against the fixed-cost list is what
-makes it exact, and that is Phase 4.
+list. `is_recurring` is under-recorded in the source workbooks — rent is
+flagged on only 3 of 19 rows — because the 'Automatic?' column was filled in by
+hand and often not at all. `scripts/backfill_recurring.py` closes the gap by
+marking anything charged by a merchant a standing commitment names:
+
+```sh
+uv run python scripts/backfill_recurring.py            # report only
+uv run python scripts/backfill_recurring.py --apply    # write it
+```
+
+It is a dry run by default, because inference over a thousand rows changes how
+every month's committed figure reads and should be looked at first. It follows
+the **explicit merchant link** where a commitment has one, so it is worth
+re-running after linking a commitment on the Settings screen — before the
+links existed it found nothing for rent, phone or the paper, which are the
+commitments the split most depends on.
 
 ### Rent includes bundled utilities
 

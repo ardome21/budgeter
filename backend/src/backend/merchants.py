@@ -14,7 +14,15 @@ PROCESSOR_PREFIX = re.compile(
 )
 STORE_NUMBER = re.compile(r"#\s*\d+")
 PHONE = re.compile(r"\b\d{3}-\d{3}-\d{4}\b")
-LONG_ID = re.compile(r"\b[A-Z0-9]{8,}\b")  # APPLE.COM/BILL's CAMMGGH21Q0DA0
+# An opaque reference the bank appends: APPLE.COM/BILL's CAMMGGH21Q0DA0, or a
+# bare account number. It must contain a digit — that is what separates an
+# identifier from a word. Matching on length alone ate merchant names instead:
+# DUKEENERGY, POTBELLY, GRANDFATHER, CHARLOTTE OBSERVER. Descriptors arrive in
+# capitals, so every long name looked exactly like an id, and 'DUKEENERGY BILL
+# PAY 910175813041' collapsed to 'bill pay' — close enough to 'BILT CARD
+# HOUSING' that the first-word rule then offered the power bill and the rent as
+# the same merchant.
+LONG_ID = re.compile(r"\b(?=[A-Z0-9]{8,}\b)[A-Z0-9]*\d[A-Z0-9]*\b")
 TRAILING_STATE = re.compile(r"\s+[A-Z]{2}\s*$")
 NON_ALNUM = re.compile(r"[^a-z0-9 ]+")
 
