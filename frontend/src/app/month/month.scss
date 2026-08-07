@@ -1,0 +1,145 @@
+.head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+
+  select {
+    width: auto;
+    min-width: 15rem;
+  }
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+
+  .k {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .v {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 1.2rem;
+    font-weight: 600;
+  }
+
+  &.accent {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+
+    .v {
+      color: var(--accent);
+    }
+  }
+}
+
+section.card {
+  margin-bottom: 1rem;
+
+  h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 0.6rem;
+  }
+}
+
+.banner {
+  margin-bottom: 1rem;
+}
+
+.bar-col {
+  width: 8rem;
+}
+
+.bar {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+
+  .fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 4px;
+
+    &.over {
+      background: var(--over);
+    }
+  }
+}
+
+.pill {
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  margin-left: 0.4rem;
+  white-space: nowrap;
+}
+
+tfoot th {
+  border-top: 1px solid var(--border);
+  border-bottom: none;
+  color: var(--text);
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0;
+  padding-top: 0.6rem;
+}
+
+.two-up {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+  gap: 1rem;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.4rem 1rem;
+  margin: 0;
+  font-size: 14px;
+
+  dt {
+    color: var(--text-dim);
+  }
+  dd {
+    margin: 0;
+  }
+}
+
+.truncate {
+  max-width: 20rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.small {
+  font-size: 12.5px;
+}
+
+.footnote {
+  margin: 0.7rem 0 0;
+}

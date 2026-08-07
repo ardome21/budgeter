@@ -1,0 +1,200 @@
+<h1>Import</h1>
+
+@if (!preview()) {
+  <section class="card">
+    <h2>Paste or upload a bank export</h2>
+
+    <textarea
+      rows="8"
+      placeholder="Transaction Date,Description,Amount&#10;07/03/2026,HARRIS TEETER #412,66.57"
+      [ngModel]="pasted()"
+      (ngModelChange)="pasted.set($event)"
+      aria-label="Paste CSV"
+    ></textarea>
+
+    <div class="actions">
+      <button
+        class="primary"
+        type="button"
+        (click)="previewPaste()"
+        [disabled]="busy()"
+      >
+        {{ busy() ? "Reading…" : "Preview" }}
+      </button>
+
+      <label class="file">
+        <input
+          type="file"
+          accept=".csv,text/csv,text/plain"
+          (change)="onFile($event)"
+        />
+        <span>Choose a file…</span>
+      </label>
+
+      <label class="check">
+        <input
+          type="checkbox"
+          [ngModel]="flipSign()"
+          (ngModelChange)="flipSign.set($event)"
+        />
+        <span>My bank exports purchases as negative</span>
+      </label>
+    </div>
+
+    <p class="dim small hint">
+      Nothing is saved until you review it. Columns are detected automatically —
+      dates, amounts in any common format, and <code>($12.50)</code> for
+      credits.
+    </p>
+  </section>
+}
+
+@if (error()) {
+  <div class="banner error">{{ error() }}</div>
+}
+
+@if (result(); as r) {
+  <div class="banner ok">
+    Imported {{ r.created }} transaction{{ r.created === 1 ? "" : "s" }}.
+    @if (r.skipped_duplicates) {
+      Skipped {{ r.skipped_duplicates }} already present.
+    }
+    @if (r.errors.length) {
+      <ul>
+        @for (e of r.errors; track e) {
+          <li>{{ e }}</li>
+        }
+      </ul>
+    }
+  </div>
+}
+
+@if (preview(); as p) {
+  @if (p.errors.length) {
+    <div class="banner error">
+      <ul>
+        @for (e of p.errors; track e) {
+          <li>{{ e }}</li>
+        }
+      </ul>
+    </div>
+  }
+
+  @if (p.rows.length) {
+    <section class="card">
+      <div class="summary-row">
+        <div>
+          <strong>{{ p.new_count }}</strong> new
+          @if (p.duplicate_count) {
+            · <strong>{{ p.duplicate_count }}</strong> already imported
+          }
+          @if (p.uncategorised_count) {
+            · <strong class="over">{{ p.uncategorised_count }}</strong> need a
+            category
+          }
+          @if (fileName()) {
+            <span class="dim"> · from {{ fileName() }}</span>
+          }
+        </div>
+        <div class="detected dim small">
+          Read as:
+          @for (col of detectedColumns(); track col.key) {
+            <code>{{ col.key }} = {{ col.value }}</code>
+          }
+        </div>
+      </div>
+
+      @if (needsCategory()) {
+        <div class="bulk">
+          <span class="small">Set every uncategorised row to:</span>
+          <select #bulk (change)="fillBlanks(bulk.value); bulk.value = ''">
+            <option value="">Choose…</option>
+            @for (c of categories(); track c.id) {
+              <option [value]="c.id">{{ c.name }}</option>
+            }
+          </select>
+        </div>
+      }
+
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Merchant</th>
+              <th>Category</th>
+              <th class="num">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (r of review(); track r.row_number) {
+              <tr
+                [class.dup]="r.duplicate_of !== null"
+                [class.skip]="!r.include"
+              >
+                <td>
+                  <input
+                    type="checkbox"
+                    [checked]="r.include"
+                    (change)="toggle(r)"
+                    [attr.aria-label]="'Include ' + r.raw_description"
+                  />
+                </td>
+                <td class="num dim">{{ r.occurred_on ?? "—" }}</td>
+                <td class="truncate" [title]="r.raw_description">
+                  {{ r.raw_description }}
+                  @if (r.duplicate_of !== null) {
+                    <span class="pill dup-pill">already imported</span>
+                  }
+                  @for (n of r.notes; track n) {
+                    <span class="pill">{{ n }}</span>
+                  }
+                </td>
+                <td class="dim truncate">{{ r.merchant_name ?? "—" }}</td>
+                <td>
+                  <select
+                    [ngModel]="r.categoryId"
+                    (ngModelChange)="setCategory(r, $event)"
+                    [class.missing]="!r.categoryId"
+                    [attr.aria-label]="'Category for ' + r.raw_description"
+                  >
+                    <option [ngValue]="null">— pick one —</option>
+                    @for (c of categories(); track c.id) {
+                      <option [value]="c.id">{{ c.name }}</option>
+                    }
+                  </select>
+                </td>
+                <td class="num" [class.over]="+r.amount < 0">
+                  {{ fmt(r.amount) }}
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <div class="actions commit">
+        <button
+          class="primary"
+          type="button"
+          [disabled]="!canCommit() || busy()"
+          (click)="commit()"
+        >
+          {{
+            busy()
+              ? "Importing…"
+              : "Import " + includedCount() + " transactions"
+          }}
+        </button>
+        <button type="button" (click)="reset()">Cancel</button>
+        @if (needsCategory()) {
+          <span class="over small">
+            {{ needsCategory() }} selected row(s) still need a category.
+          </span>
+        }
+      </div>
+    </section>
+  }
+}

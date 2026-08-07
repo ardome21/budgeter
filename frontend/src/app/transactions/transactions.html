@@ -1,0 +1,168 @@
+<h1>Transactions</h1>
+
+<section class="card entry">
+  <h2>Add one</h2>
+  <form (ngSubmit)="add()">
+    <label class="f-date">
+      <span>Date</span>
+      <input
+        type="date"
+        [ngModel]="form().occurred_on"
+        (ngModelChange)="setField('occurred_on', $event)"
+        name="occurred_on"
+      />
+    </label>
+
+    <label class="f-desc">
+      <span>Description</span>
+      <input
+        type="text"
+        placeholder="HARRIS TEETER #412"
+        [ngModel]="form().raw_description"
+        (ngModelChange)="setField('raw_description', $event)"
+        name="raw_description"
+        autocomplete="off"
+      />
+    </label>
+
+    <label class="f-cat">
+      <span>Category</span>
+      <select
+        [ngModel]="form().category_id"
+        (ngModelChange)="setField('category_id', +$event)"
+        name="category_id"
+      >
+        <option [value]="0" disabled>Choose…</option>
+        @for (c of categories(); track c.id) {
+          <option [value]="c.id">{{ c.name }}</option>
+        }
+      </select>
+    </label>
+
+    <label class="f-amt">
+      <span>Amount</span>
+      <input
+        type="text"
+        inputmode="decimal"
+        placeholder="12.34"
+        [ngModel]="form().amount"
+        (ngModelChange)="setField('amount', $event)"
+        name="amount"
+        autocomplete="off"
+      />
+    </label>
+
+    <label class="f-rec check">
+      <input
+        type="checkbox"
+        [ngModel]="form().is_recurring"
+        (ngModelChange)="setField('is_recurring', $event)"
+        name="is_recurring"
+      />
+      <span>Recurring</span>
+    </label>
+
+    <button class="primary f-btn" type="submit" [disabled]="saving()">
+      {{ saving() ? "Adding…" : "Add" }}
+    </button>
+  </form>
+
+  <p class="dim small hint">
+    Negative amounts are refunds — they reduce the category they came from.
+    Leave the date blank and it files under the month selected below.
+  </p>
+</section>
+
+@if (error()) {
+  <div class="banner error">{{ error() }}</div>
+}
+@if (justAdded()) {
+  <div class="banner ok">Added.</div>
+}
+
+<section class="card">
+  <div class="filters">
+    <select
+      [ngModel]="filterPeriod()"
+      (ngModelChange)="onFilterChange($event)"
+      aria-label="Filter by month"
+    >
+      <option value="">All months</option>
+      @for (p of periods(); track p.year + "-" + p.month) {
+        <option [value]="p.year + '-' + p.month">{{ periodLabel(p) }}</option>
+      }
+    </select>
+    <input
+      type="search"
+      placeholder="Search descriptions…"
+      [ngModel]="search()"
+      (ngModelChange)="onSearch($event)"
+      aria-label="Search descriptions"
+    />
+    <span class="dim small">{{ rows().length }} shown</span>
+  </div>
+
+  @if (loading()) {
+    <p class="dim">Loading…</p>
+  } @else {
+    <div class="scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Description</th>
+            <th>Merchant</th>
+            <th>Category</th>
+            <th class="num">Amount</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (t of rows(); track t.id) {
+            <tr [class.fresh]="t.id === justAdded()">
+              <td class="num dim">
+                {{ t.occurred_on ?? "—" }}
+              </td>
+              <td class="truncate" [title]="t.raw_description">
+                {{ t.raw_description }}
+                @if (t.is_recurring) {
+                  <span class="pill">recurring</span>
+                }
+              </td>
+              <td class="dim truncate">{{ t.merchant_name ?? "—" }}</td>
+              <td>
+                <select
+                  class="inline"
+                  [ngModel]="t.category_id"
+                  (ngModelChange)="recategorise(t, $event)"
+                  [attr.aria-label]="'Category for ' + t.raw_description"
+                >
+                  @for (c of categories(); track c.id) {
+                    <option [value]="c.id">{{ c.name }}</option>
+                  }
+                </select>
+              </td>
+              <td class="num" [class.over]="+t.amount < 0">
+                {{ fmt(t.amount) }}
+              </td>
+              <td>
+                <button
+                  class="danger"
+                  type="button"
+                  (click)="remove(t)"
+                  title="Delete"
+                >
+                  ✕
+                </button>
+              </td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="6" class="dim">Nothing here yet.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+</section>

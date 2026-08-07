@@ -56,7 +56,45 @@ npm start
 
 ```sh
 curl localhost:8000/api/health/db      # {"database":"ok"}
+curl localhost:4200/api/health/db      # same, through the dev proxy
 ```
+
+The second one matters: the browser only ever talks to `/api` on its own origin,
+which `frontend/proxy.conf.json` forwards to port 8000. CORS is configured but is
+not what makes the app work — it is a safety net for direct calls to `:8000`.
+
+## The app
+
+Four screens, all reading and writing the same database the workbook was
+imported into.
+
+| Screen | What it replaces |
+|---|---|
+| **Month** | The `*Budget` sheets — allocations vs actuals, committed/flexible, pace |
+| **Transactions** | The `*Spending` sheets — list, add by hand, recategorise inline |
+| **Import** | Pasting a bank export into a sheet, then categorising it by hand |
+| **Merchants** | Nothing. This is the consolidation queue the spreadsheet had no way to do |
+
+### Money is a string on the wire
+
+Every money field crosses the API as a JSON **string**, never a number.
+JavaScript has no decimal type, so a JSON number is a float the moment it is
+parsed. The browser formats what it is handed and never sums anything — every
+total on screen was computed in Postgres.
+
+### Importing a bank export
+
+Preview first, commit second; nothing is written until the preview comes back
+and you confirm it. Columns are detected across the usual header spellings,
+amounts parse from `$1,234.56` / `(45.00)` / `-45`, and there is a toggle for
+banks that export purchases as negative.
+
+Merchants resolve against the three years of history already imported, so most
+rows arrive with the right category already filled in. Re-dropping the same file
+is a no-op: CSV rows carry a content hash, and rows already present come back
+ticked off as duplicates. **Hand-entered rows are never hashed and never
+deduplicated** — two identical charges at the same bar on one night are usually
+two real rounds.
 
 ## Importing the Excel history
 

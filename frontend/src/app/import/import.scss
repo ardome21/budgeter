@@ -1,0 +1,176 @@
+h1 {
+  margin-bottom: 1.25rem;
+}
+
+section.card {
+  margin-bottom: 1rem;
+
+  h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 0.7rem;
+  }
+}
+
+.actions {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+
+  &.commit {
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--border);
+  }
+}
+
+.file {
+  position: relative;
+  overflow: hidden;
+
+  input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+  }
+
+  span {
+    display: inline-block;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 0.4rem 0.8rem;
+    font-size: 14px;
+    background: var(--surface);
+  }
+
+  &:hover span {
+    background: var(--surface-2);
+  }
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 13.5px;
+  color: var(--text-dim);
+
+  input {
+    width: auto;
+  }
+}
+
+.hint {
+  margin: 0.8rem 0 0;
+
+  code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    padding: 0.05rem 0.3rem;
+    border-radius: 4px;
+  }
+}
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin-bottom: 0.8rem;
+}
+
+.detected code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--surface-2);
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  margin-left: 0.3rem;
+}
+
+.bulk {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.8rem;
+  background: var(--surface-2);
+  border-radius: 8px;
+
+  select {
+    width: auto;
+    min-width: 11rem;
+  }
+}
+
+tr.dup {
+  color: var(--text-dim);
+}
+
+tr.skip {
+  opacity: 0.45;
+}
+
+select.missing {
+  border-color: var(--over);
+}
+
+select {
+  width: auto;
+  min-width: 10rem;
+  font-size: 13px;
+  padding: 0.2rem 0.35rem;
+}
+
+.truncate {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill {
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  margin-left: 0.4rem;
+  white-space: nowrap;
+
+  &.dup-pill {
+    border-color: var(--over);
+    color: var(--over);
+  }
+}
+
+.banner {
+  margin-bottom: 1rem;
+
+  &.ok {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  ul {
+    margin: 0.4rem 0 0;
+    padding-left: 1.1rem;
+  }
+}
+
+.small {
+  font-size: 12.5px;
+}
+
+textarea {
+  width: 100%;
+}

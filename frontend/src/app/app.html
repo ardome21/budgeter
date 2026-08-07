@@ -1,3 +1,15 @@
-<h1>budgeter</h1>
+<header>
+  <div class="wrap">
+    <span class="brand">budgeter</span>
+    <nav>
+      <a routerLink="/month" routerLinkActive="active">Month</a>
+      <a routerLink="/transactions" routerLinkActive="active">Transactions</a>
+      <a routerLink="/import" routerLinkActive="active">Import</a>
+      <a routerLink="/merchants" routerLinkActive="active">Merchants</a>
+    </nav>
+  </div>
+</header>
 
-<router-outlet />
+<main class="wrap">
+  <router-outlet />
+</main>

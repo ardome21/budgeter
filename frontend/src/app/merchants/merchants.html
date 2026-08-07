@@ -1,0 +1,82 @@
+<h1>Merchants</h1>
+
+<p class="dim intro">
+  Descriptors are collapsed conservatively — it is safer to leave one shop split
+  across two records than to merge two different shops, which would corrupt
+  every total they appear in. Below are the leftovers worth a look.
+</p>
+
+@if (error()) {
+  <div class="banner error">{{ error() }}</div>
+}
+
+@if (suggestions().length) {
+  <section class="card">
+    <h2>Likely the same place — top {{ suggestions().length }}</h2>
+    @for (group of suggestions(); track group[0].id) {
+      <div class="group">
+        <div class="group-rows">
+          @for (m of group; track m.id) {
+            <div class="candidate">
+              <span class="name">{{ m.canonical_name }}</span>
+              <span class="dim small">{{ m.transaction_count }} txns</span>
+              <button
+                type="button"
+                (click)="mergeGroup(group, m)"
+                [title]="'Merge the others into ' + m.canonical_name"
+              >
+                Keep this one
+              </button>
+            </div>
+          }
+        </div>
+      </div>
+    }
+  </section>
+}
+
+<section class="card">
+  <div class="filters">
+    <input
+      type="search"
+      placeholder="Search merchants…"
+      [ngModel]="search()"
+      (ngModelChange)="onSearch($event)"
+      aria-label="Search merchants"
+    />
+    <span class="dim small">{{ rows().length }} shown</span>
+  </div>
+
+  @if (loading()) {
+    <p class="dim">Loading…</p>
+  } @else {
+    <div class="scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th>Merchant</th>
+            <th class="num">Transactions</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (m of visible(); track m.id) {
+            <tr>
+              <td>{{ m.canonical_name }}</td>
+              <td class="num">{{ m.transaction_count }}</td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="2" class="dim">No merchants yet.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    @if (rows().length > visible().length) {
+      <button type="button" class="more" (click)="showAll.set(true)">
+        Show all {{ rows().length }}
+      </button>
+    }
+  }
+</section>

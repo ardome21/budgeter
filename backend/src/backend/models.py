@@ -49,22 +49,22 @@ class CategoryKind(str, enum.Enum):
     is how a budget ends up looking worse than it is.
     """
 
-    SPENDING = "spending"
-    SAVINGS = "savings"  # moved, not spent
-    OTHER = "other"  # Deficit Reduction — an accounting line, not an outflow
+    SPENDING = "SPENDING"
+    SAVINGS = "SAVINGS"  # moved, not spent
+    OTHER = "OTHER"  # Deficit Reduction — an accounting line, not an outflow
 
 
 class TransactionSource(str, enum.Enum):
-    WORKBOOK = "workbook"  # one-shot import of the Excel history
-    CSV = "csv"  # bank export
-    MANUAL = "manual"  # typed in by hand
+    WORKBOOK = "WORKBOOK"  # one-shot import of the Excel history
+    CSV = "CSV"  # bank export
+    MANUAL = "MANUAL"  # typed in by hand
 
 
 class PaycheckLineKind(str, enum.Enum):
-    INCOME = "income"
-    INSURANCE = "insurance"
-    SAVINGS = "savings"
-    TAX = "tax"
+    INCOME = "INCOME"
+    INSURANCE = "INSURANCE"
+    SAVINGS = "SAVINGS"
+    TAX = "TAX"
 
 
 class Category(Base):

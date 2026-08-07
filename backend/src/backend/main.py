@@ -5,9 +5,13 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import get_session
+from .routers import imports, merchants, transactions, views
 
 app = FastAPI(title="budgeter")
 
+# The dev server proxies /api to this process, so the browser sees one origin
+# and CORS is not what makes the app work. Kept as a safety net for direct
+# calls to :8000.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -32,5 +36,10 @@ def health_db(session: Session = Depends(get_session)) -> dict[str, str]:
     session.execute(text("select 1"))
     return {"database": "ok"}
 
+
+api.include_router(views.router)
+api.include_router(transactions.router)
+api.include_router(merchants.router)
+api.include_router(imports.router)
 
 app.include_router(api)

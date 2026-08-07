@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.141.1",
     "psycopg[binary]>=3.3.4",
     "pydantic-settings>=2.14.2",
+    "python-multipart>=0.0.32",
     "sqlalchemy>=2.0.51",
     "uvicorn[standard]>=0.52.1",
 ]
@@ -34,7 +35,14 @@ pythonpath = ["src", "scripts"]
 testpaths = ["tests"]
 
 [tool.ruff.lint.per-file-ignores]
-# Depends() in an argument default is the FastAPI idiom, not a mutable default.
+# Depends()/File()/Form() in argument defaults is the FastAPI idiom, not a
+# mutable default argument.
 "src/backend/main.py" = ["B008"]
+"src/backend/routers/*" = ["B008"]
+# Money is dated by local calendar day, not by instant. A purchase on the 31st
+# belongs to that month wherever the server happens to be, so naive dates are
+# the correct type here rather than an oversight.
+"src/backend/csv_import.py" = ["DTZ007"]
+"src/backend/queries.py" = ["DTZ011"]
 # openpyxl hands back naive datetimes; the fixtures mirror that faithfully.
-"tests/*" = ["DTZ001"]
+"tests/*" = ["DTZ001", "DTZ011"]

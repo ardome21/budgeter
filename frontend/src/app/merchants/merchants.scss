@@ -1,0 +1,79 @@
+h1 {
+  margin-bottom: 0.6rem;
+}
+
+.intro {
+  font-size: 14px;
+  max-width: 46rem;
+  margin: 0 0 1.25rem;
+}
+
+section.card {
+  margin-bottom: 1rem;
+
+  h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 0.7rem;
+  }
+}
+
+.group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  margin-bottom: 0.6rem;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.group-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.candidate {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+
+  .name {
+    flex: 1;
+    font-size: 14px;
+  }
+
+  button {
+    font-size: 12.5px;
+    padding: 0.2rem 0.55rem;
+  }
+}
+
+.filters {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  margin-bottom: 0.8rem;
+
+  input[type="search"] {
+    flex: 1;
+    max-width: 22rem;
+  }
+}
+
+.banner {
+  margin-bottom: 1rem;
+}
+
+.small {
+  font-size: 12.5px;
+}
+
+.more {
+  margin-top: 0.8rem;
+  font-size: 13px;
+}

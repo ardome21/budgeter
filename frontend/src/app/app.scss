@@ -1,0 +1,56 @@
+.wrap {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 1.25rem;
+}
+
+header {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+
+  .wrap {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    height: 52px;
+  }
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+nav {
+  display: flex;
+  gap: 0.25rem;
+  overflow-x: auto;
+
+  a {
+    text-decoration: none;
+    color: var(--text-dim);
+    padding: 0.3rem 0.6rem;
+    border-radius: 7px;
+    font-size: 14px;
+    white-space: nowrap;
+
+    &:hover {
+      background: var(--surface-2);
+      color: var(--text);
+    }
+
+    &.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+      font-weight: 500;
+    }
+  }
+}
+
+main {
+  padding-top: 1.5rem;
+  padding-bottom: 4rem;
+}

@@ -11,7 +11,9 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
-from import_workbook import money, normalize_merchant, parse_text_date, sheet_month
+from import_workbook import money, parse_text_date, sheet_month
+
+from backend.merchants import normalize_merchant
 
 
 class TestMoney:

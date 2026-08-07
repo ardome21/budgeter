@@ -1,0 +1,191 @@
+<div class="head">
+  <h1>Month</h1>
+  @if (periods().length) {
+    <select
+      [ngModel]="selected()"
+      (ngModelChange)="onSelect($event)"
+      aria-label="Choose a month"
+    >
+      @for (p of periods(); track p.year + "-" + p.month) {
+        <option [value]="p.year + '-' + p.month">
+          {{ label(p) }} — {{ p.transaction_count }} txns
+        </option>
+      }
+    </select>
+  }
+</div>
+
+@if (error()) {
+  <div class="banner error">{{ error() }}</div>
+}
+
+@if (loading()) {
+  <p class="dim">Loading…</p>
+}
+
+@if (overview(); as o) {
+  <section class="tiles">
+    <div class="tile">
+      <span class="k">Take-home / month</span>
+      <span class="v">{{ fmt(o.take_home) }}</span>
+    </div>
+    <div class="tile">
+      <span class="k">Fixed costs</span>
+      <span class="v">{{ fmt(o.fixed_costs) }}</span>
+    </div>
+    <div class="tile accent">
+      <span class="k">Free to spend</span>
+      <span class="v">{{ fmt(o.disposable) }}</span>
+    </div>
+    <div class="tile">
+      <span class="k">Auto-saved from pay</span>
+      <span class="v">{{ fmt(o.auto_saved) }}</span>
+    </div>
+  </section>
+}
+
+@if (summary(); as s) {
+  <section class="tiles">
+    <div class="tile">
+      <span class="k">Spent this month</span>
+      <span class="v">{{ fmt(s.spent_total) }}</span>
+    </div>
+    <div class="tile">
+      <span class="k">Committed</span>
+      <span class="v">{{ fmt(s.commitment.committed) }}</span>
+    </div>
+    <div class="tile">
+      <span class="k">Flexible</span>
+      <span class="v">{{ fmt(s.commitment.flexible) }}</span>
+    </div>
+    <div class="tile">
+      <span class="k">Per day so far</span>
+      <span class="v">{{ fmt(s.spent_per_day) }}</span>
+    </div>
+  </section>
+
+  @if (s.undated_count > 0) {
+    <div class="banner">
+      {{ s.undated_count }} of {{ s.transaction_count }} transactions have no
+      date. They still count toward this month — the spreadsheet's date column
+      was left blank for them.
+    </div>
+  }
+
+  <section class="card">
+    <h2>Categories</h2>
+    <div class="scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th class="num">Budget</th>
+            <th class="num">Spent</th>
+            <th class="num">Remaining</th>
+            <th class="bar-col">Used</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (c of s.categories; track c.category_id) {
+            <tr>
+              <td>
+                {{ c.category }}
+                @if (c.kind === "SAVINGS") {
+                  <span class="pill">saved, not spent</span>
+                }
+              </td>
+              <td class="num dim">
+                {{ +c.allocated ? fmt(c.allocated) : "—" }}
+              </td>
+              <td class="num">{{ fmt(c.spent) }}</td>
+              <td
+                class="num"
+                [class.over]="+c.remaining < 0 && +c.allocated > 0"
+              >
+                {{ +c.allocated ? fmt(c.remaining) : "—" }}
+              </td>
+              <td class="bar-col">
+                @if (c.pct_used !== null) {
+                  <div
+                    class="bar"
+                    [title]="(c.pct_used * 100).toFixed(0) + '% of budget'"
+                  >
+                    <div
+                      class="fill"
+                      [class.over]="c.pct_used > 1"
+                      [style.width.%]="barWidth(c.pct_used)"
+                    ></div>
+                  </div>
+                } @else {
+                  <span class="dim small">no budget set</span>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+        <tfoot>
+          <tr>
+            <th>Total</th>
+            <th class="num">{{ fmt(s.allocated_total) }}</th>
+            <th class="num">{{ fmt(s.spent_total) }}</th>
+            <th class="num" [class.over]="+s.remaining_total < 0">
+              {{ fmt(s.remaining_total) }}
+            </th>
+            <th></th>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    @if (unbudgeted().length) {
+      <p class="dim small footnote">
+        {{ unbudgeted().length }} categories have spending but no budget set, so
+        they are excluded from the "remaining" figure.
+      </p>
+    }
+  </section>
+
+  <div class="two-up">
+    <section class="card">
+      <h2>Biggest this month</h2>
+      <table>
+        <tbody>
+          @for (b of s.biggest; track b.description + b.amount) {
+            <tr>
+              <td class="truncate" [title]="b.description">
+                {{ b.description }}
+              </td>
+              <td class="num">{{ fmt(b.amount) }}</td>
+            </tr>
+          } @empty {
+            <tr>
+              <td class="dim">Nothing recorded.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Pace</h2>
+      <dl>
+        <dt>Days elapsed</dt>
+        <dd class="num">{{ s.days.elapsed }} / {{ s.days.in_month }}</dd>
+        <dt>Spent per day</dt>
+        <dd class="num">{{ fmt(s.spent_per_day) }}</dd>
+        <dt>Safe per day, rest of month</dt>
+        <dd class="num">
+          @if (s.days.remaining === 0) {
+            <span class="dim">month closed</span>
+          } @else if (s.safe_per_day === null) {
+            <span class="dim">no budget set</span>
+          } @else {
+            <span [class.over]="+s.safe_per_day < 0">{{
+              fmt(s.safe_per_day)
+            }}</span>
+          }
+        </dd>
+      </dl>
+    </section>
+  </div>
+}

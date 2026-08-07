@@ -1,1 +1,195 @@
-/* You can add global styles to this file, and also import other style files */
+/* Global styles. Light and dark both first-class — the app is used at night. */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #fbfaf8;
+  --surface: #ffffff;
+  --surface-2: #f4f2ef;
+  --border: #e2ded8;
+  --text: #1c1a17;
+  --text-dim: #6b655d;
+  --accent: #2f6f4f;
+  --accent-dim: #cfe3d7;
+  --over: #a8392f;
+  --over-dim: #f2d9d6;
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181a;
+    --surface: #1e2124;
+    --surface-2: #262a2e;
+    --border: #33383d;
+    --text: #e8e6e3;
+    --text-dim: #9aa0a6;
+    --accent: #6fbf95;
+    --accent-dim: #24402f;
+    --over: #e08b80;
+    --over-dim: #402726;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    15px/1.5 system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.4rem 0.8rem;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+
+  &:hover:not(:disabled) {
+    background: var(--surface-2);
+  }
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  &.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 500;
+
+    &:hover:not(:disabled) {
+      filter: brightness(1.08);
+    }
+  }
+
+  &.danger {
+    color: var(--over);
+    border-color: transparent;
+    background: transparent;
+    padding: 0.2rem 0.4rem;
+  }
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 0.4rem 0.55rem;
+  width: 100%;
+
+  &:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+}
+
+textarea {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  resize: vertical;
+}
+
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.over {
+  color: var(--over);
+}
+
+.dim {
+  color: var(--text-dim);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.15rem;
+}
+
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+
+  th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--text-dim);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  tbody tr:hover {
+    background: var(--surface-2);
+  }
+}
+
+.banner {
+  border-radius: var(--radius);
+  padding: 0.7rem 0.9rem;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+
+  &.error {
+    border-color: var(--over);
+    background: var(--over-dim);
+    color: var(--over);
+  }
+}
