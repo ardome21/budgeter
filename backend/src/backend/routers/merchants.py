@@ -9,7 +9,7 @@ recorded, so the queue can actually be emptied.
 from itertools import combinations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from .. import queries
@@ -18,6 +18,7 @@ from ..models import Merchant, MerchantPattern, MerchantSplit, Transaction
 from ..schemas import (
     MerchantMergeIn,
     MerchantOut,
+    MerchantRenameIn,
     RejectIn,
     Suggestion,
     SuggestionMember,
@@ -165,6 +166,71 @@ def reject(payload: RejectIn, session: Session = Depends(get_session)):
     session.commit()
 
 
+@router.patch("/{merchant_id}", response_model=MerchantOut)
+def rename_merchant(
+    merchant_id: int,
+    payload: MerchantRenameIn,
+    session: Session = Depends(get_session),
+):
+    """Give a merchant a name of your choosing.
+
+    The normalized key is a machine's guess — 'Rhino Market Deli' rather than
+    'Rhino Market & Deli' — so the display name is worth being able to type.
+
+    merchant_splits is keyed by name, so every recorded "these are different"
+    decision is rewritten to follow the rename. Skipping that would quietly
+    resurrect proposals the user has already answered.
+    """
+    merchant = session.get(Merchant, merchant_id)
+    if merchant is None:
+        raise HTTPException(404, f"no merchant with id {merchant_id}")
+
+    new_name = payload.canonical_name.strip()
+    if not new_name:
+        raise HTTPException(422, "name must not be blank")
+    if new_name == merchant.canonical_name:
+        return _merchant_out(session, merchant)
+
+    clash = session.scalar(
+        select(Merchant).where(
+            Merchant.canonical_name == new_name, Merchant.id != merchant_id
+        )
+    )
+    if clash is not None:
+        raise HTTPException(
+            409,
+            f"'{new_name}' is already used by another merchant — "
+            f"merge them instead of naming both the same",
+        )
+
+    old_name = merchant.canonical_name
+    merchant.canonical_name = new_name
+    session.execute(
+        update(MerchantSplit)
+        .where(MerchantSplit.left_name == old_name)
+        .values(left_name=new_name)
+    )
+    session.execute(
+        update(MerchantSplit)
+        .where(MerchantSplit.right_name == old_name)
+        .values(right_name=new_name)
+    )
+    session.commit()
+    return _merchant_out(session, merchant)
+
+
+def _merchant_out(session: Session, merchant: Merchant) -> MerchantOut:
+    count = session.scalar(
+        select(func.count(Transaction.id)).where(Transaction.merchant_id == merchant.id)
+    )
+    return MerchantOut(
+        id=merchant.id,
+        canonical_name=merchant.canonical_name,
+        default_category_id=merchant.default_category_id,
+        transaction_count=count or 0,
+    )
+
+
 @router.post("/{merchant_id}/merge", response_model=MerchantOut)
 def merge_merchant(
     merchant_id: int, payload: MerchantMergeIn, session: Session = Depends(get_session)
@@ -194,15 +260,15 @@ def merge_merchant(
         .where(MerchantPattern.merchant_id == source.id)
         .values(merchant_id=target.id)
     )
+    # The losing name must not linger in the split records: it no longer
+    # refers to anything, and a later merchant created with that name would
+    # inherit decisions that were never made about it.
+    session.execute(
+        delete(MerchantSplit).where(
+            (MerchantSplit.left_name == source.canonical_name)
+            | (MerchantSplit.right_name == source.canonical_name)
+        )
+    )
     session.delete(source)
     session.commit()
-
-    count = session.scalar(
-        select(func.count(Transaction.id)).where(Transaction.merchant_id == target.id)
-    )
-    return MerchantOut(
-        id=target.id,
-        canonical_name=target.canonical_name,
-        default_category_id=target.default_category_id,
-        transaction_count=count or 0,
-    )
+    return _merchant_out(session, target)

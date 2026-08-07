@@ -1,6 +1,7 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Observable, forkJoin, of } from 'rxjs';
+import { map } from 'rxjs/operators';
 
 import { Api } from '../api';
 import { Suggestion } from '../models';
@@ -35,6 +36,9 @@ export class Merchants {
   done = signal(0);
 
   skipped = signal(0);
+
+  /** What the surviving merchant will be called. Free text, not a picker. */
+  name = signal('');
 
   current = computed(() => this.queue()[this.index()] ?? null);
 
@@ -89,6 +93,7 @@ export class Merchants {
     }
     this.ticked.set(new Set(group.members.map((m) => m.id)));
     this.keepId.set(group.members[0]?.id ?? null);
+    this.name.set(group.members[0]?.canonical_name ?? '');
   }
 
   toggle(id: number): void {
@@ -110,6 +115,8 @@ export class Merchants {
   keep(id: number): void {
     this.keepId.set(id);
     this.ticked.update((set) => new Set(set).add(id));
+    const member = this.current()?.members.find((m) => m.id === id);
+    if (member) this.name.set(member.canonical_name);
   }
 
   /** Merge the ticked members, then record that the untouched ones differ. */
@@ -124,23 +131,44 @@ export class Merchants {
       this.api.mergeMerchant(m.id, keepId),
     );
 
+    const typed = this.name().trim();
+    const others = this.leftOut().map((m) => m.canonical_name);
+
     forkJoin(merges).subscribe({
       next: () => {
-        const survivor = this.keepName();
-        const others = this.leftOut().map((m) => m.canonical_name);
-        const after: Observable<void> = others.length
-          ? this.api.rejectSuggestion(others, survivor)
-          : of(void 0);
-        after.subscribe({
-          next: () => {
-            this.done.update((n) => n + 1);
-            this.busy.set(false);
-            this.next();
+        // Rename before recording rejections: splits are keyed by name, and
+        // they must be written against the name that survives.
+        const renamed: Observable<string> =
+          typed && typed !== this.keepName()
+            ? this.api
+                .renameMerchant(keepId, typed)
+                .pipe(map((m) => m.canonical_name))
+            : of(this.keepName());
+
+        renamed.subscribe({
+          next: (survivor) => {
+            const after: Observable<void> = others.length
+              ? this.api.rejectSuggestion(others, survivor)
+              : of(void 0);
+            after.subscribe({
+              next: () => {
+                this.done.update((n) => n + 1);
+                this.busy.set(false);
+                this.next();
+              },
+              error: (e) => {
+                this.error.set(this.describe(e));
+                this.busy.set(false);
+                this.next();
+              },
+            });
           },
           error: (e) => {
+            // The merge already happened; only the rename failed, so say so
+            // and stay put rather than pretending the group is undecided.
             this.error.set(this.describe(e));
             this.busy.set(false);
-            this.next();
+            this.load();
           },
         });
       },

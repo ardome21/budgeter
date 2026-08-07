@@ -93,6 +93,12 @@ group, and each proposal shows the **raw descriptors** behind every merchant —
 `Rhino Mart` and `Rhino Market Deli` are indistinguishable as names, but what
 the bank actually wrote makes the call obvious.
 
+The surviving merchant gets **whatever name you type** — the normalized key is
+a machine's guess (`Rhino Market Deli`), and `Rhino Market & Deli` is probably
+what you actually want to see. Renaming rewrites the split records that
+reference the old name, and merging deletes the folded name's records, so a
+decision never ends up attached to a name that no longer exists.
+
 Every answer is recorded in `merchant_splits`, so a rejected pair is never
 proposed again. A review queue that cannot be emptied is one nobody works
 through. After a partial merge only the pairs *against the surviving name* are

@@ -112,6 +112,13 @@ export class Api {
     });
   }
 
+  /** Give a merchant a name of your own. Split records follow the rename. */
+  renameMerchant(id: number, canonicalName: string): Observable<Merchant> {
+    return this.http.patch<Merchant>(`/api/merchants/${id}`, {
+      canonical_name: canonicalName,
+    });
+  }
+
   mergeMerchant(id: number, intoId: number): Observable<Merchant> {
     return this.http.post<Merchant>(`/api/merchants/${id}/merge`, {
       into_id: intoId,

@@ -73,6 +73,22 @@
       }
     </ul>
 
+    <div class="rename">
+      <label for="merchant-name">Call it</label>
+      <input
+        id="merchant-name"
+        type="text"
+        [ngModel]="name()"
+        (ngModelChange)="name.set($event)"
+        placeholder="Rhino Market &amp; Deli"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <span class="dim small">
+        Type anything. The names above are the machine's guess.
+      </span>
+    </div>
+
     <div class="actions">
       <button
         class="primary"
@@ -81,7 +97,7 @@
         (click)="accept()"
       >
         @if (toMerge().length) {
-          Merge {{ toMerge().length }} into “{{ keepName() }}”
+          Merge {{ toMerge().length }} into “{{ name().trim() || keepName() }}”
         } @else {
           Tick at least two
         }
@@ -97,7 +113,8 @@
     @if (toMerge().length && leftOut().length) {
       <p class="dim small note">
         The {{ leftOut().length }} unticked will be recorded as different from
-        “{{ keepName() }}”, so this pairing is not suggested again.
+        “{{ name().trim() || keepName() }}”, so this pairing is not suggested
+        again.
       </p>
     }
   </section>

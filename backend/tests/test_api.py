@@ -331,3 +331,174 @@ class TestMerchantSuggestions:
         assert any(set(others) <= g for g in flat), (
             "the others were never claimed to differ from each other"
         )
+
+
+class TestMerchantRename:
+    def _merchant(self, client, category_id, description: str) -> dict:
+        txn = client.post(
+            "/api/transactions",
+            json={
+                "occurred_on": "2026-03-01",
+                "raw_description": description,
+                "category_id": category_id,
+                "amount": "5.00",
+            },
+        ).json()
+        return txn
+
+    def test_rename_sticks(self, client, category_id):
+        txn = self._merchant(client, category_id, "ZZRENAME ORIGINAL SHOP")
+        r = client.patch(
+            f"/api/merchants/{txn['merchant_id']}",
+            json={"canonical_name": "Rhino Market & Deli (mine)"},
+        )
+        assert r.status_code == 200
+        assert r.json()["canonical_name"] == "Rhino Market & Deli (mine)"
+
+        again = client.get("/api/transactions?q=ZZRENAME").json()
+        assert again[0]["merchant_name"] == "Rhino Market & Deli (mine)"
+
+    def test_rename_rewrites_split_records(self, client, category_id):
+        """Splits are keyed by name. If a rename orphaned them, decisions the
+        user already made would quietly come back as fresh proposals."""
+        a = self._merchant(client, category_id, "ZZSPLIT ALPHA")
+        self._merchant(client, category_id, "ZZSPLIT BETA")
+        names = [
+            client.get("/api/transactions?q=ZZSPLIT ALPHA").json()[0]["merchant_name"],
+            client.get("/api/transactions?q=ZZSPLIT BETA").json()[0]["merchant_name"],
+        ]
+        client.post("/api/merchants/suggestions/reject", json={"names": names})
+
+        client.patch(
+            f"/api/merchants/{a['merchant_id']}",
+            json={"canonical_name": "ZZSPLIT Renamed Alpha"},
+        )
+        # Re-rejecting the new name pair must be a no-op if the record followed
+        # the rename; a fresh insert would mean the old one was orphaned.
+        r = client.post(
+            "/api/merchants/suggestions/reject",
+            json={"names": ["ZZSPLIT Renamed Alpha", names[1]]},
+        )
+        assert r.status_code == 204
+
+    def test_blank_name_is_rejected(self, client, category_id):
+        txn = self._merchant(client, category_id, "ZZBLANK SHOP")
+        assert (
+            client.patch(
+                f"/api/merchants/{txn['merchant_id']}", json={"canonical_name": "   "}
+            ).status_code
+            == 422
+        )
+
+    def test_name_already_taken_is_a_conflict_not_a_crash(self, client, category_id):
+        a = self._merchant(client, category_id, "ZZTAKEN ONE")
+        self._merchant(client, category_id, "ZZTAKEN TWO")
+        taken = client.get("/api/transactions?q=ZZTAKEN TWO").json()[0]["merchant_name"]
+        r = client.patch(
+            f"/api/merchants/{a['merchant_id']}", json={"canonical_name": taken}
+        )
+        assert r.status_code == 409
+        assert "merge" in r.json()["detail"]
+
+    def test_renaming_to_the_same_name_is_allowed(self, client, category_id):
+        txn = self._merchant(client, category_id, "ZZSAME SHOP")
+        current = client.get("/api/transactions?q=ZZSAME").json()[0]["merchant_name"]
+        r = client.patch(
+            f"/api/merchants/{txn['merchant_id']}", json={"canonical_name": current}
+        )
+        assert r.status_code == 200
+
+    def test_unknown_merchant_is_404(self, client):
+        assert (
+            client.patch(
+                "/api/merchants/999999", json={"canonical_name": "Whatever"}
+            ).status_code
+            == 404
+        )
+
+
+class TestMergeThenRenameSequence:
+    """The exact sequence the review screen performs, in order.
+
+    Ordering matters: splits are keyed by name, so the rename has to land
+    before rejections are recorded, or the decisions would be written against
+    a name that no longer exists.
+    """
+
+    def _add(self, client, category_id, description: str) -> dict:
+        return client.post(
+            "/api/transactions",
+            json={
+                "occurred_on": "2026-03-01",
+                "raw_description": description,
+                "category_id": category_id,
+                "amount": "5.00",
+            },
+        ).json()
+
+    def test_merge_rename_then_reject_against_the_new_name(self, client, category_id):
+        keep = self._add(client, category_id, "ZZFLOW MARKET")
+        fold = self._add(client, category_id, "ZZFLOW MART")
+        apart = self._add(client, category_id, "ZZFLOW DELIVERY")
+        assert (
+            len({keep["merchant_id"], fold["merchant_id"], apart["merchant_id"]}) == 3
+        )
+
+        merged = client.post(
+            f"/api/merchants/{fold['merchant_id']}/merge",
+            json={"into_id": keep["merchant_id"]},
+        )
+        assert merged.status_code == 200
+        assert merged.json()["transaction_count"] == 2
+
+        renamed = client.patch(
+            f"/api/merchants/{keep['merchant_id']}",
+            json={"canonical_name": "ZZFLOW Market & Deli"},
+        )
+        assert renamed.status_code == 200
+
+        apart_name = client.get("/api/transactions?q=ZZFLOW DELIVERY").json()[0][
+            "merchant_name"
+        ]
+        rejected = client.post(
+            "/api/merchants/suggestions/reject",
+            json={"names": [apart_name], "anchor": "ZZFLOW Market & Deli"},
+        )
+        assert rejected.status_code == 204
+
+        # Both original descriptors now resolve to the typed name.
+        rows = client.get("/api/transactions?q=ZZFLOW").json()
+        by_desc = {r["raw_description"]: r["merchant_name"] for r in rows}
+        assert by_desc["ZZFLOW MARKET"] == "ZZFLOW Market & Deli"
+        assert by_desc["ZZFLOW MART"] == "ZZFLOW Market & Deli"
+        assert by_desc["ZZFLOW DELIVERY"] == apart_name
+
+    def test_merging_clears_the_losing_names_split_records(self, client, category_id):
+        """The folded name refers to nothing afterwards. Leaving its splits
+        behind would hand a future merchant of that name decisions nobody made
+        about it."""
+        keep = self._add(client, category_id, "ZZSTALE ALPHA")
+        fold = self._add(client, category_id, "ZZSTALE BETA")
+        fold_name = client.get("/api/transactions?q=ZZSTALE BETA").json()[0][
+            "merchant_name"
+        ]
+        keep_name = client.get("/api/transactions?q=ZZSTALE ALPHA").json()[0][
+            "merchant_name"
+        ]
+        client.post(
+            "/api/merchants/suggestions/reject",
+            json={"names": [keep_name, fold_name]},
+        )
+        client.post(
+            f"/api/merchants/{fold['merchant_id']}/merge",
+            json={"into_id": keep["merchant_id"]},
+        )
+        # Re-recording the same pair must insert cleanly, proving the stale row
+        # was removed rather than left dangling.
+        assert (
+            client.post(
+                "/api/merchants/suggestions/reject",
+                json={"names": [keep_name, fold_name]},
+            ).status_code
+            == 204
+        )

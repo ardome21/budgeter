@@ -45,6 +45,10 @@ class MerchantMergeIn(BaseModel):
     into_id: int = Field(description="The merchant that survives the merge")
 
 
+class MerchantRenameIn(BaseModel):
+    canonical_name: str = Field(min_length=1, max_length=120)
+
+
 class SuggestionMember(BaseModel):
     """One merchant inside a proposal, with the descriptors behind it.
 
