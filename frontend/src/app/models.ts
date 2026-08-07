@@ -76,6 +76,9 @@ export interface Transaction {
   category_name: string;
   amount: Money;
   is_recurring: boolean;
+  /** Null on the imported workbook history, which never recorded one. */
+  account_id: number | null;
+  account_name: string | null;
   source: TransactionSource;
 }
 
@@ -87,6 +90,7 @@ export interface NewTransaction {
   category_id: number;
   amount: string;
   is_recurring?: boolean;
+  account_id?: number | null;
 }
 
 /** A category this merchant has actually been used with, and how often. */
@@ -112,15 +116,31 @@ export interface PreviewRow {
   merchant_name: string | null;
   import_hash: string;
   duplicate_of: number | null;
+  /**
+   * Already on file for the same amount within a few days. A prompt to look,
+   * not a duplicate — the hash cannot catch the workbook history, whose
+   * descriptions were typed by hand and never match a bank descriptor.
+   */
+  near_duplicates: NearDuplicate[];
   notes: string[];
+}
+
+export interface NearDuplicate {
+  id: number;
+  occurred_on: string | null;
+  raw_description: string;
+  amount: Money;
+  days_apart: number;
 }
 
 export interface Preview {
   rows: PreviewRow[];
   errors: string[];
   detected_columns: Record<string, string>;
+  account_id: number | null;
   new_count: number;
   duplicate_count: number;
+  near_duplicate_count: number;
   uncategorised_count: number;
 }
 

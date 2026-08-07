@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from ..db import get_session
 from ..merchants import display_name, normalize_merchant
 from ..models import (
+    Account,
     BudgetPeriod,
     Category,
     Merchant,
@@ -68,8 +69,26 @@ def to_out(txn: Transaction) -> TransactionOut:
         category_name=txn.category.name,
         amount=txn.amount,
         is_recurring=txn.is_recurring,
+        account_id=txn.account_id,
+        account_name=(
+            f"{txn.account.institution} {txn.account.name}" if txn.account else None
+        ),
         source=txn.source,
     )
+
+
+def check_account(session: Session, account_id: int | None) -> None:
+    """A transaction may only name an account that exists and is still open."""
+    if account_id is None:
+        return
+    account = session.get(Account, account_id)
+    if account is None:
+        raise HTTPException(422, f"no account with id {account_id}")
+    if account.closed_on is not None:
+        raise HTTPException(
+            422,
+            f"{account.institution} {account.name} was closed on {account.closed_on}",
+        )
 
 
 @router.get("", response_model=list[TransactionOut])
@@ -77,6 +96,7 @@ def list_transactions(
     year: int | None = None,
     month: int | None = None,
     category_id: int | None = None,
+    account_id: int | None = None,
     q: str | None = Query(default=None, description="substring of the description"),
     limit: int = Query(default=200, le=1000),
     offset: int = 0,
@@ -91,6 +111,8 @@ def list_transactions(
         stmt = stmt.where(BudgetPeriod.month == month)
     if category_id is not None:
         stmt = stmt.where(Transaction.category_id == category_id)
+    if account_id is not None:
+        stmt = stmt.where(Transaction.account_id == account_id)
     if q:
         stmt = stmt.where(Transaction.raw_description.ilike(f"%{q}%"))
     stmt = (
@@ -120,6 +142,7 @@ def create_transaction(payload: TransactionIn, session: Session = Depends(get_se
 
     if session.get(Category, payload.category_id) is None:
         raise HTTPException(422, f"no category with id {payload.category_id}")
+    check_account(session, payload.account_id)
 
     period = get_or_create_period(session, year, month)
     merchant = resolve_merchant(session, payload.raw_description)
@@ -132,6 +155,7 @@ def create_transaction(payload: TransactionIn, session: Session = Depends(get_se
         category_id=payload.category_id,
         amount=payload.amount,
         is_recurring=payload.is_recurring,
+        account_id=payload.account_id,
         source=TransactionSource.MANUAL,
     )
     session.add(txn)
@@ -153,6 +177,8 @@ def update_transaction(
         raise HTTPException(422, f"no category with id {data['category_id']}")
     if "amount" in data and data["amount"] == 0:
         raise HTTPException(422, "amount must not be zero")
+    if "account_id" in data:
+        check_account(session, data["account_id"])
 
     for key, value in data.items():
         setattr(txn, key, value)

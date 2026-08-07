@@ -10,6 +10,7 @@ import csv
 import hashlib
 import io
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -35,6 +36,17 @@ CURRENCY = re.compile(r"[^0-9.\-()]")
 
 
 @dataclass
+class NearMatch:
+    """A transaction already on file that this row might be a second copy of."""
+
+    id: int
+    occurred_on: date | None
+    raw_description: str
+    amount: Decimal
+    days_apart: int
+
+
+@dataclass
 class CandidateRow:
     row_number: int
     occurred_on: date | None
@@ -47,7 +59,14 @@ class CandidateRow:
     merchant_id: int | None = None
     merchant_name: str | None = None
     import_hash: str = ""
+    # 0 for the first row with this date/description/amount, 1 for the next,
+    # and so on. Two identical charges in one export are two real purchases.
+    occurrence: int = 0
     duplicate_of: int | None = None
+    # Existing transactions for the same amount within a few days — the check
+    # that catches a bank export overlapping history imported another way,
+    # where the descriptions differ and so the hashes cannot match.
+    near_duplicates: list["NearMatch"] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
@@ -101,22 +120,57 @@ def parse_date(text: str) -> date | None:
     return None
 
 
-def row_hash(occurred_on: date | None, description: str, amount: Decimal) -> str:
+def hash_key(
+    occurred_on: date | None, description: str, amount: Decimal
+) -> tuple[str, str, str]:
+    """The content a hash is taken over. Shared so callers can count repeats."""
+    return (str(occurred_on or ""), description.strip().lower(), str(amount))
+
+
+def row_hash(
+    occurred_on: date | None,
+    description: str,
+    amount: Decimal,
+    *,
+    account_id: int | None = None,
+    occurrence: int = 0,
+) -> str:
     """Identity of an imported row, for making a re-drop of the same file a no-op.
 
     Only used for CSV. Hand-entered rows are never hashed, because two genuinely
     identical charges on one night must both survive.
+
+    `occurrence` is what lets that also be true *within* a file. Two $3.50
+    coffees on the same day are two real rounds, and a hash over content alone
+    cannot tell them apart — so the second one collided with the first against
+    a unique index and took the whole import down with a 500. Numbering repeats
+    in the order they appear keeps both rows, and keeps a re-drop of the same
+    export a no-op, because the same file numbers them the same way again.
+
+    `account_id` separates the same charge seen through two different accounts.
+    Both are appended only when set, so a hash taken without them is unchanged.
     """
-    basis = f"{occurred_on or ''}|{description.strip().lower()}|{amount}"
+    date_part, desc_part, amount_part = hash_key(occurred_on, description, amount)
+    basis = f"{date_part}|{desc_part}|{amount_part}"
+    if account_id is not None:
+        basis = f"{basis}|acct:{account_id}"
+    if occurrence:
+        basis = f"{basis}|#{occurrence}"
     return hashlib.sha256(basis.encode()).hexdigest()
 
 
-def parse_csv(text: str, *, flip_sign: bool = False) -> ParseResult:
+def parse_csv(
+    text: str, *, flip_sign: bool = False, account_id: int | None = None
+) -> ParseResult:
     """Turn CSV text into candidate rows.
 
     `flip_sign` handles exports where a purchase is negative — budgeter stores
     spending as positive and refunds as negative, the same convention the
     spreadsheet used.
+
+    `account_id` is the account the export came from. It goes into each row's
+    hash, so the same charge arriving on a card export and a checking export
+    stays two rows rather than one silently swallowing the other.
     """
     result = ParseResult()
     text = text.lstrip("﻿")
@@ -163,6 +217,12 @@ def parse_csv(text: str, *, flip_sign: bool = False) -> ParseResult:
         if v
     }
 
+    # How many times this exact date/description/amount has already appeared in
+    # the file, so the second identical charge gets a different hash from the
+    # first instead of colliding with it.
+    repeats: Counter[tuple[str, str, str]] = Counter()
+    first_seen: dict[tuple[str, str, str], int] = {}
+
     for number, raw_row in enumerate(reader, start=2):
         description = (raw_row.get(desc_col) or "").strip()
         amount = parse_amount(raw_row.get(amount_col)) if amount_col else None
@@ -196,7 +256,21 @@ def parse_csv(text: str, *, flip_sign: bool = False) -> ParseResult:
             row.notes.append(f"unreadable date {raw_row.get(date_col)!r}")
         if category_col and (raw_row.get(category_col) or "").strip():
             row.notes.append(f"file said category {raw_row[category_col].strip()!r}")
-        row.import_hash = row_hash(occurred_on, description, amount)
+
+        key = hash_key(occurred_on, description, amount)
+        row.occurrence = repeats[key]
+        repeats[key] += 1
+        if row.occurrence:
+            row.notes.append(f"identical to row {first_seen[key]} in this file")
+        else:
+            first_seen[key] = number
+        row.import_hash = row_hash(
+            occurred_on,
+            description,
+            amount,
+            account_id=account_id,
+            occurrence=row.occurrence,
+        )
         result.rows.append(row)
 
     if not result.rows and not result.errors:

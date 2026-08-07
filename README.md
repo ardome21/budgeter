@@ -214,11 +214,46 @@ one-click chip, each showing how often.
 There is no stored default to drift from that history — the column that held
 one is gone. It recorded whichever transaction created the merchant, never
 followed a merge, and ended up contradicting the merchant's own history for
-twelve of them. Re-dropping the same file
-is a no-op: CSV rows carry a content hash, and rows already present come back
-ticked off as duplicates. **Hand-entered rows are never hashed and never
-deduplicated** — two identical charges at the same bar on one night are usually
-two real rounds.
+twelve of them.
+
+#### Which account it came from
+
+Name the account the export belongs to and every row it creates carries it.
+It also goes into the row's hash, so the same charge appearing on a card export
+and a checking export stays two rows instead of one silently swallowing the
+other. The selector lists open accounts only — a settled account cannot take
+new charges, and asking to import to one is refused rather than accepted and
+filed somewhere odd.
+
+#### Two ways a row can already be on file
+
+Re-dropping the same file is a no-op: CSV rows carry a content hash, and rows
+already present come back ticked off as duplicates. **Hand-entered rows are
+never hashed and never deduplicated** — two identical charges at the same bar
+on one night are usually two real rounds.
+
+That last point is also true *inside* one export, and a hash over content alone
+cannot express it. Two $3.50 coffees on one day hashed identically, and the
+second one collided with the first against a unique index — the response was a
+500 and the entire import was lost, not just the row. Repeats are now numbered
+in the order they appear, so both survive, and a re-drop of the same file still
+skips both because the same file numbers them the same way again.
+
+The hash only ever catches an exact re-drop. It cannot catch the case that
+actually bites: a bank export covering months the workbook already holds. Those
+descriptions were typed by hand — `Netflix`, `Breakfast`, `Alex Dinner` — and
+never hash the same as `NETFLIX.COM 866-579-7172 CA`. So the preview also flags
+**near duplicates**: anything already on file for the same amount within three
+days, shown with the row it matched.
+
+Flagged rows stay ticked. A near match is a question, not a verdict, and
+genuine repeat purchases look exactly like this — quietly discarding real
+spending is the worse failure. When an export really does overlap a period you
+already have, one button unticks all of them at once.
+
+The imported workbook history was hashed after the fact by
+`scripts/backfill_import_hashes.py`, so exact matches against it work too. It
+is a dry run by default, like every script under `scripts/`.
 
 ## Importing the Excel history
 
@@ -392,6 +427,12 @@ The stack is currently environment-agnostic — `env=` is commented out in
   `pyproject.toml` and `uv.lock`. No `requirements.txt` anywhere.
 - One `.gitignore`, at the repo root.
 - Everything the API serves lives under `/api`.
+- **Sessions run with `autoflush=False`, and the test fixture must match.**
+  `SessionLocal` sets it; a bare `Session()` defaults the other way. When the
+  fixture disagreed, endpoint code that never flushed passed its tests and
+  raised a unique violation in production — that is exactly how the import
+  endpoint came to 500 on two identical rows while its tests were green. If a
+  query has to see a row you just added, flush it yourself.
 - **Keep this repo out of iCloud** (`~/Documents`, `~/Desktop`). iCloud sets the
   macOS `UF_HIDDEN` flag on files it manages, and CPython's `site.addpackage()`
   silently skips hidden `.pth` files. That kills the editable install and you get

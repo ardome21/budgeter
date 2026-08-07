@@ -17,6 +17,10 @@
   --accent-dim: #cfe3d7;
   --over: #a8392f;
   --over-dim: #f2d9d6;
+  /* Amber, for "look at this" — distinct from --over, which means wrong.
+     A near-duplicate is a question, not an error. 4.8:1 on --warn-dim. */
+  --warn: #8a5a12;
+  --warn-dim: #f7e9cf;
   --radius: 10px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
@@ -38,6 +42,8 @@
     --accent-dim: #24402f;
     --over: #e08b80;
     --over-dim: #402726;
+    --warn: #e0be7f;
+    --warn-dim: #3a3122;
   }
 }
 
@@ -215,5 +221,11 @@ table {
     border-color: var(--over);
     background: var(--over-dim);
     color: var(--over);
+  }
+
+  &.warn {
+    border-color: var(--warn);
+    background: var(--warn-dim);
+    color: var(--warn);
   }
 }

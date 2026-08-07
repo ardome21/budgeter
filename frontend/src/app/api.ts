@@ -80,22 +80,52 @@ export class Api {
     return this.http.delete<void>(`/api/transactions/${id}`);
   }
 
-  previewCsv(text: string, flipSign: boolean): Observable<Preview> {
+  previewCsv(
+    text: string,
+    flipSign: boolean,
+    accountId: number | null,
+  ): Observable<Preview> {
     const form = new FormData();
     form.append('text', text);
-    form.append('flip_sign', String(flipSign));
-    return this.http.post<Preview>('/api/imports/preview', form);
+    return this.http.post<Preview>(
+      '/api/imports/preview',
+      this.previewForm(form, flipSign, accountId),
+    );
   }
 
-  previewCsvFile(file: File, flipSign: boolean): Observable<Preview> {
+  previewCsvFile(
+    file: File,
+    flipSign: boolean,
+    accountId: number | null,
+  ): Observable<Preview> {
     const form = new FormData();
     form.append('file', file);
-    form.append('flip_sign', String(flipSign));
-    return this.http.post<Preview>('/api/imports/preview', form);
+    return this.http.post<Preview>(
+      '/api/imports/preview',
+      this.previewForm(form, flipSign, accountId),
+    );
   }
 
-  commitImport(rows: unknown[]): Observable<CommitResult> {
-    return this.http.post<CommitResult>('/api/imports/commit', { rows });
+  /** The account has to reach the preview, not just the commit: it goes into
+   *  each row's hash, so leaving it off would hash every row twice over. */
+  private previewForm(
+    form: FormData,
+    flipSign: boolean,
+    accountId: number | null,
+  ): FormData {
+    form.append('flip_sign', String(flipSign));
+    if (accountId !== null) form.append('account_id', String(accountId));
+    return form;
+  }
+
+  commitImport(
+    rows: unknown[],
+    accountId: number | null,
+  ): Observable<CommitResult> {
+    return this.http.post<CommitResult>('/api/imports/commit', {
+      rows,
+      account_id: accountId,
+    });
   }
 
   allocations(year: number, month: number): Observable<Allocations> {

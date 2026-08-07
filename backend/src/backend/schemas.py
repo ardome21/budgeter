@@ -196,6 +196,10 @@ class TransactionOut(BaseModel):
     category_name: str
     amount: Money
     is_recurring: bool
+    # Which account the money moved through. Null on the imported workbook
+    # history, which never recorded one.
+    account_id: int | None
+    account_name: str | None
     source: TransactionSource
 
 
@@ -215,6 +219,7 @@ class TransactionIn(BaseModel):
     category_id: int
     amount: Decimal
     is_recurring: bool = False
+    account_id: int | None = None
 
     @field_validator("amount")
     @classmethod
@@ -237,6 +242,8 @@ class TransactionPatch(BaseModel):
     category_id: int | None = None
     amount: Decimal | None = None
     is_recurring: bool | None = None
+    # Pass an id to attribute the row to an account, or null to clear it.
+    account_id: int | None = None
 
 
 class CategoryLine(BaseModel):

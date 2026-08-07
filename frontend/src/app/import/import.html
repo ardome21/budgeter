@@ -39,12 +39,26 @@
         />
         <span>My bank exports purchases as negative</span>
       </label>
+
+      <label class="account">
+        <span class="small dim">Account</span>
+        <select
+          [value]="accountId() ?? ''"
+          (change)="setAccount($any($event.target).value)"
+        >
+          <option value="">Not specified</option>
+          @for (a of accounts(); track a.id) {
+            <option [value]="a.id">{{ a.institution }} {{ a.name }}</option>
+          }
+        </select>
+      </label>
     </div>
 
     <p class="dim small hint">
       Nothing is saved until you review it. Columns are detected automatically —
       dates, amounts in any common format, and <code>($12.50)</code> for
-      credits.
+      credits. Naming the account keeps the same charge separate when it shows
+      up on two different exports.
     </p>
   </section>
 }
@@ -88,6 +102,10 @@
           @if (p.duplicate_count) {
             · <strong>{{ p.duplicate_count }}</strong> already imported
           }
+          @if (p.near_duplicate_count) {
+            · <strong class="over">{{ p.near_duplicate_count }}</strong> look
+            like repeats
+          }
           @if (p.uncategorised_count) {
             · <strong class="over">{{ p.uncategorised_count }}</strong> need a
             category
@@ -103,6 +121,20 @@
           }
         </div>
       </div>
+
+      @if (flaggedCount()) {
+        <div class="banner warn">
+          <strong>{{ flaggedCount() }}</strong> ticked
+          {{ flaggedCount() === 1 ? "row matches" : "rows match" }} something
+          already on file for the same amount within a few days. They stay
+          ticked because a near match can be a genuine repeat purchase — check
+          the ones marked below, or
+          <button type="button" class="linkish" (click)="untickFlagged()">
+            untick all {{ flaggedCount() }}
+          </button>
+          if this export covers a period you have already imported.
+        </div>
+      }
 
       @if (needsCategory()) {
         <div class="bulk">
@@ -132,6 +164,7 @@
             @for (r of review(); track r.row_number) {
               <tr
                 [class.dup]="r.duplicate_of !== null"
+                [class.near]="r.duplicate_of === null && r.near_duplicates.length"
                 [class.skip]="!r.include"
               >
                 <td>
@@ -143,13 +176,34 @@
                   />
                 </td>
                 <td class="num dim">{{ r.occurred_on ?? "—" }}</td>
-                <td class="truncate" [title]="r.raw_description">
+                <td
+                  [class.truncate]="!r.near_duplicates.length"
+                  [title]="r.raw_description"
+                >
                   {{ r.raw_description }}
                   @if (r.duplicate_of !== null) {
                     <span class="pill dup-pill">already imported</span>
                   }
                   @for (n of r.notes; track n) {
                     <span class="pill">{{ n }}</span>
+                  }
+                  @if (r.duplicate_of === null && r.near_duplicates.length) {
+                    <div class="near-list small">
+                      @for (m of r.near_duplicates; track m.id) {
+                        <div class="dim">
+                          ↳ same amount
+                          {{
+                            m.days_apart === 0
+                              ? "that day"
+                              : m.days_apart +
+                                (m.days_apart === 1 ? " day" : " days") +
+                                " apart"
+                          }}:
+                          <span class="near-desc">{{ m.raw_description }}</span>
+                          <span class="dim">({{ m.occurred_on ?? "—" }})</span>
+                        </div>
+                      }
+                    </div>
                   }
                 </td>
                 <td class="dim truncate">{{ r.merchant_name ?? "—" }}</td>

@@ -224,6 +224,211 @@ class TestCsvImport:
         assert body["errors"]
 
 
+class TestIdenticalRowsInOneFile:
+    """Two identical charges in one export are two real purchases.
+
+    They used to be a 500: the hash was taken over content alone, so the second
+    row collided with the first against a unique index, and because sessions
+    run with autoflush off the pre-check could not see the pending row either.
+    The whole import was lost, not just the row.
+    """
+
+    CSV = (
+        "Date,Description,Amount\n"
+        "2029-03-04,SAME DAY COFFEE,3.50\n"
+        "2029-03-04,SAME DAY COFFEE,3.50\n"
+    )
+
+    def _rows(self, preview, category_id):
+        return [
+            {
+                "occurred_on": r["occurred_on"],
+                "raw_description": r["raw_description"],
+                "amount": r["amount"],
+                "category_id": r["suggested_category_id"] or category_id,
+                "import_hash": r["import_hash"],
+            }
+            for r in preview["rows"]
+        ]
+
+    def test_preview_gives_the_repeat_its_own_hash(self, client):
+        rows = client.post("/api/imports/preview", data={"text": self.CSV}).json()[
+            "rows"
+        ]
+        assert len({r["import_hash"] for r in rows}) == 2
+        assert any("identical to row 2" in n for n in rows[1]["notes"])
+
+    def test_both_rows_are_written(self, client, category_id):
+        preview = client.post("/api/imports/preview", data={"text": self.CSV}).json()
+        result = client.post(
+            "/api/imports/commit", json={"rows": self._rows(preview, category_id)}
+        )
+        assert result.status_code == 200
+        assert result.json() == {
+            "created": 2,
+            "skipped_duplicates": 0,
+            "errors": [],
+        }
+
+    def test_redropping_the_same_file_still_skips_both(self, client, category_id):
+        preview = client.post("/api/imports/preview", data={"text": self.CSV}).json()
+        rows = self._rows(preview, category_id)
+        client.post("/api/imports/commit", json={"rows": rows})
+
+        again = client.post("/api/imports/preview", data={"text": self.CSV}).json()
+        assert again["duplicate_count"] == 2
+        second = client.post(
+            "/api/imports/commit", json={"rows": self._rows(again, category_id)}
+        ).json()
+        assert second == {"created": 0, "skipped_duplicates": 2, "errors": []}
+
+    def test_a_new_merchant_repeated_is_created_once(self, client, category_id):
+        """The same crash one level down: the second row could not see the
+        merchant the first had just created, and made a second one."""
+        csv = (
+            "Date,Description,Amount\n"
+            "2029-03-05,ZZQQ NOVEL PLACE,8.00\n"
+            "2029-03-05,ZZQQ NOVEL PLACE,8.00\n"
+        )
+        preview = client.post("/api/imports/preview", data={"text": csv}).json()
+        result = client.post(
+            "/api/imports/commit", json={"rows": self._rows(preview, category_id)}
+        )
+        assert result.status_code == 200
+        assert result.json()["created"] == 2
+
+        matches = client.get("/api/merchants?q=zzqq novel").json()
+        assert matches["total"] == 1, "one shop, one merchant"
+
+
+class TestNearDuplicates:
+    """Same amount, near the same date, different wording.
+
+    The hash cannot catch a bank export overlapping the imported workbook: the
+    workbook's descriptions were typed by hand and never match a descriptor.
+    """
+
+    def test_a_matching_amount_nearby_is_flagged_but_stays_importable(
+        self, client, category_id
+    ):
+        existing = client.post(
+            "/api/transactions",
+            json={
+                "occurred_on": "2029-04-10",
+                "raw_description": "Lunch",
+                "amount": "21.34",
+                "category_id": category_id,
+            },
+        ).json()
+
+        csv = "Date,Description,Amount\n2029-04-11,SOME DELI CHARLOTTE NC,21.34\n"
+        body = client.post("/api/imports/preview", data={"text": csv}).json()
+        row = body["rows"][0]
+
+        assert row["duplicate_of"] is None, "different wording cannot hash the same"
+        assert body["near_duplicate_count"] == 1
+        assert [m["id"] for m in row["near_duplicates"]] == [existing["id"]]
+        assert row["near_duplicates"][0]["days_apart"] == 1
+
+    def test_the_same_amount_far_away_is_not_flagged(self, client, category_id):
+        client.post(
+            "/api/transactions",
+            json={
+                "occurred_on": "2029-05-01",
+                "raw_description": "Lunch",
+                "amount": "77.11",
+                "category_id": category_id,
+            },
+        )
+        csv = "Date,Description,Amount\n2029-05-20,SOME DELI,77.11\n"
+        body = client.post("/api/imports/preview", data={"text": csv}).json()
+        assert body["rows"][0]["near_duplicates"] == []
+
+
+class TestImportAccount:
+    def _open_account(self, client):
+        return next(a for a in client.get("/api/accounts").json() if not a["closed_on"])
+
+    def test_committed_rows_carry_the_account(self, client, category_id):
+        account = self._open_account(client)
+        csv = "Date,Description,Amount\n2029-06-02,ACCOUNTED THING,15.00\n"
+        preview = client.post(
+            "/api/imports/preview",
+            data={"text": csv, "account_id": str(account["id"])},
+        ).json()
+        assert preview["account_id"] == account["id"]
+
+        client.post(
+            "/api/imports/commit",
+            json={
+                "account_id": account["id"],
+                "rows": [
+                    {
+                        "occurred_on": "2029-06-02",
+                        "raw_description": "ACCOUNTED THING",
+                        "amount": "15.00",
+                        "category_id": category_id,
+                        "import_hash": preview["rows"][0]["import_hash"],
+                    }
+                ],
+            },
+        )
+        written = client.get(
+            f"/api/transactions?account_id={account['id']}&q=ACCOUNTED"
+        ).json()
+        assert len(written) == 1
+        assert written[0]["account_id"] == account["id"]
+        assert (
+            written[0]["account_name"] == f"{account['institution']} {account['name']}"
+        )
+
+    def test_the_same_charge_on_two_accounts_stays_two_rows(self, client, category_id):
+        """A card export and a checking export can legitimately both show it."""
+        accounts = [a for a in client.get("/api/accounts").json() if not a["closed_on"]]
+        csv = "Date,Description,Amount\n2029-06-03,SHARED CHARGE,42.00\n"
+        hashes = set()
+        for account in accounts[:2]:
+            preview = client.post(
+                "/api/imports/preview",
+                data={"text": csv, "account_id": str(account["id"])},
+            ).json()
+            hashes.add(preview["rows"][0]["import_hash"])
+        assert len(hashes) == 2
+
+    def test_a_closed_account_is_refused(self, client):
+        closed = next(
+            (a for a in client.get("/api/accounts").json() if a["closed_on"]), None
+        )
+        if closed is None:
+            pytest.skip("no closed account in the database")
+        response = client.post(
+            "/api/imports/preview",
+            data={
+                "text": "Date,Description,Amount\n2029-01-01,X,1.00\n",
+                "account_id": str(closed["id"]),
+            },
+        )
+        assert response.status_code == 422
+        assert "closed" in response.json()["detail"]
+
+    def test_an_unknown_account_is_refused(self, client, category_id):
+        response = client.post(
+            "/api/imports/commit",
+            json={
+                "account_id": 99999999,
+                "rows": [
+                    {
+                        "occurred_on": "2029-06-04",
+                        "raw_description": "X",
+                        "amount": "1.00",
+                        "category_id": category_id,
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 422
+
+
 class TestMerchantMerge:
     def test_merge_moves_transactions_and_removes_the_source(self, client, category_id):
         a = client.post(

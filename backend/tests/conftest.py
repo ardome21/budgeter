@@ -8,6 +8,13 @@ approximation — while leaving no residue behind.
 `join_transaction_mode="create_savepoint"` is what makes it work: endpoint code
 calls session.commit() freely, each commit releases a SAVEPOINT rather than
 ending the outer transaction, and the final rollback still undoes all of it.
+
+`autoflush=False` matters just as much, and is easy to leave off: it is what
+SessionLocal uses, and Session() defaults the other way. With the default on,
+a pending insert is visible to the next query and endpoint code that forgets to
+flush passes here and raises a unique violation in production. That is exactly
+how the import endpoint came to 500 on two identical rows in one file while its
+tests were green.
 """
 
 from collections.abc import Generator
@@ -25,7 +32,11 @@ from backend.models import Category
 def session() -> Generator[Session]:
     connection = engine.connect()
     transaction = connection.begin()
-    db = Session(bind=connection, join_transaction_mode="create_savepoint")
+    db = Session(
+        bind=connection,
+        join_transaction_mode="create_savepoint",
+        autoflush=False,  # as SessionLocal builds it
+    )
     try:
         yield db
     finally:

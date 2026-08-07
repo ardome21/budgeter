@@ -6,17 +6,19 @@ detection are shown, because all three are guesses and guesses should be
 visible before they become rows.
 """
 
-from datetime import date
+from collections import Counter, defaultdict
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from ..csv_import import CandidateRow, parse_csv, row_hash
+from ..csv_import import CandidateRow, NearMatch, hash_key, parse_csv, row_hash
 from ..db import get_session
 from ..merchants import display_name, normalize_merchant
 from ..models import (
+    Account,
     Category,
     Merchant,
     MerchantPattern,
@@ -28,6 +30,12 @@ from .transactions import get_or_create_period
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
+# How far apart two charges for the same amount can be and still be worth a
+# second look. The workbook history was hand-typed, so a bank export of the
+# same period matches on neither descriptor nor hash — the amount and roughly
+# the date are all the two records have in common.
+NEAR_DUPLICATE_DAYS = 3
+
 
 class CategoryOption(BaseModel):
     """A category this merchant has genuinely been used with, and how often."""
@@ -35,6 +43,16 @@ class CategoryOption(BaseModel):
     id: int
     name: str
     count: int
+
+
+class NearDuplicate(BaseModel):
+    """An existing transaction this row may already be a copy of."""
+
+    id: int
+    occurred_on: date | None
+    raw_description: str
+    amount: Money
+    days_apart: int
 
 
 class PreviewRow(BaseModel):
@@ -52,6 +70,9 @@ class PreviewRow(BaseModel):
     merchant_name: str | None
     import_hash: str
     duplicate_of: int | None
+    # Same amount, within a few days, but not an exact match. A prompt to look,
+    # never a reason to drop the row — genuine repeat purchases look like this.
+    near_duplicates: list[NearDuplicate]
     notes: list[str]
 
 
@@ -59,8 +80,10 @@ class PreviewOut(BaseModel):
     rows: list[PreviewRow]
     errors: list[str]
     detected_columns: dict[str, str]
+    account_id: int | None
     new_count: int
     duplicate_count: int
+    near_duplicate_count: int
     uncategorised_count: int
 
 
@@ -76,6 +99,9 @@ class CommitRow(BaseModel):
 
 
 class CommitIn(BaseModel):
+    # Which account the export came from. One per file, because that is how
+    # banks hand them out, and it lands on every row it creates.
+    account_id: int | None = None
     rows: list[CommitRow]
 
 
@@ -167,12 +193,72 @@ def _enrich(session: Session, rows: list[CandidateRow]) -> None:
             row.notes.append("new merchant")
         row.duplicate_of = existing.get(row.import_hash)
 
+    _find_near_duplicates(session, rows)
+
+
+def _find_near_duplicates(session: Session, rows: list[CandidateRow]) -> None:
+    """Flag rows matching an existing transaction on amount and roughly date.
+
+    The hash only catches a re-drop of the same export. It cannot catch the
+    case that actually matters here — the imported workbook history, whose
+    descriptions were typed by hand ('Kanna', 'Breakfast') and will never hash
+    the same as the bank's own descriptor for the same charge. Amount plus a
+    few days is the only thing the two records share.
+    """
+    dated = [r for r in rows if r.occurred_on is not None and r.duplicate_of is None]
+    if not dated:
+        return
+
+    window = timedelta(days=NEAR_DUPLICATE_DAYS)
+    earliest = min(r.occurred_on for r in dated) - window
+    latest = max(r.occurred_on for r in dated) + window
+
+    # One query for the whole file: every transaction in the date span whose
+    # amount some row is looking for. Matching up happens in Python.
+    by_amount: defaultdict[object, list[NearMatch]] = defaultdict(list)
+    for txn_id, occurred_on, description, amount in session.execute(
+        select(
+            Transaction.id,
+            Transaction.occurred_on,
+            Transaction.raw_description,
+            Transaction.amount,
+        ).where(
+            Transaction.occurred_on.between(earliest, latest),
+            Transaction.amount.in_({r.amount for r in dated}),
+        )
+    ):
+        by_amount[amount].append(
+            NearMatch(
+                id=txn_id,
+                occurred_on=occurred_on,
+                raw_description=description,
+                amount=amount,
+                days_apart=0,
+            )
+        )
+
+    for row in dated:
+        for match in by_amount.get(row.amount, ()):
+            days = abs((match.occurred_on - row.occurred_on).days)
+            if days <= NEAR_DUPLICATE_DAYS:
+                row.near_duplicates.append(
+                    NearMatch(
+                        id=match.id,
+                        occurred_on=match.occurred_on,
+                        raw_description=match.raw_description,
+                        amount=match.amount,
+                        days_apart=days,
+                    )
+                )
+        row.near_duplicates.sort(key=lambda m: (m.days_apart, m.id))
+
 
 @router.post("/preview", response_model=PreviewOut)
 async def preview(
     file: UploadFile | None = File(default=None),
     text: str | None = Form(default=None),
     flip_sign: bool = Form(default=False),
+    account_id: int | None = Form(default=None),
     session: Session = Depends(get_session),
 ):
     """Parse a pasted or uploaded CSV. Writes nothing."""
@@ -183,7 +269,8 @@ async def preview(
     else:
         raise HTTPException(422, "provide either a file or pasted text")
 
-    parsed = parse_csv(content, flip_sign=flip_sign)
+    _check_account(session, account_id)
+    parsed = parse_csv(content, flip_sign=flip_sign, account_id=account_id)
     _enrich(session, parsed.rows)
 
     return PreviewOut(
@@ -202,14 +289,26 @@ async def preview(
                 merchant_name=r.merchant_name,
                 import_hash=r.import_hash,
                 duplicate_of=r.duplicate_of,
+                near_duplicates=[
+                    NearDuplicate(
+                        id=m.id,
+                        occurred_on=m.occurred_on,
+                        raw_description=m.raw_description,
+                        amount=m.amount,
+                        days_apart=m.days_apart,
+                    )
+                    for m in r.near_duplicates
+                ],
                 notes=r.notes,
             )
             for r in parsed.rows
         ],
         errors=parsed.errors,
         detected_columns=parsed.detected_columns,
+        account_id=account_id,
         new_count=sum(1 for r in parsed.rows if r.duplicate_of is None),
         duplicate_count=sum(1 for r in parsed.rows if r.duplicate_of is not None),
+        near_duplicate_count=sum(1 for r in parsed.rows if r.near_duplicates),
         uncategorised_count=sum(
             1 for r in parsed.rows if r.suggested_category_id is None
         ),
@@ -222,9 +321,13 @@ def commit(payload: CommitIn, session: Session = Depends(get_session)):
     if not payload.rows:
         raise HTTPException(422, "no rows to commit")
 
+    _check_account(session, payload.account_id)
     valid_categories = set(session.scalars(select(Category.id)).all())
-    created = 0
-    skipped = 0
+
+    # Validate and settle every hash before touching the database, so the
+    # existence check is one query rather than one per row.
+    prepared: list[tuple[CommitRow, int, int, str]] = []
+    repeats: Counter[tuple[str, str, str]] = Counter()
     errors: list[str] = []
 
     for index, row in enumerate(payload.rows, start=1):
@@ -243,14 +346,42 @@ def commit(payload: CommitIn, session: Session = Depends(get_session)):
             errors.append(f"row {index}: needs occurred_on, or both year and month")
             continue
 
+        # The preview already numbered repeats when it built these hashes. Only
+        # a caller that skipped the preview lands here without one, and it gets
+        # the same treatment rather than two colliding hashes.
+        key = hash_key(row.occurred_on, row.raw_description, row.amount)
+        occurrence = repeats[key]
+        repeats[key] += 1
         digest = row.import_hash or row_hash(
-            row.occurred_on, row.raw_description, row.amount
+            row.occurred_on,
+            row.raw_description,
+            row.amount,
+            account_id=payload.account_id,
+            occurrence=occurrence,
         )
-        if session.scalar(
-            select(Transaction.id).where(Transaction.import_hash == digest)
-        ):
+        prepared.append((row, year, month, digest))
+
+    on_file = set(
+        session.scalars(
+            select(Transaction.import_hash).where(
+                Transaction.import_hash.in_([digest for *_, digest in prepared])
+            )
+        ).all()
+    )
+
+    created = 0
+    skipped = 0
+    # Sessions are built with autoflush off, so a pending row is invisible to
+    # the query above. Tracking hashes in the request is what stops two rows
+    # that hash the same from reaching the unique index together and taking
+    # the whole import down with a 500.
+    written: set[str] = set()
+
+    for row, year, month, digest in prepared:
+        if digest in on_file or digest in written:
             skipped += 1
             continue
+        written.add(digest)
 
         period = get_or_create_period(session, year, month)
         merchant = _merchant_for(session, row.raw_description)
@@ -263,6 +394,7 @@ def commit(payload: CommitIn, session: Session = Depends(get_session)):
                 category_id=row.category_id,
                 amount=row.amount,
                 is_recurring=row.is_recurring,
+                account_id=payload.account_id,
                 source=TransactionSource.CSV,
                 import_hash=digest,
             )
@@ -271,6 +403,21 @@ def commit(payload: CommitIn, session: Session = Depends(get_session)):
 
     session.commit()
     return CommitOut(created=created, skipped_duplicates=skipped, errors=errors)
+
+
+def _check_account(session: Session, account_id: int | None) -> None:
+    """Reject an unknown or settled account before anything is written."""
+    if account_id is None:
+        return
+    account = session.get(Account, account_id)
+    if account is None:
+        raise HTTPException(422, f"no account with id {account_id}")
+    if account.closed_on is not None:
+        raise HTTPException(
+            422,
+            f"{account.institution} {account.name} was closed on "
+            f"{account.closed_on} — reopen it before importing to it",
+        )
 
 
 def _merchant_for(session: Session, description: str) -> Merchant | None:
@@ -286,4 +433,8 @@ def _merchant_for(session: Session, description: str) -> Merchant | None:
     session.add(merchant)
     session.flush()
     session.add(MerchantPattern(merchant_id=merchant.id, pattern=key))
+    # Flushed, not just added: with autoflush off the next row's pattern lookup
+    # is a fresh query that cannot see a pending insert, so it would miss this
+    # one and try to create the same merchant a second time.
+    session.flush()
     return merchant

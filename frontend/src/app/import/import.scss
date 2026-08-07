@@ -115,8 +115,41 @@ tr.dup {
   color: var(--text-dim);
 }
 
+/* A near match is a question, not a verdict — marked, but not dimmed like a
+   confirmed duplicate, because it is still ticked and still going in. */
+tr.near td {
+  box-shadow: inset 3px 0 0 -1px var(--warn);
+}
+
 tr.skip {
   opacity: 0.45;
+}
+
+.near-list {
+  margin-top: 0.25rem;
+  line-height: 1.5;
+  white-space: normal;
+}
+
+.near-desc {
+  color: var(--text);
+}
+
+/* A button that reads as a link — the bulk action inside a sentence. */
+.linkish {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 select.missing {

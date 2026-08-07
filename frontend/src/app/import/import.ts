@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 
 import { Api } from '../api';
 import {
+  AccountRow,
   Category,
   CommitResult,
   Preview,
@@ -26,6 +27,9 @@ export class Import {
   private api = inject(Api);
 
   categories = signal<Category[]>([]);
+  /** Only open accounts — a settled one cannot receive new charges. */
+  accounts = signal<AccountRow[]>([]);
+  accountId = signal<number | null>(null);
   pasted = signal('');
   flipSign = signal(false);
   preview = signal<Preview | null>(null);
@@ -51,12 +55,23 @@ export class Import {
   needsCategory = computed(
     () => this.review().filter((r) => r.include && !r.categoryId).length,
   );
+  /** Ticked rows that match something already on file closely enough to check. */
+  flaggedCount = computed(
+    () => this.review().filter((r) => r.include && r.near_duplicates.length).length,
+  );
   canCommit = computed(
     () => this.includedCount() > 0 && this.needsCategory() === 0,
   );
 
   constructor() {
     this.api.categories().subscribe((c) => this.categories.set(c));
+    this.api
+      .accounts()
+      .subscribe((a) => this.accounts.set(a.filter((x) => !x.closed_on)));
+  }
+
+  setAccount(value: string): void {
+    this.accountId.set(value ? Number(value) : null);
   }
 
   onFile(event: Event): void {
@@ -64,7 +79,7 @@ export class Import {
     const file = input.files?.[0];
     if (!file) return;
     this.fileName.set(file.name);
-    this.run(this.api.previewCsvFile(file, this.flipSign()));
+    this.run(this.api.previewCsvFile(file, this.flipSign(), this.accountId()));
   }
 
   previewPaste(): void {
@@ -73,7 +88,7 @@ export class Import {
       return;
     }
     this.fileName.set(null);
-    this.run(this.api.previewCsv(this.pasted(), this.flipSign()));
+    this.run(this.api.previewCsv(this.pasted(), this.flipSign(), this.accountId()));
   }
 
   private run(request: ReturnType<Api['previewCsv']>): void {
@@ -126,6 +141,18 @@ export class Import {
     );
   }
 
+  /**
+   * Drop every flagged row in one go — the answer when an export overlaps a
+   * period already on file. Flagged rows stay ticked by default because a
+   * near match is genuinely ambiguous, and quietly discarding real spending is
+   * a worse failure than a duplicate you can see and delete.
+   */
+  untickFlagged(): void {
+    this.review.update((rows) =>
+      rows.map((r) => (r.near_duplicates.length ? { ...r, include: false } : r)),
+    );
+  }
+
   commit(): void {
     const rows = this.review()
       .filter((r) => r.include && r.categoryId)
@@ -140,7 +167,7 @@ export class Import {
 
     this.busy.set(true);
     this.error.set(null);
-    this.api.commitImport(rows).subscribe({
+    this.api.commitImport(rows, this.accountId()).subscribe({
       next: (res) => {
         this.result.set(res);
         this.preview.set(null);
