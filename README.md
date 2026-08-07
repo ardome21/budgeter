@@ -19,6 +19,15 @@ docker-compose.yml   postgres:17 — runs only when you start it
 Already installed on this machine: `node` (nvm 22.18), `uv`, `psql` (libpq),
 `aws`, `cdk`, `gh`, Docker Desktop.
 
+## First run
+
+Nothing starts without credentials. Create them once:
+
+```sh
+cp .env.example .env
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # paste as POSTGRES_PASSWORD
+```
+
 ## Running it
 
 **Database** — start first, stop when you're done for the day:
@@ -76,15 +85,49 @@ against the live schema.
 - The connection string comes from `backend.config.settings`, not `alembic.ini`,
   so `.env` applies here exactly as it does to the app.
 
+## Credentials
+
+One gitignored `.env` at the repo root holds the database credentials, read by
+both `docker-compose.yml` and the backend. `.env.example` is the committed
+template and holds no real values.
+
+The password is stored once, as `POSTGRES_PASSWORD`. The backend assembles the
+connection URL from the parts in `backend/config.py` rather than storing a
+second pre-formatted copy, and wraps the password in pydantic's `SecretStr` so
+it can't leak through a log line or an error page.
+
+Nothing has a fallback credential. A missing `.env` fails at startup — compose
+refuses to interpolate, and `Settings()` raises on the missing fields. That is
+deliberate: a default password is a password that reaches production by
+accident.
+
+**Changing the password** has no effect on a database that already exists —
+Postgres reads those variables only when initialising an empty data directory.
+Either recreate the volume (destroys all data):
+
+```sh
+docker compose down -v && docker compose up -d db
+```
+
+...or change it in place and update `.env` to match:
+
+```sh
+docker exec -it budgeter-db psql -U budgeter -c "\password budgeter"
+```
+
+**Production** credentials belong in AWS Secrets Manager, injected as
+environment variables by the CDK stack. Never in a committed file, never on the
+Desktop, and not in this `.env` either — this file is local-dev only.
+
 ## Database access
 
 ```sh
-psql postgresql://budgeter:budgeter_dev@localhost:5432/budgeter
+set -a; . ./.env; set +a
+psql "postgresql://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:5432/$POSTGRES_DB"
 ```
 
-Credentials live in `docker-compose.yml` and are local-dev only. Real
-credentials belong in `.env` (gitignored) or AWS Secrets Manager — never in
-a committed file, and never on the Desktop.
+The container publishes to `127.0.0.1:5432`, not `0.0.0.0` — the database is
+reachable from this machine only, never from the network you're joined to.
 
 ## Infrastructure
 
@@ -102,7 +145,9 @@ The stack is currently environment-agnostic — `env=` is commented out in
 
 ## Conventions
 
-- Postgres runs in Docker, never as a native install.
+- Postgres runs in Docker, never as a native install, published to loopback only.
+- Secrets live in `.env` (gitignored) with a committed `.env.example` template.
+  No credential, anywhere, has a default value.
 - Python is pinned per-project via `.python-version` (3.12), not system Python.
 - `uv` manages both `backend/` and `infra/` — `uv add <pkg>` updates
   `pyproject.toml` and `uv.lock`. No `requirements.txt` anywhere.

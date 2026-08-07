@@ -4,15 +4,21 @@ services:
     container_name: budgeter-db
     restart: "no"          # never auto-start with the laptop
     environment:
-      POSTGRES_USER: budgeter
-      POSTGRES_PASSWORD: budgeter_dev
-      POSTGRES_DB: budgeter
+      # Sourced from .env — see .env.example. The `:?` form aborts `up` with
+      # a readable error rather than silently starting a database with a
+      # blank password.
+      POSTGRES_USER: ${POSTGRES_USER:?missing from .env — copy .env.example}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?missing from .env — copy .env.example}
+      POSTGRES_DB: ${POSTGRES_DB:?missing from .env — copy .env.example}
     ports:
-      - "5432:5432"
+      # Bound to loopback deliberately. "5432:5432" listens on 0.0.0.0, which
+      # publishes the database to every machine on whatever network the laptop
+      # is joined to.
+      - "127.0.0.1:5432:5432"
     volumes:
       - budgeter_pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U budgeter -d budgeter"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 3s
       retries: 10
