@@ -36,12 +36,22 @@ Money = Numeric(12, 2)
 
 
 class CategoryKind(str, enum.Enum):
-    """Drives the committed-vs-flexible split the budget sheet computed by hand."""
+    """What a category *is* — not whether spending in it is committed.
 
-    COMMITTED = "committed"  # rent, utilities, subscriptions, insurance
-    FLEXIBLE = "flexible"  # groceries, dining, shopping, travel, self care
-    SAVINGS = "savings"
-    OTHER = "other"
+    Committed-vs-flexible deliberately does not live here. It is a property of
+    the individual transaction (`is_recurring`) and of the fixed-cost list, not
+    of the category: Self Care holds both an $89/month gym membership and
+    one-off purchases, and every committed-looking category in the history has
+    discretionary rows in it too.
+
+    What this does encode is whether money in the category left for good.
+    Savings transfers are not spending, and summing them into a spending total
+    is how a budget ends up looking worse than it is.
+    """
+
+    SPENDING = "spending"
+    SAVINGS = "savings"  # moved, not spent
+    OTHER = "other"  # Deficit Reduction — an accounting line, not an outflow
 
 
 class TransactionSource(str, enum.Enum):

@@ -92,6 +92,19 @@ is the one telling the truth. Two confirmed cases:
 The second makes `Monthly Overview`'s disposable income optimistic by exactly
 $89/month.
 
+### Committed vs flexible is a property of the transaction
+
+Not of the category. `Self Care` holds an $89/month gym membership *and* 77
+one-off purchases; every committed-looking category in the history has
+discretionary rows in it. So `categories.kind` does not encode commitment — it
+only distinguishes `SPENDING` from `SAVINGS` (moved, not spent) and `OTHER`.
+
+Commitment comes from `transactions.is_recurring` and from the `fixed_costs`
+list. Note that `is_recurring` is under-recorded in the source workbooks — rent
+is flagged on only 3 of 19 rows — so the transaction-level committed figure is
+currently a floor. Matching transactions against the fixed-cost list is what
+makes it exact, and that is Phase 4.
+
 ### Rent includes bundled utilities
 
 Internet and water are billed inside the rent charge, so `Rent 1474.68 +
