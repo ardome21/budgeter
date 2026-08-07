@@ -120,7 +120,16 @@ amounts parse from `$1,234.56` / `(45.00)` / `-45`, and there is a toggle for
 banks that export purchases as negative.
 
 Merchants resolve against the three years of history already imported, so most
-rows arrive with the right category already filled in. Re-dropping the same file
+rows arrive with the right category already filled in.
+
+A merchant does not *have* a category, it has a **history** of categories.
+Rhino Market & Deli is Food and Drinks on a sandwich run and Groceries on a
+shop, and both are right. So the preview suggests the most-used one and offers
+every other category that merchant has genuinely been filed under as a
+one-click chip, each showing how often. The suggestion is computed from the
+transactions, not read from `merchants.default_category_id` — that column
+records whatever the merchant's *first* transaction happened to be and does not
+follow a merge, so it had gone stale for ten merchants. History cannot. Re-dropping the same file
 is a no-op: CSV rows carry a content hash, and rows already present come back
 ticked off as duplicates. **Hand-entered rows are never hashed and never
 deduplicated** — two identical charges at the same bar on one night are usually

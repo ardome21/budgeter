@@ -6,8 +6,6 @@ assert on real Postgres constraints rather than a stand-in.
 
 from decimal import Decimal
 
-import pytest
-
 
 class TestReadViews:
     def test_categories_are_ordered(self, client):
@@ -274,33 +272,58 @@ class TestMerchantMerge:
 
 
 class TestMerchantSuggestions:
-    def _group_names(self, client) -> list[list[str]]:
-        return [
-            [m["canonical_name"] for m in g["members"]]
-            for g in client.get("/api/merchants/suggestions").json()
-        ]
+    """These seed their own merchants rather than relying on whatever the
+    database happens to hold — the real queue gets emptied by real use, and a
+    test that needs it full would start failing the day the work got done."""
 
-    def test_proposals_carry_the_raw_descriptors(self, client):
+    BRAND = "ZZQUEUE"
+
+    def _seed_group(self, client, category_id, suffixes=("MARKET", "MART", "DELI")):
+        for suffix in suffixes:
+            client.post(
+                "/api/transactions",
+                json={
+                    "occurred_on": "2026-03-01",
+                    "raw_description": f"{self.BRAND} {suffix}",
+                    "category_id": category_id,
+                    "amount": "5.00",
+                },
+            )
+        return self._mine(client)
+
+    def _mine(self, client) -> list[str]:
+        """The seeded group, found by brand rather than by position."""
+        for group in client.get("/api/merchants/suggestions").json():
+            names = [m["canonical_name"] for m in group["members"]]
+            if any(n.upper().startswith(self.BRAND) for n in names):
+                return sorted(names)
+        return []
+
+    def test_proposals_carry_the_raw_descriptors(self, client, category_id):
         """The names alone are not enough to decide; the descriptors are."""
+        self._seed_group(client, category_id)
         groups = client.get("/api/merchants/suggestions").json()
-        assert groups, "expected proposals from the imported history"
-        member = groups[0]["members"][0]
+        mine = next(
+            g
+            for g in groups
+            if any(
+                m["canonical_name"].upper().startswith(self.BRAND) for m in g["members"]
+            )
+        )
+        member = mine["members"][0]
         assert member["examples"], "a proposal without descriptors cannot be judged"
         assert member["transaction_count"] > 0
 
-    def test_saying_no_removes_the_group_permanently(self, client):
-        before = self._group_names(client)
-        assert before, "expected something to reject"
-        target = before[0]
+    def test_saying_no_removes_the_group_permanently(self, client, category_id):
+        target = self._seed_group(client, category_id)
+        assert len(target) == 3
 
         r = client.post("/api/merchants/suggestions/reject", json={"names": target})
         assert r.status_code == 204
+        assert self._mine(client) == [], "a rejected group must not come back"
 
-        after = self._group_names(client)
-        assert target not in after, "a rejected group must not come back"
-
-    def test_rejecting_is_idempotent(self, client):
-        target = self._group_names(client)[0]
+    def test_rejecting_is_idempotent(self, client, category_id):
+        target = self._seed_group(client, category_id)
         for _ in range(2):
             assert (
                 client.post(
@@ -309,26 +332,20 @@ class TestMerchantSuggestions:
                 == 204
             )
 
-    def test_anchor_only_rejects_pairs_against_the_anchor(self, client):
-        """After a partial merge, the leftovers differ from the survivor —
-        but nothing has been decided about whether they differ from each other."""
-        groups = self._group_names(client)
-        target = next((g for g in groups if len(g) >= 3), None)
-        if target is None:
-            pytest.skip("no group with three or more members")
-
+    def test_anchor_only_rejects_pairs_against_the_anchor(self, client, category_id):
+        """After a partial merge the leftovers differ from the survivor, but
+        nothing has been decided about whether they differ from each other."""
+        target = self._seed_group(client, category_id)
         anchor, *others = target
+
         client.post(
             "/api/merchants/suggestions/reject",
             json={"names": others, "anchor": anchor},
         )
 
-        after = self._group_names(client)
-        flat = [set(g) for g in after]
-        assert not any({anchor, others[0]} <= g for g in flat), (
-            "anchor should no longer be grouped with the rejected names"
-        )
-        assert any(set(others) <= g for g in flat), (
+        still = self._mine(client)
+        assert anchor not in still, "the anchor should no longer be grouped"
+        assert set(others) <= set(still), (
             "the others were never claimed to differ from each other"
         )
 
@@ -502,3 +519,62 @@ class TestMergeThenRenameSequence:
             ).status_code
             == 204
         )
+
+
+class TestCategoryOptions:
+    """A merchant has a history of categories, not one category.
+
+    Rhino Market & Deli is Food and Drinks on a sandwich run and Groceries on
+    a shop, and both are correct — so the preview offers what the merchant has
+    actually been used for rather than forcing a single answer.
+    """
+
+    CSV = (
+        "Date,Description,Amount\n"
+        "2026-08-07,RHINO MARKET & DELI CHARLOTTE NC,12.50\n"
+        "2026-08-07,ZZ NEVER SEEN BEFORE,9.99\n"
+    )
+
+    def _rows(self, client):
+        return client.post("/api/imports/preview", data={"text": self.CSV}).json()[
+            "rows"
+        ]
+
+    def test_offers_every_category_the_merchant_has_been_used_with(self, client):
+        row = next(r for r in self._rows(client) if "RHINO" in r["raw_description"])
+        names = [o["name"] for o in row["category_options"]]
+        assert len(names) > 1, "expected a merchant used across several categories"
+        assert row["suggested_category_name"] == names[0]
+
+    def test_options_are_ranked_by_how_often_each_was_used(self, client):
+        row = next(r for r in self._rows(client) if "RHINO" in r["raw_description"])
+        counts = [o["count"] for o in row["category_options"]]
+        assert counts == sorted(counts, reverse=True)
+        assert all(c > 0 for c in counts)
+
+    def test_suggestion_comes_from_history_not_the_stored_default(
+        self, client, session
+    ):
+        """merchants.default_category_id records whatever the first transaction
+        happened to be and does not follow a merge. History cannot go stale."""
+        from backend.models import Merchant
+
+        row = next(r for r in self._rows(client) if "RHINO" in r["raw_description"])
+        merchant = (
+            session.query(Merchant).filter_by(canonical_name=row["merchant_name"]).one()
+        )
+
+        top_id = row["category_options"][0]["id"]
+        assert row["suggested_category_id"] == top_id
+        if merchant.default_category_id != top_id:
+            # This is the real case in the imported data — the stored default
+            # disagrees, and the suggestion correctly ignores it.
+            assert row["suggested_category_id"] != merchant.default_category_id
+
+    def test_an_unknown_merchant_has_no_options_and_no_suggestion(self, client):
+        row = next(
+            r for r in self._rows(client) if "NEVER SEEN" in r["raw_description"]
+        )
+        assert row["category_options"] == []
+        assert row["suggested_category_id"] is None
+        assert "new merchant" in row["notes"]

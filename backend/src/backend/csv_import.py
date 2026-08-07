@@ -42,6 +42,8 @@ class CandidateRow:
     amount: Decimal
     suggested_category_id: int | None = None
     suggested_category_name: str | None = None
+    # (category_id, name, times used) for this merchant, most used first.
+    category_options: list[tuple[int, str, int]] = field(default_factory=list)
     merchant_id: int | None = None
     merchant_name: str | None = None
     import_hash: str = ""

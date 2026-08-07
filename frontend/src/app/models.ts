@@ -89,6 +89,13 @@ export interface NewTransaction {
   is_recurring?: boolean;
 }
 
+/** A category this merchant has actually been used with, and how often. */
+export interface CategoryOption {
+  id: number;
+  name: string;
+  count: number;
+}
+
 export interface PreviewRow {
   row_number: number;
   occurred_on: string | null;
@@ -96,6 +103,12 @@ export interface PreviewRow {
   amount: Money;
   suggested_category_id: number | null;
   suggested_category_name: string | null;
+  /**
+   * Every category this merchant has been filed under, most used first. A shop
+   * is not one category — Rhino is Food and Drinks on a sandwich run and
+   * Groceries on a shop, and both are right.
+   */
+  category_options: CategoryOption[];
   merchant_name: string | null;
   import_hash: string;
   duplicate_of: number | null;

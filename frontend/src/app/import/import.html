@@ -153,7 +153,7 @@
                   }
                 </td>
                 <td class="dim truncate">{{ r.merchant_name ?? "—" }}</td>
-                <td>
+                <td class="cat-cell">
                   <select
                     [ngModel]="r.categoryId"
                     (ngModelChange)="setCategory(r, $event)"
@@ -165,6 +165,28 @@
                       <option [value]="c.id">{{ c.name }}</option>
                     }
                   </select>
+
+                  @if (r.category_options.length > 1) {
+                    <div class="alts">
+                      @for (o of r.category_options; track o.id) {
+                        <button
+                          type="button"
+                          class="chip"
+                          [class.on]="r.categoryId === o.id"
+                          (click)="setCategory(r, o.id)"
+                          [title]="
+                            'Used ' +
+                            o.count +
+                            '× at ' +
+                            (r.merchant_name ?? 'this shop')
+                          "
+                        >
+                          {{ o.name }}
+                          <span class="n">{{ o.count }}</span>
+                        </button>
+                      }
+                    </div>
+                  }
                 </td>
                 <td class="num" [class.over]="+r.amount < 0">
                   {{ fmt(r.amount) }}

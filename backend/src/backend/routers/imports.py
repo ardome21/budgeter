@@ -10,7 +10,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..csv_import import CandidateRow, parse_csv, row_hash
@@ -29,6 +29,14 @@ from .transactions import get_or_create_period
 router = APIRouter(prefix="/imports", tags=["imports"])
 
 
+class CategoryOption(BaseModel):
+    """A category this merchant has genuinely been used with, and how often."""
+
+    id: int
+    name: str
+    count: int
+
+
 class PreviewRow(BaseModel):
     row_number: int
     occurred_on: date | None
@@ -36,6 +44,11 @@ class PreviewRow(BaseModel):
     amount: Money
     suggested_category_id: int | None
     suggested_category_name: str | None
+    # A shop is not one category. Rhino Market & Deli is Food and Drinks on a
+    # sandwich run and Groceries on a shop, and both are right — so every
+    # category the merchant has actually been filed under is offered, ranked
+    # by how often, rather than forcing one answer.
+    category_options: list[CategoryOption]
     merchant_name: str | None
     import_hash: str
     duplicate_of: int | None
@@ -72,13 +85,43 @@ class CommitOut(BaseModel):
     errors: list[str]
 
 
-def _enrich(session: Session, rows: list[CandidateRow]) -> None:
-    """Resolve merchants, infer categories from history, flag duplicates.
+def _category_history(
+    session: Session, merchant_ids: set[int]
+) -> dict[int, list[tuple[int, str, int]]]:
+    """What each merchant has actually been filed under, most used first.
 
-    Category inference reads the merchant's default, which the workbook import
-    already populated from three years of hand-categorised history — so most
-    rows arrive already correct.
+    Read from the transactions rather than from merchants.default_category_id,
+    because that column records whatever the merchant's *first* transaction
+    happened to be and does not move when a merge changes the population. On
+    this data it disagreed with history for ten merchants, the largest being
+    113 transactions. History cannot go stale.
     """
+    if not merchant_ids:
+        return {}
+
+    rows = session.execute(
+        select(
+            Transaction.merchant_id,
+            Transaction.category_id,
+            Category.name,
+            func.count(Transaction.id),
+        )
+        .join(Category, Category.id == Transaction.category_id)
+        .where(Transaction.merchant_id.in_(merchant_ids))
+        .group_by(Transaction.merchant_id, Transaction.category_id, Category.name)
+    ).all()
+
+    out: dict[int, list[tuple[int, str, int]]] = {}
+    for merchant_id, category_id, name, count in rows:
+        out.setdefault(merchant_id, []).append((category_id, name, count))
+    for options in out.values():
+        options.sort(key=lambda o: (-o[2], o[1]))
+    return out
+
+
+def _enrich(session: Session, rows: list[CandidateRow]) -> None:
+    """Resolve merchants, offer the categories they have been used with, flag
+    duplicates."""
     if not rows:
         return
 
@@ -107,13 +150,25 @@ def _enrich(session: Session, rows: list[CandidateRow]) -> None:
         ).all()
     )
 
+    matched_ids = {merchant_id for merchant_id, _, _ in known.values()}
+    history = _category_history(session, matched_ids)
+
     for row in rows:
         key = keys[row.raw_description]
         if key and key in known:
             merchant_id, name, default_category = known[key]
             row.merchant_id = merchant_id
             row.merchant_name = name
-            if default_category:
+            row.category_options = history.get(merchant_id, [])
+
+            if row.category_options:
+                # The most-used category leads; the rest are one click away.
+                category_id, category_name, _ = row.category_options[0]
+                row.suggested_category_id = category_id
+                row.suggested_category_name = category_name
+            elif default_category:
+                # No history yet — a merchant created by an earlier commit in
+                # this same session. Fall back to what it was created as.
                 row.suggested_category_id = default_category
                 row.suggested_category_name = category_names.get(default_category)
         elif key:
@@ -148,6 +203,10 @@ async def preview(
                 amount=r.amount,
                 suggested_category_id=r.suggested_category_id,
                 suggested_category_name=r.suggested_category_name,
+                category_options=[
+                    CategoryOption(id=cid, name=name, count=count)
+                    for cid, name, count in r.category_options
+                ],
                 merchant_name=r.merchant_name,
                 import_hash=r.import_hash,
                 duplicate_of=r.duplicate_of,

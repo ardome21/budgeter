@@ -100,7 +100,7 @@ export class Import {
     });
   }
 
-  setCategory(row: ReviewRow, value: string): void {
+  setCategory(row: ReviewRow, value: string | number): void {
     this.review.update((rows) =>
       rows.map((r) =>
         r.row_number === row.row_number
