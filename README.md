@@ -58,6 +58,34 @@ npm start
 curl localhost:8000/api/health/db      # {"database":"ok"}
 ```
 
+## Importing the Excel history
+
+The app replaces the `Budget YYYY.xlsx` workbooks. A one-shot importer loads
+them; it is a migration tool, not a product feature.
+
+```sh
+cd backend
+uv run alembic upgrade head
+uv run python scripts/import_workbook.py --reset ~/Desktop/Budgets/Budget\ 20*.xlsx
+```
+
+`--reset` wipes every table first, so the import can be re-run as the merchant
+rules are tuned. Close the workbooks in Excel first — a `~$` lock file means
+you'd import a stale snapshot.
+
+The importer guesses nothing silently. It reconciles two ways and prints an
+anomaly report:
+
+1. **Every row lands** — each sheet's column-D sum must equal what was imported
+2. **The right column was read** — each sheet's own rollup `Total` is compared too
+
+A difference in (2) is not necessarily an import bug. Those rollups are `SUMIF`
+over a fixed list of category names, so a typo in the category column makes a
+row invisible to the workbook's own total. That is exactly what happened to
+`May Spending` in 2024: a Charlotte Observer charge typed as `' Subscription'`
+instead of `'Subscriptions'` means the sheet under-reports that month by
+$28.94.
+
 ## Migrations
 
 Alembic owns the schema. Never `create_all()` — it only ever creates, so the

@@ -23,6 +23,18 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "openpyxl>=3.1.5",
     "pytest>=9.1.1",
     "ruff>=0.16.1",
 ]
+
+[tool.pytest.ini_options]
+# scripts/ holds the one-shot importer; its pure helpers are worth testing.
+pythonpath = ["src", "scripts"]
+testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# Depends() in an argument default is the FastAPI idiom, not a mutable default.
+"src/backend/main.py" = ["B008"]
+# openpyxl hands back naive datetimes; the fixtures mirror that faithfully.
+"tests/*" = ["DTZ001"]
