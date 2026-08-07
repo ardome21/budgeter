@@ -195,3 +195,13 @@ button.link {
     font-weight: 500;
   }
 }
+
+.back {
+  font-size: 13px;
+  color: var(--text-dim);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--accent);
+  }
+}

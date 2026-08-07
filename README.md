@@ -73,7 +73,22 @@ imported into.
 | **Month** | The `*Budget` sheets — allocations vs actuals, committed/flexible, pace |
 | **Transactions** | The `*Spending` sheets — list, add by hand, recategorise inline |
 | **Import** | Pasting a bank export into a sheet, then categorising it by hand |
-| **Merchants** | Nothing. This is the consolidation queue the spreadsheet had no way to do |
+| **Merchants** | Nothing. A workbench for what each merchant costs, plus the consolidation the spreadsheet had no way to do |
+
+### The merchant workbench
+
+`/merchants` lists every merchant with what it cost, how often, when it was last
+seen and its category mix — sorted by spend, because 277 of the 401 merchants
+were seen exactly once and an alphabetical list buries the handful that matter.
+Names are editable inline.
+
+It also allows **hand-merging any selection**, which exists because the
+suggestion rule keys on the first word and therefore can never propose
+`Airbnb`, `Future Rent Airbnb` and `Revolution Park Air Bnb` — $6,599 split
+across three records. Those have to be picked.
+
+`/merchants/review` is the suggestion queue, linked from the workbench whenever
+it has items.
 
 ### The merchant review queue
 

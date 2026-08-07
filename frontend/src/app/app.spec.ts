@@ -20,7 +20,9 @@ describe('App', () => {
   it('renders the primary navigation', () => {
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
-    const links = (fixture.nativeElement as HTMLElement).querySelectorAll('nav a');
+    const links = (fixture.nativeElement as HTMLElement).querySelectorAll(
+      'nav a',
+    );
     expect(Array.from(links).map((a) => a.textContent?.trim())).toEqual([
       'Month',
       'Transactions',

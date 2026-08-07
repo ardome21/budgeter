@@ -9,6 +9,7 @@ recorded, so the queue can actually be emptied.
 from itertools import combinations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,8 @@ from ..schemas import (
     MerchantMergeIn,
     MerchantOut,
     MerchantRenameIn,
+    MerchantRow,
+    MergeManyIn,
     RejectIn,
     Suggestion,
     SuggestionMember,
@@ -30,21 +33,100 @@ router = APIRouter(prefix="/merchants", tags=["merchants"])
 EXAMPLES_PER_MERCHANT = 4
 
 
-@router.get("", response_model=list[MerchantOut])
+class MerchantPage(BaseModel):
+    rows: list[MerchantRow]
+    total: int
+
+
+@router.get("", response_model=MerchantPage)
 def list_merchants(
     q: str | None = Query(default=None, description="substring of the name"),
-    limit: int = Query(default=200, le=1000),
+    sort: str = Query(default="spend", pattern="^(spend|count|recent|name)$"),
+    limit: int = Query(default=100, le=1000),
+    offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
 ):
-    return [
-        MerchantOut(
-            id=mid,
-            canonical_name=name,
-            default_category_id=cat,
-            transaction_count=count,
+    """The workbench list — what each merchant cost and when it was last seen."""
+    rows, total = queries.merchant_workbench(session, q, sort, limit, offset)
+    return MerchantPage(rows=rows, total=total)
+
+
+@router.post("/merge", response_model=MerchantOut)
+def merge_many(payload: MergeManyIn, session: Session = Depends(get_session)):
+    """Fold several merchants into one, optionally renaming the survivor.
+
+    The suggestion rule keys on the first word, so it can never propose
+    'Airbnb', 'Future Rent Airbnb' and 'Revolution Park Air Bnb' as one place —
+    $6,599 split across three records. Those get picked by hand here.
+    """
+    target = session.get(Merchant, payload.into_id)
+    if target is None:
+        raise HTTPException(404, f"no merchant with id {payload.into_id}")
+
+    source_ids = [i for i in dict.fromkeys(payload.source_ids) if i != payload.into_id]
+    if not source_ids:
+        raise HTTPException(422, "nothing to merge — sources are all the survivor")
+
+    sources = session.scalars(select(Merchant).where(Merchant.id.in_(source_ids))).all()
+    missing = set(source_ids) - {m.id for m in sources}
+    if missing:
+        raise HTTPException(404, f"no merchant with id {min(missing)}")
+
+    if payload.canonical_name:
+        new_name = payload.canonical_name.strip()
+        if not new_name:
+            raise HTTPException(422, "name must not be blank")
+        clash = session.scalar(
+            select(Merchant).where(
+                Merchant.canonical_name == new_name,
+                Merchant.id != target.id,
+                Merchant.id.notin_(source_ids),
+            )
         )
-        for mid, name, cat, count in queries.merchant_rows(session, q, limit)
-    ]
+        if clash is not None:
+            raise HTTPException(
+                409,
+                f"'{new_name}' is already used by another merchant — "
+                f"include it in the merge instead",
+            )
+
+    doomed = [m.canonical_name for m in sources]
+    session.execute(
+        update(Transaction)
+        .where(Transaction.merchant_id.in_(source_ids))
+        .values(merchant_id=target.id)
+    )
+    session.execute(
+        update(MerchantPattern)
+        .where(MerchantPattern.merchant_id.in_(source_ids))
+        .values(merchant_id=target.id)
+    )
+    # Names that no longer exist must not keep split records, or a future
+    # merchant created with one would inherit decisions nobody made about it.
+    session.execute(
+        delete(MerchantSplit).where(
+            MerchantSplit.left_name.in_(doomed) | MerchantSplit.right_name.in_(doomed)
+        )
+    )
+    for source in sources:
+        session.delete(source)
+
+    if payload.canonical_name:
+        old_name = target.canonical_name
+        target.canonical_name = payload.canonical_name.strip()
+        session.execute(
+            update(MerchantSplit)
+            .where(MerchantSplit.left_name == old_name)
+            .values(left_name=target.canonical_name)
+        )
+        session.execute(
+            update(MerchantSplit)
+            .where(MerchantSplit.right_name == old_name)
+            .values(right_name=target.canonical_name)
+        )
+
+    session.commit()
+    return _merchant_out(session, target)
 
 
 def _examples_for(session: Session, merchant_ids: list[int]) -> dict[int, list[str]]:

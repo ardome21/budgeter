@@ -49,6 +49,35 @@ class MerchantRenameIn(BaseModel):
     canonical_name: str = Field(min_length=1, max_length=120)
 
 
+class CategoryMix(BaseModel):
+    name: str
+    count: int
+
+
+class MerchantRow(BaseModel):
+    """A merchant as it appears on the workbench: what it cost and when."""
+
+    id: int
+    canonical_name: str
+    transaction_count: int
+    total_spent: Money
+    last_seen: date | None
+    categories: list[CategoryMix]
+
+
+class MergeManyIn(BaseModel):
+    """Fold several merchants into one, optionally renaming the survivor.
+
+    Needed because the suggestion rule keys on the first word, so it can never
+    propose 'Airbnb', 'Future Rent Airbnb' and 'Revolution Park Air Bnb' as one
+    place. Those have to be picked by hand.
+    """
+
+    source_ids: list[int] = Field(min_length=1)
+    into_id: int
+    canonical_name: str | None = Field(default=None, max_length=120)
+
+
 class SuggestionMember(BaseModel):
     """One merchant inside a proposal, with the descriptors behind it.
 

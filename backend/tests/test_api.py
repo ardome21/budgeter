@@ -578,3 +578,136 @@ class TestCategoryOptions:
         assert row["category_options"] == []
         assert row["suggested_category_id"] is None
         assert "new merchant" in row["notes"]
+
+
+class TestWorkbench:
+    """The merchant list and the hand-merge it exists for."""
+
+    def _add(self, client, category_id, description: str, amount: str) -> dict:
+        return client.post(
+            "/api/transactions",
+            json={
+                "occurred_on": "2026-03-01",
+                "raw_description": description,
+                "category_id": category_id,
+                "amount": amount,
+            },
+        ).json()
+
+    def test_rows_carry_spend_and_category_mix(self, client):
+        page = client.get("/api/merchants?sort=spend&limit=5").json()
+        assert page["total"] > 0
+        row = page["rows"][0]
+        assert isinstance(row["total_spent"], str), "money must not be a JSON number"
+        assert row["transaction_count"] > 0
+        assert row["categories"], "the mix is what makes a row judgeable"
+
+    def test_default_sort_is_by_spend_descending(self, client):
+        rows = client.get("/api/merchants?sort=spend&limit=20").json()["rows"]
+        totals = [float(r["total_spent"]) for r in rows]
+        assert totals == sorted(totals, reverse=True)
+
+    def test_sort_by_count(self, client):
+        rows = client.get("/api/merchants?sort=count&limit=20").json()["rows"]
+        counts = [r["transaction_count"] for r in rows]
+        assert counts == sorted(counts, reverse=True)
+
+    def test_search_narrows_and_reports_its_own_total(self, client):
+        page = client.get("/api/merchants?q=zzzznotamerchant").json()
+        assert page["rows"] == []
+        assert page["total"] == 0
+
+    def test_bad_sort_is_rejected(self, client):
+        assert client.get("/api/merchants?sort=nonsense").status_code == 422
+
+    def test_hand_merge_across_different_brands(self, client, category_id):
+        """The suggestion rule keys on the first word, so it can never propose
+        these — which is the whole reason the workbench merge exists."""
+        a = self._add(client, category_id, "ZZWB Airbnb", "100.00")
+        b = self._add(client, category_id, "ZZWB Future Rent Airbnb", "200.00")
+        c = self._add(client, category_id, "ZZWB Revolution Park Air Bnb", "300.00")
+        ids = {a["merchant_id"], b["merchant_id"], c["merchant_id"]}
+        assert len(ids) == 3
+
+        r = client.post(
+            "/api/merchants/merge",
+            json={
+                "source_ids": [b["merchant_id"], c["merchant_id"]],
+                "into_id": a["merchant_id"],
+                "canonical_name": "ZZWB Airbnb (all of it)",
+            },
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["canonical_name"] == "ZZWB Airbnb (all of it)"
+        assert r.json()["transaction_count"] == 3
+
+        rows = client.get("/api/transactions?q=ZZWB").json()
+        assert {t["merchant_name"] for t in rows} == {"ZZWB Airbnb (all of it)"}
+        assert sum(float(t["amount"]) for t in rows) == 600.00
+
+    def test_merge_without_a_rename_keeps_the_survivors_name(self, client, category_id):
+        a = self._add(client, category_id, "ZZKEEP ALPHA", "10.00")
+        b = self._add(client, category_id, "ZZKEEP BETA", "20.00")
+        before = client.get("/api/transactions?q=ZZKEEP ALPHA").json()[0][
+            "merchant_name"
+        ]
+        r = client.post(
+            "/api/merchants/merge",
+            json={"source_ids": [b["merchant_id"]], "into_id": a["merchant_id"]},
+        )
+        assert r.json()["canonical_name"] == before
+
+    def test_survivor_listed_as_a_source_is_ignored_not_an_error(
+        self, client, category_id
+    ):
+        a = self._add(client, category_id, "ZZSELF ALPHA", "10.00")
+        b = self._add(client, category_id, "ZZSELF BETA", "20.00")
+        r = client.post(
+            "/api/merchants/merge",
+            json={
+                "source_ids": [a["merchant_id"], b["merchant_id"]],
+                "into_id": a["merchant_id"],
+            },
+        )
+        assert r.status_code == 200
+        assert r.json()["transaction_count"] == 2
+
+    def test_merging_only_the_survivor_is_rejected(self, client, category_id):
+        a = self._add(client, category_id, "ZZONLY ALPHA", "10.00")
+        r = client.post(
+            "/api/merchants/merge",
+            json={"source_ids": [a["merchant_id"]], "into_id": a["merchant_id"]},
+        )
+        assert r.status_code == 422
+
+    def test_unknown_source_is_404(self, client, category_id):
+        a = self._add(client, category_id, "ZZMISS ALPHA", "10.00")
+        r = client.post(
+            "/api/merchants/merge",
+            json={"source_ids": [999999], "into_id": a["merchant_id"]},
+        )
+        assert r.status_code == 404
+
+    def test_money_is_never_moved_by_a_merge(self, client, category_id):
+        """Merging relabels. Every amount must survive it untouched.
+
+        Scoped to the rows under test rather than a page of all transactions —
+        the list endpoint pages at 1000 and there are more than that, so a
+        global sum measures the window, not the truth.
+        """
+        a = self._add(client, category_id, "ZZMONEY ALPHA", "11.11")
+        b = self._add(client, category_id, "ZZMONEY BETA", "22.22")
+        before = {
+            t["raw_description"]: t["amount"]
+            for t in client.get("/api/transactions?q=ZZMONEY").json()
+        }
+        assert before == {"ZZMONEY ALPHA": "11.11", "ZZMONEY BETA": "22.22"}
+
+        client.post(
+            "/api/merchants/merge",
+            json={"source_ids": [b["merchant_id"]], "into_id": a["merchant_id"]},
+        )
+
+        after = client.get("/api/transactions?q=ZZMONEY").json()
+        assert {t["raw_description"]: t["amount"] for t in after} == before
+        assert len({t["merchant_id"] for t in after}) == 1, "both now share a merchant"

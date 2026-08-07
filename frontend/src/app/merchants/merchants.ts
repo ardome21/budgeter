@@ -1,5 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { Observable, forkJoin, of } from 'rxjs';
 import { map } from 'rxjs/operators';
 
@@ -19,7 +20,7 @@ import { Suggestion } from '../models';
  */
 @Component({
   selector: 'app-merchants',
-  imports: [FormsModule],
+  imports: [FormsModule, RouterLink],
   templateUrl: './merchants.html',
   styleUrl: './merchants.scss',
 })

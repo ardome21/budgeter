@@ -11,6 +11,8 @@ import {
   Overview,
   Period,
   Preview,
+  MerchantPage,
+  MerchantSort,
   Suggestion,
   Transaction,
 } from './models';
@@ -90,10 +92,36 @@ export class Api {
     return this.http.post<CommitResult>('/api/imports/commit', { rows });
   }
 
-  merchants(q?: string): Observable<Merchant[]> {
-    return this.http.get<Merchant[]>(
-      `/api/merchants${q ? '?q=' + encodeURIComponent(q) : ''}`,
-    );
+  merchants(
+    q: string,
+    sort: MerchantSort,
+    limit = 100,
+    offset = 0,
+  ): Observable<MerchantPage> {
+    const params = new URLSearchParams({
+      sort,
+      limit: String(limit),
+      offset: String(offset),
+    });
+    if (q) params.set('q', q);
+    return this.http.get<MerchantPage>(`/api/merchants?${params}`);
+  }
+
+  /**
+   * Fold several merchants into one, optionally renaming the survivor.
+   * The suggestion rule keys on the first word, so it can never propose
+   * 'Airbnb' and 'Revolution Park Air Bnb' — those get picked by hand.
+   */
+  mergeMany(
+    sourceIds: number[],
+    intoId: number,
+    canonicalName?: string,
+  ): Observable<Merchant> {
+    return this.http.post<Merchant>('/api/merchants/merge', {
+      source_ids: sourceIds,
+      into_id: intoId,
+      canonical_name: canonicalName ?? null,
+    });
   }
 
   suggestions(): Observable<Suggestion[]> {

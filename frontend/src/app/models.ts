@@ -144,6 +144,28 @@ export interface Suggestion {
   total_transactions: number;
 }
 
+export interface CategoryMix {
+  name: string;
+  count: number;
+}
+
+/** A merchant as it appears on the workbench: what it cost and when. */
+export interface MerchantRow {
+  id: number;
+  canonical_name: string;
+  transaction_count: number;
+  total_spent: Money;
+  last_seen: string | null;
+  categories: CategoryMix[];
+}
+
+export interface MerchantPage {
+  rows: MerchantRow[];
+  total: number;
+}
+
+export type MerchantSort = 'spend' | 'count' | 'recent' | 'name';
+
 export interface Merchant {
   id: number;
   canonical_name: string;
