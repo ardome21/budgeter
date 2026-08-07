@@ -45,6 +45,39 @@ class MerchantMergeIn(BaseModel):
     into_id: int = Field(description="The merchant that survives the merge")
 
 
+class SuggestionMember(BaseModel):
+    """One merchant inside a proposal, with the descriptors behind it.
+
+    The raw descriptors are the point: 'Rhino Mart' and 'Rhino Market Deli'
+    are indistinguishable as names, but seeing what the bank actually wrote
+    is what makes the call obvious.
+    """
+
+    id: int
+    canonical_name: str
+    transaction_count: int
+    examples: list[str]
+
+
+class Suggestion(BaseModel):
+    key: str
+    members: list[SuggestionMember]
+    total_transactions: int
+
+
+class RejectIn(BaseModel):
+    """Record that names are different places.
+
+    With `anchor`, only anchor-to-each pairs are recorded. That is the partial
+    case: after merging 'Uber Eats' and 'Uber Eat', the leftovers are known to
+    differ *from Uber Eats*, but nothing has been decided about whether
+    'Uber Trip' and 'Uber To Airport' are each other.
+    """
+
+    names: list[str] = Field(min_length=1)
+    anchor: str | None = None
+
+
 class PeriodOut(BaseModel):
     year: int
     month: int

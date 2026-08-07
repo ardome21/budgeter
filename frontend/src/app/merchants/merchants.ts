@@ -1,17 +1,20 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Observable, forkJoin, of } from 'rxjs';
 
 import { Api } from '../api';
-import { Merchant } from '../models';
+import { Suggestion } from '../models';
 
 /**
- * The consolidation pass.
+ * The merchant review queue.
  *
- * Normalization is deliberately conservative, so it under-merges — wrongly
- * splitting one shop into two records is a click to fix, wrongly merging two
- * shops silently corrupts every total they appear in. This screen is where a
- * human resolves the leftovers, and it suggests likely pairs rather than
- * acting on them.
+ * A proposal answers "these share a brand — are they one place?", which is a
+ * question, not a claim. So every group is decided by a person, and a "no" is
+ * recorded so the same pair is never proposed again. A queue you cannot empty
+ * is one nobody works through.
+ *
+ * Members are ticked individually because a shared brand is not always one
+ * place: Uber Eats is Food and Drinks, Uber Trip is Transportation.
  */
 @Component({
   selector: 'app-merchants',
@@ -22,50 +25,45 @@ import { Merchant } from '../models';
 export class Merchants {
   private api = inject(Api);
 
-  rows = signal<Merchant[]>([]);
-  search = signal('');
+  queue = signal<Suggestion[]>([]);
+  index = signal(0);
+  ticked = signal<Set<number>>(new Set());
+  keepId = signal<number | null>(null);
   loading = signal(true);
+  busy = signal(false);
   error = signal<string | null>(null);
-  selected = signal<Set<number>>(new Set());
+  done = signal(0);
 
-  /**
-   * Names sharing a first word are the usual split: 'Rhino Market',
-   * 'Rhino Mart', 'Rhino Market Deli'. A suggestion, never an action.
-   */
-  suggestions = computed(() => {
-    const groups = new Map<string, Merchant[]>();
-    for (const m of this.rows()) {
-      const head = m.canonical_name.split(' ')[0].toLowerCase();
-      if (head.length < 4) continue;
-      groups.set(head, [...(groups.get(head) ?? []), m]);
-    }
-    return (
-      [...groups.values()]
-        .filter((g) => g.length > 1)
-        .sort((a, b) => this.uses(b) - this.uses(a))
-        // Capped: this is a review queue, not a report. Working the top of the
-        // list is what shrinks the rest.
-        .slice(0, 12)
-    );
-  });
+  current = computed(() => this.queue()[this.index()] ?? null);
 
-  showAll = signal(false);
+  keepName = computed(
+    () =>
+      this.current()?.members.find((m) => m.id === this.keepId())
+        ?.canonical_name ?? '',
+  );
 
-  /** The long tail is one-transaction merchants; 40 is enough to scan. */
-  visible = computed(() =>
-    this.showAll() ? this.rows() : this.rows().slice(0, 40),
+  /** Ticked members other than the survivor — the ones that actually move. */
+  toMerge = computed(() =>
+    (this.current()?.members ?? []).filter(
+      (m) => this.ticked().has(m.id) && m.id !== this.keepId(),
+    ),
+  );
+
+  leftOut = computed(() =>
+    (this.current()?.members ?? []).filter((m) => !this.ticked().has(m.id)),
   );
 
   constructor() {
-    this.reload();
+    this.load();
   }
 
-  reload(): void {
+  load(): void {
     this.loading.set(true);
-    this.api.merchants(this.search() || undefined).subscribe({
+    this.api.suggestions().subscribe({
       next: (rows) => {
-        this.rows.set(rows);
-        this.selected.set(new Set());
+        this.queue.set(rows);
+        this.index.set(0);
+        this.reset();
         this.loading.set(false);
       },
       error: (e) => {
@@ -75,48 +73,106 @@ export class Merchants {
     });
   }
 
-  onSearch(value: string): void {
-    this.search.set(value);
-    this.reload();
-  }
-
-  uses(group: Merchant[]): number {
-    return group.reduce((n, m) => n + m.transaction_count, 0);
+  /** Every member ticked, biggest kept — the answer for a clean group. */
+  private reset(): void {
+    const group = this.current();
+    if (!group) {
+      this.ticked.set(new Set());
+      this.keepId.set(null);
+      return;
+    }
+    this.ticked.set(new Set(group.members.map((m) => m.id)));
+    this.keepId.set(group.members[0]?.id ?? null);
   }
 
   toggle(id: number): void {
-    this.selected.update((set) => {
+    this.ticked.update((set) => {
       const next = new Set(set);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
+    });
+    // The survivor has to be one of the ticked members.
+    if (!this.ticked().has(this.keepId() ?? -1)) {
+      const first = this.current()?.members.find((m) =>
+        this.ticked().has(m.id),
+      );
+      this.keepId.set(first?.id ?? null);
+    }
+  }
+
+  keep(id: number): void {
+    this.keepId.set(id);
+    this.ticked.update((set) => new Set(set).add(id));
+  }
+
+  /** Merge the ticked members, then record that the untouched ones differ. */
+  accept(): void {
+    const keepId = this.keepId();
+    const group = this.current();
+    if (!group || keepId === null || !this.toMerge().length) return;
+
+    this.busy.set(true);
+    this.error.set(null);
+    const merges = this.toMerge().map((m) =>
+      this.api.mergeMerchant(m.id, keepId),
+    );
+
+    forkJoin(merges).subscribe({
+      next: () => {
+        const survivor = this.keepName();
+        const others = this.leftOut().map((m) => m.canonical_name);
+        const after: Observable<void> = others.length
+          ? this.api.rejectSuggestion(others, survivor)
+          : of(void 0);
+        after.subscribe({
+          next: () => {
+            this.done.update((n) => n + 1);
+            this.busy.set(false);
+            this.next();
+          },
+          error: (e) => {
+            this.error.set(this.describe(e));
+            this.busy.set(false);
+            this.next();
+          },
+        });
+      },
+      error: (e) => {
+        this.error.set(this.describe(e));
+        this.busy.set(false);
+      },
     });
   }
 
-  /** Merge every other member of the group into `keep`. */
-  mergeGroup(group: Merchant[], keep: Merchant): void {
-    const others = group.filter((m) => m.id !== keep.id);
-    if (!others.length) return;
-    if (
-      !confirm(
-        `Merge ${others.length} merchant(s) into "${keep.canonical_name}"?\n\n` +
-          others.map((o) => `  • ${o.canonical_name}`).join('\n') +
-          '\n\nTransactions move across. This cannot be undone automatically.',
-      )
-    ) {
-      return;
-    }
-    let remaining = others.length;
-    for (const other of others) {
-      this.api.mergeMerchant(other.id, keep.id).subscribe({
+  /** None of these are the same place. Never propose this group again. */
+  rejectAll(): void {
+    const group = this.current();
+    if (!group) return;
+    this.busy.set(true);
+    this.api
+      .rejectSuggestion(group.members.map((m) => m.canonical_name))
+      .subscribe({
         next: () => {
-          if (--remaining === 0) this.reload();
+          this.done.update((n) => n + 1);
+          this.busy.set(false);
+          this.next();
         },
         error: (e) => {
           this.error.set(this.describe(e));
-          if (--remaining === 0) this.reload();
+          this.busy.set(false);
         },
       });
-    }
+  }
+
+  /** Decide later. Nothing recorded, so it comes back next time. */
+  skip(): void {
+    this.next();
+  }
+
+  private next(): void {
+    this.index.update((i) => i + 1);
+    this.reset();
   }
 
   private describe(e: unknown): string {

@@ -146,6 +146,26 @@ class MerchantPattern(Base):
     merchant: Mapped[Merchant] = relationship(back_populates="patterns")
 
 
+class MerchantSplit(Base):
+    """A pair the user has said are NOT the same place.
+
+    Without this, saying "no" to a suggestion accomplishes nothing — the
+    similarity rules would propose the same pair on every visit, and a review
+    queue you cannot empty is one nobody works through.
+
+    Keyed by name rather than id: merging deletes the losing merchant, so an
+    id-based record would dangle. Names are stored in sorted order, so the
+    pair (a, b) and (b, a) are the same row.
+    """
+
+    __tablename__ = "merchant_splits"
+    __table_args__ = (UniqueConstraint("left_name", "right_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    left_name: Mapped[str] = mapped_column(String(120))
+    right_name: Mapped[str] = mapped_column(String(120))
+
+
 class BudgetPeriod(Base):
     """A calendar month. The unit everything rolls up to."""
 

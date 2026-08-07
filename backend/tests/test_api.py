@@ -6,6 +6,8 @@ assert on real Postgres constraints rather than a stand-in.
 
 from decimal import Decimal
 
+import pytest
+
 
 class TestReadViews:
     def test_categories_are_ordered(self, client):
@@ -269,3 +271,63 @@ class TestMerchantMerge:
             json={"into_id": txn["merchant_id"]},
         )
         assert r.status_code == 422
+
+
+class TestMerchantSuggestions:
+    def _group_names(self, client) -> list[list[str]]:
+        return [
+            [m["canonical_name"] for m in g["members"]]
+            for g in client.get("/api/merchants/suggestions").json()
+        ]
+
+    def test_proposals_carry_the_raw_descriptors(self, client):
+        """The names alone are not enough to decide; the descriptors are."""
+        groups = client.get("/api/merchants/suggestions").json()
+        assert groups, "expected proposals from the imported history"
+        member = groups[0]["members"][0]
+        assert member["examples"], "a proposal without descriptors cannot be judged"
+        assert member["transaction_count"] > 0
+
+    def test_saying_no_removes_the_group_permanently(self, client):
+        before = self._group_names(client)
+        assert before, "expected something to reject"
+        target = before[0]
+
+        r = client.post("/api/merchants/suggestions/reject", json={"names": target})
+        assert r.status_code == 204
+
+        after = self._group_names(client)
+        assert target not in after, "a rejected group must not come back"
+
+    def test_rejecting_is_idempotent(self, client):
+        target = self._group_names(client)[0]
+        for _ in range(2):
+            assert (
+                client.post(
+                    "/api/merchants/suggestions/reject", json={"names": target}
+                ).status_code
+                == 204
+            )
+
+    def test_anchor_only_rejects_pairs_against_the_anchor(self, client):
+        """After a partial merge, the leftovers differ from the survivor —
+        but nothing has been decided about whether they differ from each other."""
+        groups = self._group_names(client)
+        target = next((g for g in groups if len(g) >= 3), None)
+        if target is None:
+            pytest.skip("no group with three or more members")
+
+        anchor, *others = target
+        client.post(
+            "/api/merchants/suggestions/reject",
+            json={"names": others, "anchor": anchor},
+        )
+
+        after = self._group_names(client)
+        flat = [set(g) for g in after]
+        assert not any({anchor, others[0]} <= g for g in flat), (
+            "anchor should no longer be grouped with the rejected names"
+        )
+        assert any(set(others) <= g for g in flat), (
+            "the others were never claimed to differ from each other"
+        )

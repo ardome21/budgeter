@@ -75,6 +75,30 @@ imported into.
 | **Import** | Pasting a bank export into a sheet, then categorising it by hand |
 | **Merchants** | Nothing. This is the consolidation queue the spreadsheet had no way to do |
 
+### The merchant review queue
+
+Normalization is conservative and under-merges on purpose: wrongly merging two
+shops silently corrupts every total they appear in and cannot be undone, while
+leaving one shop split is a click to fix.
+
+A proposal is built from one rule — **two merchants are proposed when their
+first word is the same brand**, allowing one character of typo. In a bank
+descriptor the first token is the shop and everything after it is a branch, a
+service or noise. So a proposal asks *"these share a brand, are they one
+place?"*, which is a question with a real "no": `Uber Eats` is Food and Drinks
+and `Uber Trip` is Transportation.
+
+Because of that, members are ticked individually rather than accepted as a
+group, and each proposal shows the **raw descriptors** behind every merchant —
+`Rhino Mart` and `Rhino Market Deli` are indistinguishable as names, but what
+the bank actually wrote makes the call obvious.
+
+Every answer is recorded in `merchant_splits`, so a rejected pair is never
+proposed again. A review queue that cannot be emptied is one nobody works
+through. After a partial merge only the pairs *against the surviving name* are
+recorded — nothing has been decided about whether the leftovers match each
+other.
+
 ### Money is a string on the wire
 
 Every money field crosses the API as a JSON **string**, never a number.

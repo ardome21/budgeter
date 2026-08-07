@@ -117,6 +117,20 @@ export interface CommitResult {
   errors: string[];
 }
 
+export interface SuggestionMember {
+  id: number;
+  canonical_name: string;
+  transaction_count: number;
+  /** Raw descriptors as the bank wrote them — what makes the call obvious. */
+  examples: string[];
+}
+
+export interface Suggestion {
+  key: string;
+  members: SuggestionMember[];
+  total_transactions: number;
+}
+
 export interface Merchant {
   id: number;
   canonical_name: string;

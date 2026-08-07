@@ -11,6 +11,7 @@ import {
   Overview,
   Period,
   Preview,
+  Suggestion,
   Transaction,
 } from './models';
 
@@ -93,6 +94,22 @@ export class Api {
     return this.http.get<Merchant[]>(
       `/api/merchants${q ? '?q=' + encodeURIComponent(q) : ''}`,
     );
+  }
+
+  suggestions(): Observable<Suggestion[]> {
+    return this.http.get<Suggestion[]>('/api/merchants/suggestions');
+  }
+
+  /**
+   * Record that names are different places.
+   * With `anchor`, only anchor-to-each pairs are recorded — the partial case
+   * after merging some of a group.
+   */
+  rejectSuggestion(names: string[], anchor?: string): Observable<void> {
+    return this.http.post<void>('/api/merchants/suggestions/reject', {
+      names,
+      anchor: anchor ?? null,
+    });
   }
 
   mergeMerchant(id: number, intoId: number): Observable<Merchant> {

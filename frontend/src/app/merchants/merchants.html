@@ -1,82 +1,112 @@
-<h1>Merchants</h1>
-
-<p class="dim intro">
-  Descriptors are collapsed conservatively — it is safer to leave one shop split
-  across two records than to merge two different shops, which would corrupt
-  every total they appear in. Below are the leftovers worth a look.
-</p>
+<div class="head">
+  <h1>Merchants</h1>
+  @if (!loading() && queue().length) {
+    <span class="dim small">
+      {{ index() + 1 > queue().length ? queue().length : index() + 1 }} of
+      {{ queue().length }}
+      @if (done()) {
+        · {{ done() }} decided
+      }
+    </span>
+  }
+</div>
 
 @if (error()) {
   <div class="banner error">{{ error() }}</div>
 }
 
-@if (suggestions().length) {
-  <section class="card">
-    <h2>Likely the same place — top {{ suggestions().length }}</h2>
-    @for (group of suggestions(); track group[0].id) {
-      <div class="group">
-        <div class="group-rows">
-          @for (m of group; track m.id) {
-            <div class="candidate">
+@if (loading()) {
+  <p class="dim">Loading…</p>
+} @else if (current(); as group) {
+  <section class="card proposal">
+    <header>
+      <h2>Do these belong together?</h2>
+      <span class="dim small">{{ group.total_transactions }} transactions</span>
+    </header>
+
+    <p class="dim small lead">
+      They share a brand name. Tick the ones that are genuinely the same place,
+      and choose which name to keep.
+    </p>
+
+    <ul class="members">
+      @for (m of group.members; track m.id) {
+        <li [class.off]="!ticked().has(m.id)">
+          <label class="tick">
+            <input
+              type="checkbox"
+              [checked]="ticked().has(m.id)"
+              (change)="toggle(m.id)"
+              [attr.aria-label]="'Include ' + m.canonical_name"
+            />
+          </label>
+
+          <div class="body">
+            <div class="line">
               <span class="name">{{ m.canonical_name }}</span>
               <span class="dim small">{{ m.transaction_count }} txns</span>
-              <button
-                type="button"
-                (click)="mergeGroup(group, m)"
-                [title]="'Merge the others into ' + m.canonical_name"
-              >
-                Keep this one
-              </button>
+              @if (ticked().has(m.id)) {
+                @if (keepId() === m.id) {
+                  <span class="badge">keeping this name</span>
+                } @else {
+                  <button type="button" class="link" (click)="keep(m.id)">
+                    keep this name
+                  </button>
+                }
+              }
             </div>
-          }
-        </div>
-      </div>
-    }
-  </section>
-}
+            <div class="examples">
+              @for (e of m.examples; track e) {
+                <code>{{ e }}</code>
+              }
+            </div>
+          </div>
+        </li>
+      }
+    </ul>
 
-<section class="card">
-  <div class="filters">
-    <input
-      type="search"
-      placeholder="Search merchants…"
-      [ngModel]="search()"
-      (ngModelChange)="onSearch($event)"
-      aria-label="Search merchants"
-    />
-    <span class="dim small">{{ rows().length }} shown</span>
-  </div>
-
-  @if (loading()) {
-    <p class="dim">Loading…</p>
-  } @else {
-    <div class="scroll-x">
-      <table>
-        <thead>
-          <tr>
-            <th>Merchant</th>
-            <th class="num">Transactions</th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (m of visible(); track m.id) {
-            <tr>
-              <td>{{ m.canonical_name }}</td>
-              <td class="num">{{ m.transaction_count }}</td>
-            </tr>
-          } @empty {
-            <tr>
-              <td colspan="2" class="dim">No merchants yet.</td>
-            </tr>
-          }
-        </tbody>
-      </table>
+    <div class="actions">
+      <button
+        class="primary"
+        type="button"
+        [disabled]="busy() || !toMerge().length"
+        (click)="accept()"
+      >
+        @if (toMerge().length) {
+          Merge {{ toMerge().length }} into “{{ keepName() }}”
+        } @else {
+          Tick at least two
+        }
+      </button>
+      <button type="button" [disabled]="busy()" (click)="rejectAll()">
+        None of these match
+      </button>
+      <button type="button" class="ghost" [disabled]="busy()" (click)="skip()">
+        Skip
+      </button>
     </div>
 
-    @if (rows().length > visible().length) {
-      <button type="button" class="more" (click)="showAll.set(true)">
-        Show all {{ rows().length }}
-      </button>
+    @if (toMerge().length && leftOut().length) {
+      <p class="dim small note">
+        The {{ leftOut().length }} unticked will be recorded as different from
+        “{{ keepName() }}”, so this pairing is not suggested again.
+      </p>
     }
-  }
-</section>
+  </section>
+} @else if (queue().length) {
+  <section class="card empty">
+    <h2>Queue clear</h2>
+    <p class="dim">
+      {{ done() }} decision{{ done() === 1 ? "" : "s" }} made. Anything skipped
+      will come back next time.
+    </p>
+    <button type="button" (click)="load()">Reload</button>
+  </section>
+} @else {
+  <section class="card empty">
+    <h2>Nothing to review</h2>
+    <p class="dim">
+      No merchants share a brand name without a decision already recorded.
+    </p>
+  </section>
+}
