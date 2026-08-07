@@ -49,6 +49,33 @@ npm start
 curl localhost:8000/api/health/db      # {"database":"ok"}
 ```
 
+## Migrations
+
+Alembic owns the schema. Never `create_all()` — it only ever creates, so the
+first column you add puts your laptop and every other database out of sync.
+
+```sh
+cd backend
+uv run alembic revision --autogenerate -m "create transactions"   # write it
+uv run alembic upgrade head                                       # apply it
+uv run alembic downgrade -1                                       # undo one
+uv run alembic current                                            # where am I
+uv run alembic check                                              # models vs db
+```
+
+The database must be running for any of these — autogenerate diffs your models
+against the live schema.
+
+- **Models must be imported by `backend/src/backend/models.py`.** Autogenerate
+  only sees what's registered on `Base.metadata`; a model that module never
+  imports looks like a table it should *drop*.
+- **Read every generated migration before applying it.** Autogenerate handles
+  added and dropped tables and columns well. It cannot see a rename — it emits
+  a drop plus an add, which throws the data away. Rewrite those as
+  `op.alter_column(..., new_column_name=...)` by hand.
+- The connection string comes from `backend.config.settings`, not `alembic.ini`,
+  so `.env` applies here exactly as it does to the app.
+
 ## Database access
 
 ```sh
