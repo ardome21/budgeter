@@ -541,6 +541,77 @@ class Importer:
             )
             self.r.counts["fixed costs"] += 1
 
+    def import_rent_breakdown(self, ws, effective_from: date, label: str) -> None:
+        """Replace the coarse rent rows with the Rent sheet's own breakdown.
+
+        Monthly Fixed Costs records rent as three lines — Rent 1474.68,
+        Internet 62.00, Water 16.69 — while the Rent sheet itemises the same
+        1553.37 across thirteen: rent, three admin charges, sewer, stormwater,
+        valet trash, an amenity fee and so on.
+
+        The thirteen become components of one parent worth exactly their sum,
+        so the monthly total does not move by a cent. Which is the point: when
+        the charge lands at 1535.17 instead of 1553.37, the breakdown is the
+        only thing that can say which line moved.
+        """
+        lines: list[tuple[str, Decimal]] = []
+        for row in ws.iter_rows(min_row=2, max_col=3):
+            desc, _category, amount = (c.value for c in row)
+            value = money(amount)
+            if not desc or value is None:
+                continue
+            lines.append((str(desc).strip()[:80], value))
+
+        if not lines:
+            return
+        total = sum((amount for _, amount in lines), Decimal("0.00"))
+
+        # The rows this supersedes: everything the fixed-cost sheet filed under
+        # Rent. They are replaced, not added to.
+        #
+        # Flush first. The session runs with autoflush off, so without this the
+        # rows import_fixed_costs just added are still pending and the query
+        # below finds nothing — leaving the coarse rows in place beside the new
+        # bill and double-counting rent.
+        self.s.flush()
+        rent = self.categories["rent"]
+        superseded = self.s.scalars(
+            select(FixedCost).where(FixedCost.category_id == rent.id)
+        ).all()
+        replaced_total = sum((f.amount for f in superseded), Decimal("0.00"))
+        if replaced_total != total:
+            self.r.note(
+                "rent breakdown does not match the fixed-cost rows it replaces",
+                f"{label}: Rent sheet totals {total}, fixed costs total "
+                f"{replaced_total} — importing the breakdown anyway, at its own total",
+            )
+        for f in superseded:
+            self.s.delete(f)
+        self.s.flush()
+
+        parent = FixedCost(
+            description="Rent (billed as one charge)",
+            amount=total,
+            category_id=rent.id,
+            is_exact=False,
+            effective_from=effective_from,
+        )
+        self.s.add(parent)
+        self.s.flush()
+        for desc, amount in lines:
+            self.s.add(
+                FixedCost(
+                    description=desc,
+                    amount=amount,
+                    category_id=rent.id,
+                    is_exact=True,
+                    effective_from=effective_from,
+                    parent_id=parent.id,
+                )
+            )
+            self.r.counts["rent line items"] += 1
+        self.s.flush()
+
     def import_paycheck(self, ws, effective_from: date, label: str) -> None:
         for row in ws.iter_rows(min_row=2, max_col=3):
             desc, amount, kind = (c.value for c in row)
@@ -584,6 +655,18 @@ def reset(session: Session) -> None:
     session.commit()
 
 
+def reset_config(session: Session) -> None:
+    """Wipe fixed costs and paycheck lines only.
+
+    Same reasoning as reset_accounts: a full --reset destroys merchant merges
+    and split decisions, which are the user's own work.
+    """
+    session.execute(delete(FixedCost).where(FixedCost.parent_id.is_not(None)))
+    session.execute(delete(FixedCost))
+    session.execute(delete(PaycheckLine))
+    session.commit()
+
+
 def reset_accounts(session: Session) -> None:
     """Wipe only accounts and their snapshots.
 
@@ -605,11 +688,18 @@ def main() -> int:
         action="store_true",
         help="re-import just the Accounts sheets, preserving everything else",
     )
+    ap.add_argument(
+        "--config-only",
+        action="store_true",
+        help="re-import fixed costs, paycheck and the rent breakdown only",
+    )
     args = ap.parse_args()
 
     report = Report()
     with SessionLocal() as session:
-        if args.accounts_only:
+        if args.config_only:
+            reset_config(session)
+        elif args.accounts_only:
             linked = session.scalar(
                 select(func.count(Transaction.id)).where(
                     Transaction.account_id.is_not(None)
@@ -630,7 +720,11 @@ def main() -> int:
             return 1
 
         imp = Importer(session, report)
-        if not args.accounts_only:
+        if args.accounts_only or args.config_only:
+            # Categories already exist; adopt them rather than re-seeding.
+            for cat in session.scalars(select(Category)).all():
+                imp.categories[cat.name.lower()] = cat
+        else:
             imp.seed_categories()
 
         # Newest workbook last, so its config wins for the current period.
@@ -648,6 +742,8 @@ def main() -> int:
                 ws = wb[sheet]
                 if sheet.startswith("Yearly"):
                     continue  # derived rollup, recomputed on read
+                if args.config_only:
+                    continue
                 if args.accounts_only:
                     if sheet == "Accounts":
                         imp.import_accounts(ws, year, label)
@@ -667,6 +763,8 @@ def main() -> int:
                 eff = date(year, 1, 1)
                 if "Monthly Fixed Costs" in wb.sheetnames:
                     imp.import_fixed_costs(wb["Monthly Fixed Costs"], eff, label)
+                if "Rent" in wb.sheetnames:
+                    imp.import_rent_breakdown(wb["Rent"], eff, label)
                 if "Paycheck" in wb.sheetnames:
                     imp.import_paycheck(wb["Paycheck"], eff, label)
 

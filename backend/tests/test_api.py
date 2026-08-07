@@ -886,3 +886,217 @@ class TestStaleAndClosedAccounts:
         r = client.patch(f"/api/accounts/{acct['id']}", json={"closed_on": None})
         assert r.status_code == 200
         assert r.json()["closed_on"] is None
+
+
+class TestBudgetEditing:
+    def _cat_ids(self, client) -> list[int]:
+        return [c["id"] for c in client.get("/api/categories").json()]
+
+    def test_set_and_read_back_a_budget(self, client):
+        ids = self._cat_ids(client)
+        r = client.put(
+            "/api/periods/2027/3/allocations",
+            json={
+                "allocations": [
+                    {"category_id": ids[0], "amount": "500.00"},
+                    {"category_id": ids[1], "amount": "250.50"},
+                ]
+            },
+        )
+        assert r.status_code == 200
+        assert r.json()["total"] == "750.50"
+        assert client.get("/api/periods/2027/3/allocations").json()["total"] == "750.50"
+
+    def test_put_replaces_rather_than_merges(self, client):
+        ids = self._cat_ids(client)
+        client.put(
+            "/api/periods/2027/4/allocations",
+            json={"allocations": [{"category_id": ids[0], "amount": "100.00"}]},
+        )
+        r = client.put(
+            "/api/periods/2027/4/allocations",
+            json={"allocations": [{"category_id": ids[1], "amount": "70.00"}]},
+        )
+        assert r.json()["total"] == "70.00", "a budget is one decision, not a merge"
+        assert len(r.json()["allocations"]) == 1
+
+    def test_zero_allocations_are_dropped(self, client):
+        ids = self._cat_ids(client)
+        r = client.put(
+            "/api/periods/2027/5/allocations",
+            json={
+                "allocations": [
+                    {"category_id": ids[0], "amount": "0"},
+                    {"category_id": ids[1], "amount": "10.00"},
+                ]
+            },
+        )
+        assert len(r.json()["allocations"]) == 1
+
+    def test_copying_last_month(self, client):
+        ids = self._cat_ids(client)
+        client.put(
+            "/api/periods/2027/6/allocations",
+            json={"allocations": [{"category_id": ids[0], "amount": "800.00"}]},
+        )
+        r = client.post(
+            "/api/periods/2027/7/allocations/copy?from_year=2027&from_month=6"
+        )
+        assert r.status_code == 200
+        assert r.json()["total"] == "800.00"
+
+    def test_copying_from_an_empty_month_is_rejected(self, client):
+        r = client.post(
+            "/api/periods/2027/8/allocations/copy?from_year=1999&from_month=1"
+        )
+        assert r.status_code == 404
+
+    def test_unknown_category_is_rejected(self, client):
+        r = client.put(
+            "/api/periods/2027/9/allocations",
+            json={"allocations": [{"category_id": 999999, "amount": "1.00"}]},
+        )
+        assert r.status_code == 422
+
+    def test_budget_shows_up_on_the_month_summary(self, client):
+        """Editing the budget must move the same figure the Month screen reads."""
+        ids = self._cat_ids(client)
+        client.put(
+            "/api/periods/2026/7/allocations",
+            json={"allocations": [{"category_id": ids[0], "amount": "123.45"}]},
+        )
+        summary = client.get("/api/periods/2026/7/summary").json()
+        assert summary["allocated_total"] == "123.45"
+
+
+class TestFixedCostEditing:
+    def test_components_are_not_counted_beside_their_parent(self, client):
+        rows = client.get("/api/fixed-costs").json()
+        assert rows
+        rent = next((r for r in rows if r["components"]), None)
+        if rent is None:
+            pytest.skip("no fixed cost with a breakdown")
+        component_sum = sum(Decimal(c["amount"]) for c in rent["components"])
+        assert component_sum == Decimal(rent["amount"]), (
+            "a breakdown must equal the bill it breaks down"
+        )
+        assert all(r["parent_id"] is None for r in rows), (
+            "components must not appear at the top level, or the total doubles"
+        )
+
+    def test_changing_the_amount_opens_a_new_row_and_ends_the_old(self, client):
+        cats = client.get("/api/categories").json()
+        created = client.post(
+            "/api/fixed-costs",
+            json={
+                "description": "ZZTest Subscription",
+                "amount": "10.00",
+                "category_id": cats[0]["id"],
+                "effective_from": "2020-01-01",
+            },
+        ).json()
+        updated = client.patch(
+            f"/api/fixed-costs/{created['id']}", json={"amount": "12.00"}
+        ).json()
+        assert updated["id"] != created["id"], "history is kept, not overwritten"
+        assert updated["amount"] == "12.00"
+
+        ended = [
+            r
+            for r in client.get("/api/fixed-costs?include_ended=true").json()
+            if r["id"] == created["id"]
+        ]
+        assert ended and ended[0]["effective_to"] is not None
+
+    def test_renaming_does_not_fork_history(self, client):
+        cats = client.get("/api/categories").json()
+        created = client.post(
+            "/api/fixed-costs",
+            json={
+                "description": "ZZTypo",
+                "amount": "5.00",
+                "category_id": cats[0]["id"],
+                "effective_from": "2020-01-01",
+            },
+        ).json()
+        updated = client.patch(
+            f"/api/fixed-costs/{created['id']}", json={"description": "ZZFixed"}
+        ).json()
+        assert updated["id"] == created["id"], "a typo fix is not a price change"
+
+    def test_deleting_ends_rather_than_erases(self, client):
+        cats = client.get("/api/categories").json()
+        created = client.post(
+            "/api/fixed-costs",
+            json={
+                "description": "ZZCancelled",
+                "amount": "9.99",
+                "category_id": cats[0]["id"],
+            },
+        ).json()
+        assert client.delete(f"/api/fixed-costs/{created['id']}").status_code == 204
+        still_there = [
+            r
+            for r in client.get("/api/fixed-costs?include_ended=true").json()
+            if r["id"] == created["id"]
+        ]
+        assert still_there, "a cancelled subscription still explains last month"
+
+
+class TestReconciliation:
+    def test_matched_rows_carry_a_drift(self, client):
+        body = client.get("/api/periods/2026/7/reconcile").json()
+        matched = [r for r in body["rows"] if r["actual"] is not None]
+        assert matched, "expected some commitments to match a merchant"
+        for r in matched:
+            assert Decimal(r["drift"]) == Decimal(r["actual"]) - Decimal(r["expected"])
+
+    def test_unmatched_rows_say_so_instead_of_guessing(self, client):
+        """Falling back to the category total made Energy and Phone both report
+        192.74 — the whole Utilities category, twice. A blank is more useful."""
+        body = client.get("/api/periods/2026/7/reconcile").json()
+        for r in body["rows"]:
+            if r["note"] == "not linked to a merchant yet":
+                assert r["actual"] is None
+                assert r["drift"] is None
+
+    def test_unmatched_rows_offer_candidates(self, client):
+        body = client.get("/api/periods/2026/7/reconcile").json()
+        unlinked = [
+            r for r in body["rows"] if r["note"] == "not linked to a merchant yet"
+        ]
+        assert any(r["suggestions"] for r in unlinked), (
+            "an unmatched commitment with no suggestion is a dead end"
+        )
+
+    def test_linking_a_merchant_makes_the_row_reconcile(self, client):
+        body = client.get("/api/periods/2026/7/reconcile").json()
+        target = next(
+            (
+                r
+                for r in body["rows"]
+                if r["note"] == "not linked to a merchant yet" and r["suggestions"]
+            ),
+            None,
+        )
+        if target is None:
+            pytest.skip("nothing unlinked to link")
+
+        merchant_id = target["suggestions"][0][0]
+        client.patch(
+            f"/api/fixed-costs/{target['fixed_cost_id']}",
+            json={"merchant_id": merchant_id},
+        )
+        after = client.get("/api/periods/2026/7/reconcile").json()
+        row = next(
+            r for r in after["rows"] if r["fixed_cost_id"] == target["fixed_cost_id"]
+        )
+        assert row["merchant"] is not None
+        assert row["actual"] is not None
+
+    def test_expected_total_matches_the_fixed_cost_total(self, client):
+        body = client.get("/api/periods/2026/7/reconcile").json()
+        costs = client.get("/api/fixed-costs").json()
+        assert Decimal(body["expected_total"]) == sum(
+            Decimal(c["amount"]) for c in costs
+        )

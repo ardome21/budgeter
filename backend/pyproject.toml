@@ -44,5 +44,6 @@ testpaths = ["tests"]
 # the correct type here rather than an oversight.
 "src/backend/csv_import.py" = ["DTZ007"]
 "src/backend/queries.py" = ["DTZ011"]
+"src/backend/routers/config.py" = ["B008", "DTZ011"]
 # openpyxl hands back naive datetimes; the fixtures mirror that faithfully.
 "tests/*" = ["DTZ001", "DTZ011"]

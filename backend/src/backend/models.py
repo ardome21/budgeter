@@ -276,7 +276,29 @@ class FixedCost(Base):
     effective_from: Mapped[date] = mapped_column(Date)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
 
+    # A bill can carry its own breakdown. Rent arrives as one charge but is
+    # really eleven lines — rent, admin fees, valet trash, amenity fee — and
+    # when the charge moves, the breakdown is what says which line moved.
+    # Components are part of the parent's amount, never counted alongside it.
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("fixed_costs.id"), nullable=True
+    )
+
+    # Which merchant actually charges for this. Guessing from the description
+    # gets Netflix right and rent wrong — the bill is called "Rent" and the
+    # charge says BILT CARD HOUSING. Set once, correct forever.
+    merchant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("merchants.id"), nullable=True
+    )
+
     category: Mapped[Category] = relationship()
+    merchant: Mapped["Merchant | None"] = relationship()
+    components: Mapped[list["FixedCost"]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan"
+    )
+    parent: Mapped["FixedCost | None"] = relationship(
+        back_populates="components", remote_side="FixedCost.id"
+    )
 
 
 class PaycheckLine(Base):
