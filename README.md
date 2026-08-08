@@ -259,6 +259,25 @@ an external service in the login path is a lot of machinery for a downgrade.
 That calculus changes the day this has more than one user or needs recovery on
 a device you do not have.
 
+#### No authenticator yet
+
+There is a gap between setting the login up and having an authenticator that
+actually works, and being locked out of your own budget in the middle of it is
+the worst moment for it to happen:
+
+```sh
+cd backend && uv run python scripts/show_code.py             # the current code
+cd backend && uv run python scripts/show_code.py --setup-key # and the secret
+```
+
+Honest about what it costs: anyone who can run it already holds the database
+and the encryption key, so it hands them the second factor too. It is no weaker
+than `reset_auth.py` beside it, which can delete the login outright — both need
+shell access to the machine, which is a higher bar than the login asks for.
+
+**The point is to stop needing it.** Register a passkey, or paste the setup key
+into an authenticator, and never run it again.
+
 #### Locked out
 
 Recovery codes first. If those are gone too:
