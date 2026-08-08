@@ -14,11 +14,13 @@ from decimal import Decimal
 
 import pytest
 from pydantic import SecretStr
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from backend import plaid_client
 from backend.models import (
     Account,
+    Category,
+    CategoryKind,
     PlaidAccount,
     PlaidItem,
     Transaction,
@@ -61,7 +63,8 @@ def linked(session, monkeypatch):
             plaid_account_id="acct-1",
             account_id=account.id,
             mask="4242",
-            subtype="credit card",
+            account_type="depository",
+            subtype="checking",
         )
     )
     session.flush()
@@ -429,3 +432,185 @@ def test_a_stale_login_is_reported_not_raised(client, session, linked, monkeypat
     assert body["reauth_needed"] == ["Chase"]
     session.refresh(item)
     assert item.needs_reauth is True
+
+
+# --- Transfers, income and balances --------------------------------------
+
+
+def _card(session, item, *, mask, name, account_type="credit"):
+    """A second linked account on the same item, to be paid or paid from."""
+    account = Account(institution="Chase", name=name, is_retirement=False)
+    session.add(account)
+    session.flush()
+    session.add(
+        PlaidAccount(
+            item_id=item.id,
+            plaid_account_id=f"acct-{mask}",
+            account_id=account.id,
+            mask=mask,
+            account_type=account_type,
+        )
+    )
+    session.flush()
+    return account
+
+
+def test_paying_your_own_card_is_a_transfer_not_spending(
+    client, session, linked, monkeypatch
+):
+    """The case that started this: $207.45 counted twice in one August."""
+    item, _ = linked
+    _card(session, item, mask="1249", name="Discover it Card")
+
+    feed(
+        monkeypatch,
+        SyncDiff(
+            added=[txn("t1", name="DISCOVER E-PAYMENT 1249 WEB ID: 2510020270",
+                       amount="207.45")],
+            modified=[], removed=[], cursor="c1",
+        ),
+    )
+    row = client.post("/api/plaid/sync").json()["rows"][0]
+
+    assert row["suggested_category_name"] == "Transfer"
+    assert row["merchant_key"] is None, "a payment to yourself has no merchant"
+    assert any("Discover it Card" in n for n in row["notes"])
+
+    category = session.scalars(
+        select(Category).where(Category.name == "Transfer")
+    ).first()
+    assert category.kind == CategoryKind.TRANSFER
+
+
+def test_a_matching_store_number_is_not_a_transfer(
+    client, session, linked, monkeypatch
+):
+    """The false positive that made a mask alone insufficient.
+
+    The Citi card's real mask is 0412, and HARRIS TEETER 0412 is a real grocery
+    descriptor in three years of history. Four digits that happen to match are
+    a coincidence; four digits beside the word PAYMENT are a payment.
+    """
+    item, _ = linked
+    _card(session, item, mask="0412", name="Citi Custom Cash")
+
+    feed(
+        monkeypatch,
+        SyncDiff(
+            added=[txn("t1", name="HARRIS TEETER 0412", amount="52.10")],
+            modified=[], removed=[], cursor="c1",
+        ),
+    )
+    row = client.post("/api/plaid/sync").json()["rows"][0]
+
+    assert row["suggested_category_name"] != "Transfer"
+    assert not any("payment to your" in n for n in row["notes"])
+
+
+def test_a_reference_number_containing_the_mask_is_not_a_transfer(
+    client, session, linked, monkeypatch
+):
+    """The mask must stand as its own token, not lurk inside a longer number."""
+    item, _ = linked
+    _card(session, item, mask="0270", name="Some Card")
+
+    feed(
+        monkeypatch,
+        SyncDiff(
+            added=[txn("t1", name="ACME PAYMENT WEB ID: 2510020270",
+                       amount="30.00")],
+            modified=[], removed=[], cursor="c1",
+        ),
+    )
+    row = client.post("/api/plaid/sync").json()["rows"][0]
+    assert row["suggested_category_name"] != "Transfer"
+
+
+def test_money_arriving_in_checking_is_income_not_spending(
+    client, session, linked, monkeypatch
+):
+    feed(
+        monkeypatch,
+        SyncDiff(
+            added=[txn("t1", name="MOODYS PAYROLL DIRECT DEP", amount="-2214.98")],
+            modified=[], removed=[], cursor="c1",
+        ),
+    )
+    row = client.post("/api/plaid/sync").json()["rows"][0]
+
+    assert row["suggested_category_name"] == "Income"
+    category = session.scalars(
+        select(Category).where(Category.name == "Income")
+    ).first()
+    assert category.kind == CategoryKind.INCOME
+
+
+def test_a_refund_on_a_card_is_not_income(client, session, linked, monkeypatch):
+    """Negative means opposite things per account type: a deposit in checking,
+    a refund on a card — and a refund belongs against what it refunds."""
+    session.execute(
+        update(PlaidAccount)
+        .where(PlaidAccount.plaid_account_id == "acct-1")
+        .values(account_type="credit")
+    )
+    session.flush()
+
+    feed(
+        monkeypatch,
+        SyncDiff(
+            added=[txn("t1", name="UNITED AIRLINES", amount="-500.00")],
+            modified=[], removed=[], cursor="c1",
+        ),
+    )
+    row = client.post("/api/plaid/sync").json()["rows"][0]
+    assert row["suggested_category_name"] != "Income"
+
+
+def test_transfers_and_income_stay_out_of_the_month_total(client, session):
+    """The whole point. A card payment must not inflate what you spent.
+
+    The spending category is looked up by kind rather than taken from the
+    `category_id` fixture: that returns the first category by sort order, which
+    is Savings, and a SAVINGS row was already excluded — so the test passed
+    without proving anything about transfers.
+    """
+    from backend.queries import month_summary
+    from backend.routers.transactions import get_or_create_period
+
+    spending = session.scalars(
+        select(Category).where(Category.kind == CategoryKind.SPENDING)
+    ).first()
+    transfer = Category(name="Transfer Test", kind=CategoryKind.TRANSFER, sort_order=99)
+    income = Category(name="Income Test", kind=CategoryKind.INCOME, sort_order=100)
+    session.add_all([transfer, income])
+    session.flush()
+
+    period = get_or_create_period(session, 2026, 9)
+    for category, amount in (
+        (spending.id, "100.00"),
+        (transfer.id, "207.45"),
+        (income.id, "-2214.98"),
+    ):
+        session.add(
+            Transaction(
+                occurred_on=date(2026, 9, 1),
+                period_id=period.id,
+                raw_description="x",
+                category_id=category,
+                amount=Decimal(amount),
+                is_recurring=False,
+                source=TransactionSource.MANUAL,
+            )
+        )
+    session.flush()
+
+    summary = month_summary(session, 2026, 9, today=date(2026, 9, 30))
+    assert summary.spent_total == Decimal("100.00"), (
+        "a transfer and a paycheck must not move what you spent"
+    )
+    split = summary.commitment
+    assert split.committed + split.flexible == Decimal("100.00")
+
+    # They are still on screen, just not counted as spending.
+    shown = {line.category for line in summary.categories}
+    assert "Transfer Test" in shown and "Income Test" in shown

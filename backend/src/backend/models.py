@@ -56,6 +56,18 @@ class CategoryKind(str, enum.Enum):
     SAVINGS = "SAVINGS"  # moved, not spent
     OTHER = "OTHER"  # Deficit Reduction — an accounting line, not an outflow
 
+    # Money moving between accounts you already own, and money arriving. Both
+    # exist only because linking a *checking* account brought them in: the
+    # workbook only ever recorded spending, so nothing before this needed to
+    # say "this is not an outflow".
+    #
+    # Paying a credit card off is the case that forced it. The payment leaves
+    # checking and the card's own purchases arrive separately, so counting the
+    # payment as spending counts the same money twice — $207.45 of one August,
+    # 8% of the month, on the first day of real data.
+    TRANSFER = "TRANSFER"
+    INCOME = "INCOME"
+
 
 class TransactionSource(str, enum.Enum):
     WORKBOOK = "WORKBOOK"  # one-shot import of the Excel history
@@ -300,8 +312,14 @@ class PlaidAccount(Base):
     plaid_account_id: Mapped[str] = mapped_column(String(120), unique=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
 
-    # The last four digits, for telling two cards at one bank apart on screen.
+    # The last four digits, for telling two cards at one bank apart on screen —
+    # and for recognising a payment to yourself, which quotes them.
     mask: Mapped[str | None] = mapped_column(String(10), nullable=True)
+
+    # Plaid's own type/subtype. `account_type` decides two things that must not
+    # be guessed: whether a balance is a liability (stored negative), and
+    # whether a negative amount is a deposit or a refund.
+    account_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     subtype: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
     item: Mapped[PlaidItem] = relationship(back_populates="accounts")

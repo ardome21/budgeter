@@ -152,6 +152,14 @@
     </div>
   }
 
+  @if (s.balances) {
+    <div class="banner info">
+      <strong>{{ s.balances }}</strong> account
+      {{ s.balances === 1 ? "balance" : "balances" }} updated. See
+      <a routerLink="/accounts">Accounts</a> for net worth.
+    </div>
+  }
+
   @if (!s.rows.length) {
     <div class="banner ok">Nothing new to review.</div>
   } @else {

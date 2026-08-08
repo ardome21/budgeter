@@ -107,7 +107,13 @@ def month_summary(
         select(Category).order_by(Category.sort_order, Category.name)
     ).all()
 
-    spent_total = _q(sum(spent_by_cat.values(), ZERO))
+    # Only SPENDING kinds count as spent. A transfer to your own card and a
+    # paycheck landing both have category totals worth seeing on the screen,
+    # and neither belongs in "you spent this much".
+    spending_ids = {c.id for c in categories if c.kind == CategoryKind.SPENDING}
+    spent_total = _q(
+        sum((v for k, v in spent_by_cat.items() if k in spending_ids), ZERO)
+    )
     allocated_total = _q(sum(allocated_by_cat.values(), ZERO))
 
     lines: list[CategoryLine] = []
@@ -125,12 +131,25 @@ def month_summary(
                 spent=spent,
                 remaining=_q(allocated - spent),
                 pct_used=float(spent / allocated) if allocated else None,
-                share_of_spend=float(spent / spent_total) if spent_total else 0.0,
+                # A share of spending only means anything for a category that
+                # is spending. The denominator excludes transfers and income,
+                # so leaving those to divide by it would report a card payment
+                # as some percentage of the month's outgoings — or over 100%.
+                share_of_spend=(
+                    float(spent / spent_total)
+                    if spent_total and cat.kind == CategoryKind.SPENDING
+                    else 0.0
+                ),
             )
         )
 
     # Committed vs flexible comes from the transaction, not the category — the
     # gym is a fixed monthly cost that lives in Self Care.
+    #
+    # Restricted to SPENDING kinds. It used to sum every row in the period,
+    # which was correct while every row was spending: the workbook only ever
+    # recorded outflows. Linking a checking account ended that — a credit-card
+    # payment and a paycheck are both rows here now, and neither is spending.
     committed, flexible = session.execute(
         select(
             func.coalesce(
@@ -143,7 +162,12 @@ def month_summary(
                 ),
                 0,
             ),
-        ).where(Transaction.period_id == period.id)
+        )
+        .join(Category, Category.id == Transaction.category_id)
+        .where(
+            Transaction.period_id == period.id,
+            Category.kind == CategoryKind.SPENDING,
+        )
     ).one()
     saved = session.scalar(
         select(func.coalesce(func.sum(Transaction.amount), 0))

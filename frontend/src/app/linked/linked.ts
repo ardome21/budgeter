@@ -1,4 +1,5 @@
 import { DatePipe } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
@@ -42,7 +43,7 @@ declare const Plaid: {
  */
 @Component({
   selector: 'app-linked',
-  imports: [DatePipe, FormsModule, MerchantField],
+  imports: [DatePipe, FormsModule, MerchantField, RouterLink],
   templateUrl: './linked.html',
   styleUrl: './linked.scss',
 })

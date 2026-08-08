@@ -48,9 +48,20 @@ class PlaidReauthRequired(RuntimeError):
     """The institution needs its login refreshed through Link update mode."""
 
 
+# Plaid account types that represent money you owe rather than money you have.
+# Their balances are reported as positive amounts outstanding, and budgeter
+# stores a liability as negative — the workbook's own convention, and what the
+# student loan and the old credit-card row already use.
+LIABILITY_TYPES = {"credit", "loan"}
+
+
 @dataclass
 class LinkedAccount:
-    """One account as Plaid describes it."""
+    """One account as Plaid describes it, balance included.
+
+    The balance arrives on the same call that lists the accounts, so there is
+    never a reason to ask separately.
+    """
 
     plaid_account_id: str
     name: str
@@ -58,6 +69,24 @@ class LinkedAccount:
     mask: str | None
     type: str
     subtype: str | None
+    current: Decimal | None = None
+    available: Decimal | None = None
+
+    @property
+    def is_liability(self) -> bool:
+        return self.type in LIABILITY_TYPES
+
+    @property
+    def signed_balance(self) -> Decimal | None:
+        """The balance as budgeter stores it: liabilities negative.
+
+        A card with $207.45 outstanding is -207.45 of net worth. Plaid reports
+        it as +207.45 owed, so the sign has to be flipped here rather than
+        anywhere further in, where it would be flipped twice or not at all.
+        """
+        if self.current is None:
+            return None
+        return -self.current if self.is_liability else self.current
 
 
 @dataclass
@@ -78,6 +107,10 @@ class LinkedTransaction:
     amount: Decimal
     pending: bool
     category: str | None
+    # Filled in by the caller from its own account mapping: Plaid does not put
+    # the account type on a transaction, and a negative amount means opposite
+    # things on a card (a refund) and in checking (a deposit).
+    account_type: str | None = None
 
 
 @dataclass
@@ -238,9 +271,18 @@ def get_accounts(access_token: str) -> list[LinkedAccount]:
             mask=a.mask,
             type=str(a.type),
             subtype=str(a.subtype) if a.subtype else None,
+            current=_money(getattr(a.balances, "current", None)),
+            available=_money(getattr(a.balances, "available", None)),
         )
         for a in response.accounts
     ]
+
+
+def _money(value) -> Decimal | None:
+    """Plaid hands back a float; NUMERIC(12,2) must not inherit its error."""
+    if value is None:
+        return None
+    return Decimal(str(value)).quantize(Decimal("0.01"))
 
 
 def sync_transactions(access_token: str, cursor: str | None) -> SyncDiff:

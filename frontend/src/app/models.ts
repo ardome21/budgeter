@@ -341,6 +341,9 @@ export interface SyncResult {
   updated: number;
   /** Charges the bank withdrew. Already removed. */
   removed: number;
+  /** Account balances refreshed. A balance is a fact the bank states, not a
+   *  guess to confirm, so it is reported rather than reviewed. */
+  balances: number;
   near_duplicate_count: number;
   uncategorised_count: number;
   reauth_needed: string[];

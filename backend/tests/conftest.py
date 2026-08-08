@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from backend.db import engine, get_session
 from backend.main import app
-from backend.models import AppUser, Category
+from backend.models import AppUser, Category, PlaidItem
 
 
 @pytest.fixture
@@ -67,6 +67,15 @@ def client(session: Session) -> Generator[TestClient]:
     # when the next table hangs off a user.
     for user in session.scalars(select(AppUser)).all():
         session.delete(user)
+
+    # And from any bank actually linked on this machine. A test that syncs
+    # would otherwise iterate the developer's real institutions alongside its
+    # own fixture: `reauth_needed == ["Chase"]` became four institutions, and
+    # one revision was applied five times. Same reasoning as the users above —
+    # inside the transaction, so nothing real is lost to the rollback.
+    for item in session.scalars(select(PlaidItem)).all():
+        session.delete(item)
+
     session.flush()
 
     app.dependency_overrides[get_session] = lambda: session

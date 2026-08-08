@@ -10,6 +10,7 @@ different amount) or withdraws one entirely, that is the bank correcting its own
 record, not a suggestion to review.
 """
 
+import re
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -23,7 +24,9 @@ from ..db import get_session
 from ..merchants import suggest_key
 from ..models import (
     Account,
+    AccountBalance,
     Category,
+    CategoryKind,
     PlaidAccount,
     PlaidItem,
     Transaction,
@@ -31,6 +34,7 @@ from ..models import (
 )
 from ..plaid_client import (
     ApiException,
+    LinkedAccount,
     LinkedTransaction,
     PlaidNotConfigured,
     PlaidReauthRequired,
@@ -80,6 +84,126 @@ def _plaid_error(exc: ApiException) -> str:
             f"PLAID_ENV={other} and restart the API. ({described})"
         )
     return f"Plaid ({settings.plaid_env}) — {described}"
+
+
+# Categories that linking made necessary. Created on demand, so a database
+# that never links a bank never grows a category it has no use for.
+TRANSFER_CATEGORY = "Transfer"
+INCOME_CATEGORY = "Income"
+
+
+def _record_balances(
+    session: Session, item: PlaidItem, remote: list[LinkedAccount]
+) -> int:
+    """Snapshot today's balance for every account on this item.
+
+    Balances arrive on the same call that lists the accounts, so refreshing
+    transactions and refreshing balances costs one request either way. A
+    snapshot is keyed by date, so several refreshes in a day correct that day's
+    reading instead of stacking up beside it.
+    """
+    by_plaid_id = {
+        pa.plaid_account_id: pa
+        for pa in session.scalars(
+            select(PlaidAccount).where(PlaidAccount.item_id == item.id)
+        )
+    }
+    today = datetime.now(UTC).date()
+    written = 0
+
+    for account in remote:
+        mapping = by_plaid_id.get(account.plaid_account_id)
+        if mapping is None:
+            continue
+
+        # Self-healing, so accounts linked before this column existed pick it
+        # up on their next refresh rather than needing a backfill that would
+        # have to call Plaid anyway.
+        if mapping.account_type != account.type:
+            mapping.account_type = account.type
+
+        balance = account.signed_balance
+        if balance is None:
+            continue
+        existing = session.scalar(
+            select(AccountBalance).where(
+                AccountBalance.account_id == mapping.account_id,
+                AccountBalance.as_of == today,
+            )
+        )
+        if existing is not None:
+            existing.balance = balance
+        else:
+            session.add(
+                AccountBalance(
+                    account_id=mapping.account_id, as_of=today, balance=balance
+                )
+            )
+        written += 1
+    return written
+
+
+def _own_account_masks(session: Session) -> dict[str, str]:
+    """Every linked account's last four digits, mapped to a readable name.
+
+    This is what identifies a transfer without guessing at wording. Banks write
+    payments differently — E-PAYMENT, AUTOPAY, PAYMENT THANK YOU — but a charge
+    leaving checking that quotes the mask of a card you also own is a payment
+    to yourself, and the mask is the part that does not vary.
+    """
+    return {
+        mask: f"{institution} {name}"
+        for mask, institution, name in session.execute(
+            select(PlaidAccount.mask, PlaidItem.institution_name, Account.name)
+            .join(PlaidItem, PlaidItem.id == PlaidAccount.item_id)
+            .join(Account, Account.id == PlaidAccount.account_id)
+            .where(PlaidAccount.mask.is_not(None))
+        )
+    }
+
+
+# A mask alone is not enough, and this data proves it: the Citi card's mask is
+# 0412, and `HARRIS TEETER 0412` is a real grocery descriptor in three years of
+# history. Four digits that happen to match are a coincidence; four digits next
+# to the word PAYMENT are a payment.
+PAYMENT_WORD = re.compile(
+    r"\b(?:e-?payment|payment|pymnt|pymt|autopay|auto-?pay|xfer|transfer|"
+    r"withdrawal|epay)\b",
+    re.IGNORECASE,
+)
+
+
+def _transfer_target(description: str, masks: dict[str, str]) -> str | None:
+    """The account this charge appears to be paying, if it is one of yours.
+
+    Two signals, both required. The mask says *which* account; the payment word
+    says it is a payment at all. Either alone produces false positives on real
+    descriptors — a store number that matches a card, or a payment to somebody
+    else's account entirely.
+
+    The mask must also stand as its own four-digit token, so a reference number
+    like `WEB ID: 2510020412` does not count as quoting the card.
+    """
+    if not masks or not PAYMENT_WORD.search(description):
+        return None
+    tokens = set(re.findall(r"\b\d{4}\b", description))
+    for mask, label in masks.items():
+        if mask in tokens:
+            return label
+    return None
+
+
+def _category_named(session: Session, name: str, kind: CategoryKind) -> Category:
+    """Fetch, or create, one of the categories linking made necessary."""
+    category = session.scalar(
+        select(Category).where(func.lower(Category.name) == name.lower())
+    )
+    if category is None:
+        last = session.scalar(select(func.max(Category.sort_order))) or 0
+        category = Category(name=name, kind=kind, sort_order=last + 1)
+        session.add(category)
+        session.flush()
+    return category
 
 
 # --------------------------------------------------------------------------
@@ -147,6 +271,9 @@ class SyncOut(BaseModel):
     rows: list[SyncRow]
     updated: int  # charges the bank revised — applied already
     removed: int  # charges the bank withdrew — applied already
+    # Account balances refreshed. Not a review item — a balance is a fact the
+    # bank states, not a guess to confirm.
+    balances: int
     near_duplicate_count: int
     uncategorised_count: int
     reauth_needed: list[str]
@@ -278,7 +405,8 @@ def exchange(payload: ExchangeIn, session: Session = Depends(get_session)):
     session.add(item)
     session.flush()
 
-    for remote in get_accounts(access_token):
+    accounts = get_accounts(access_token)
+    for remote in accounts:
         name = (remote.official_name or remote.name)[:60]
         account = session.scalar(
             select(Account).where(
@@ -300,10 +428,16 @@ def exchange(payload: ExchangeIn, session: Session = Depends(get_session)):
                 plaid_account_id=remote.plaid_account_id,
                 account_id=account.id,
                 mask=remote.mask,
+                account_type=remote.type,
                 subtype=remote.subtype,
             )
         )
 
+    session.flush()
+    # Today's balance, straight away. Otherwise a freshly linked account reads
+    # as zero on the Accounts screen until the first refresh, which looks like
+    # the link failed.
+    _record_balances(session, item, accounts)
     session.commit()
     session.refresh(item)
     return _item_out(item)
@@ -413,12 +547,40 @@ def _suggest(
         guesses[source] = snap_to_existing(session, guess) if guess else None
 
     history = _category_history(session, {g for g in guesses.values() if g})
+    masks = _own_account_masks(session)
 
     for row, txn in pairs:
+        # Money moving between accounts you own, recognised by the other
+        # account's own last four digits appearing in the descriptor. This is
+        # checked before the merchant history, because a card payment has no
+        # merchant and filing it as spending counts the same money twice: once
+        # leaving checking, and again as the card's own purchases arrive.
+        moved_to = _transfer_target(row.raw_description, masks)
+        if moved_to:
+            transfer = _category_named(session, TRANSFER_CATEGORY, CategoryKind.TRANSFER)
+            row.suggested_category_id = transfer.id
+            row.suggested_category_name = transfer.name
+            row.merchant_key = None
+            row.notes.append(f"looks like a payment to your {moved_to}")
+            continue
+
+        # Money arriving. On a credit card a negative amount is a refund, and
+        # belongs against whatever it is a refund of; on a depository account
+        # it is a deposit, and is not spending under any category.
+        if txn.amount < 0 and txn.account_type == "depository":
+            income = _category_named(session, INCOME_CATEGORY, CategoryKind.INCOME)
+            row.suggested_category_id = income.id
+            row.suggested_category_name = income.name
+            row.notes.append("money in, not spending")
+
         guess = guesses[txn.merchant_name or txn.name]
         if not guess:
             continue
         row.merchant_key = guess
+        # An income row keeps the merchant but not the guessed category: three
+        # years of history for a name says where its *spending* was filed.
+        if row.suggested_category_id is not None:
+            continue
         row.category_options = history.get(guess.lower(), [])
         if row.category_options:
             category_id, category_name, _ = row.category_options[0]
@@ -452,7 +614,7 @@ def sync(session: Session = Depends(get_session)):
 
     pairs: list[tuple[CandidateRow, LinkedTransaction]] = []
     labels: dict[str, str] = {}
-    updated = removed = 0
+    updated = removed = balances = 0
     reauth_needed: list[str] = []
     errors: list[str] = []
 
@@ -475,6 +637,18 @@ def sync(session: Session = Depends(get_session)):
         )
         updated += item_updated
         removed += item_removed
+
+        # Balances come back on their own call, but it is the same round trip
+        # people expect "refresh" to make, and a stale balance beside a fresh
+        # transaction list is worse than either alone.
+        try:
+            balances += _record_balances(
+                session, item, get_accounts(decrypt_token(item.access_token))
+            )
+        except PlaidReauthRequired:
+            item.needs_reauth = True
+        except Exception as exc:  # noqa: BLE001 — a balance is not worth losing the sync over
+            errors.append(f"{item.institution_name} balances: {exc}")
 
         # Already committed: the cursor did not advance last time, or a rewind
         # replayed the batch. Resolved before deciding whether this item has
@@ -504,6 +678,9 @@ def sync(session: Session = Depends(get_session)):
             mapping = account_by_plaid_id.get(txn.plaid_account_id)
             if mapping is None:
                 continue  # an account added at the bank since linking
+            # Plaid does not put the account type on a transaction, and a
+            # negative amount means opposite things on a card and in checking.
+            txn.account_type = mapping.account_type
             row = CandidateRow(
                 row_number=len(pairs) + 1,
                 occurred_on=txn.occurred_on,
@@ -571,6 +748,7 @@ def sync(session: Session = Depends(get_session)):
         ],
         updated=updated,
         removed=removed,
+        balances=balances,
         near_duplicate_count=sum(1 for r, _ in pairs if r.near_duplicates),
         uncategorised_count=sum(1 for r, _ in pairs if r.suggested_category_id is None),
         reauth_needed=reauth_needed,
