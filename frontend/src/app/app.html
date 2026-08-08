@@ -1,14 +1,20 @@
 <header>
   <div class="wrap">
     <span class="brand">budgeter</span>
-    <nav>
-      <a routerLink="/month" routerLinkActive="active">Month</a>
-      <a routerLink="/transactions" routerLinkActive="active">Transactions</a>
-      <a routerLink="/linked" routerLinkActive="active">Linked</a>
-      <a routerLink="/import" routerLinkActive="active">Import</a>
-      <a routerLink="/accounts" routerLinkActive="active">Accounts</a>
-      <a routerLink="/settings" routerLinkActive="active">Settings</a>
-    </nav>
+    @if (auth.signedIn()) {
+      <nav>
+        <a routerLink="/month" routerLinkActive="active">Month</a>
+        <a routerLink="/transactions" routerLinkActive="active">Transactions</a>
+        <a routerLink="/linked" routerLinkActive="active">Linked</a>
+        <a routerLink="/import" routerLinkActive="active">Import</a>
+        <a routerLink="/accounts" routerLinkActive="active">Accounts</a>
+        <a routerLink="/settings" routerLinkActive="active">Settings</a>
+      </nav>
+      <button type="button" class="signout" (click)="auth.logout()">
+        Sign out
+        <span class="who">{{ auth.username() }}</span>
+      </button>
+    }
   </div>
 </header>
 

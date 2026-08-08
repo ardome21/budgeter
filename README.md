@@ -189,6 +189,53 @@ JavaScript has no decimal type, so a JSON number is a float the moment it is
 parsed. The browser formats what it is handed and never sums anything — every
 total on screen was computed in Postgres.
 
+### Signing in
+
+The app holds three years of financial history and, since linking, long-lived
+read tokens to real bank accounts. It had no authentication at all before that,
+which was defensible on loopback and is not once those tokens exist.
+
+**First run claims the app.** Visit it and you get a setup screen: a name, a
+password, then a QR code for any authenticator app and ten recovery codes.
+Enrolment is two steps on purpose — the account is not usable until a code
+generated from that secret comes back, because a mistyped scan would otherwise
+lock the only person there will ever be out of their own history.
+
+Setup is reachable only while no confirmed user exists, and refuses afterwards.
+That is the whole window in which the API is open.
+
+**Both factors fail together.** A wrong password and a wrong code return the
+same message, because saying which one was right tells an attacker holding one
+of them that it works. Eight failures lock the account for fifteen minutes.
+
+**What is stored, and how.** The password is Argon2id. The TOTP secret is
+Fernet-encrypted with the same key as the Plaid tokens — a secret in the clear
+would make the second factor decorative against exactly the attacker it exists
+to stop, one who has read the database. Recovery codes are hashed like
+passwords, because a recovery code *is* a password, and each works once.
+
+**The guard hangs off the `/api` router**, not off each route, so the default is
+closed: a router added later is protected by virtue of being mounted, and every
+exception is written down in `PUBLIC_PATHS` where it can be read. The per-route
+alternative fails silently — a handler that forgets the dependency is simply
+open, and nothing about it looks wrong. Session expiry is checked server-side as
+well as on the cookie, since a cookie's own max-age is a hint an attacker
+replaying a stolen one is free to ignore.
+
+#### Locked out
+
+Recovery codes first. If those are gone too:
+
+```sh
+cd backend && uv run python scripts/reset_auth.py          # says what it would do
+cd backend && uv run python scripts/reset_auth.py --apply  # does it
+```
+
+It clears the login and nothing else — every transaction, account and linked
+bank stays exactly where it is, and the next visit runs setup again. It needs
+shell access to the machine holding the database, which is a higher bar than
+the login itself asks for, and that is what makes it safe to have.
+
 ### Linked banks
 
 A **Refresh** button instead of a trip to five bank websites. Link an

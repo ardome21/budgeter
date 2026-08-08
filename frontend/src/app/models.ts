@@ -352,3 +352,20 @@ export interface SyncCommitResult {
   skipped: number;
   errors: string[];
 }
+
+export interface AuthStatus {
+  /** False before anyone has claimed the app — go to setup, not login. */
+  configured: boolean;
+  authenticated: boolean;
+  username: string | null;
+}
+
+export interface SetupResult {
+  username: string;
+  otpauth_uri: string;
+  /** Rendered by the backend so the page needs no QR library and makes no
+   *  external request — nothing third-party should see this URI. */
+  qr_svg: string;
+  /** Shown exactly once. No endpoint returns them again. */
+  recovery_codes: string[];
+}

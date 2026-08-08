@@ -122,6 +122,72 @@ class AccountBalance(Base):
     account: Mapped[Account] = relationship(back_populates="balances")
 
 
+class AppUser(Base):
+    """The one person who uses this app.
+
+    A table rather than a pair of environment variables, because the failed
+    login count and the lockout have to survive a restart — an attacker who can
+    restart the process could otherwise reset the counter by doing so. There is
+    deliberately no `role` column and no second row: this is a single-user app,
+    and inventing a permission model for one user would be pretending to a
+    structure that does not exist.
+    """
+
+    __tablename__ = "app_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(60), unique=True)
+
+    # Argon2id. Never reversible, never logged.
+    password_hash: Mapped[str] = mapped_column(Text)
+
+    # Fernet-encrypted with the same key as the Plaid tokens. A TOTP secret is
+    # a bearer credential: anyone holding it can mint valid codes forever, so
+    # storing it in the clear would make the second factor decorative against
+    # exactly the attacker it exists to stop — one who has read the database.
+    totp_secret: Mapped[str] = mapped_column(Text)
+
+    # Set once the first valid code is entered, so a half-finished enrolment
+    # cannot lock the account behind an authenticator that was never scanned.
+    totp_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    recovery_codes: Mapped[list["RecoveryCode"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class RecoveryCode(Base):
+    """One single-use way back in when the authenticator is gone.
+
+    Hashed like a password, because a recovery code *is* a password — it alone
+    completes a login. Shown exactly once, at enrolment.
+
+    Without these, losing a phone means losing access to three years of your
+    own financial history, and the only remaining way in is the break-glass
+    script. That is a real enough risk to design for rather than warn about.
+    """
+
+    __tablename__ = "recovery_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_users.id"))
+    code_hash: Mapped[str] = mapped_column(Text)
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    user: Mapped[AppUser] = relationship(back_populates="recovery_codes")
+
+
 class PlaidItem(Base):
     """One linked institution. Plaid calls it an Item.
 

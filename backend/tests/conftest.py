@@ -21,11 +21,12 @@ from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from backend.db import engine, get_session
 from backend.main import app
-from backend.models import Category
+from backend.models import AppUser, Category, RecoveryCode
 
 
 @pytest.fixture
@@ -48,6 +49,20 @@ def session() -> Generator[Session]:
 
 @pytest.fixture
 def client(session: Session) -> Generator[TestClient]:
+    """A client with the API open, as it is before anyone has set up a login.
+
+    The user rows are cleared inside the test transaction — not committed, so
+    the developer's real login survives the rollback untouched. Without this
+    the whole suite depends on whether the machine it runs on happens to have
+    a login configured: setting one up turned 78 of these red, because the
+    guard correctly refused every request.
+
+    Tests that care about the guard create their own user; see test_auth.py.
+    """
+    session.execute(delete(RecoveryCode))
+    session.execute(delete(AppUser))
+    session.flush()
+
     app.dependency_overrides[get_session] = lambda: session
     with TestClient(app) as test_client:
         yield test_client

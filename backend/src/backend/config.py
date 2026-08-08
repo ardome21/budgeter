@@ -24,6 +24,21 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:4200"]
 
+    # Signs the session cookie. No default: a fallback signing key is a key an
+    # attacker already has, and forging a session with it skips the login
+    # entirely. Generate with:
+    #   python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+    session_secret: SecretStr
+
+    # How long a login lasts. Two weeks means the second factor is typed a
+    # couple of times a month rather than every time the budget is opened —
+    # friction that gets a login disabled is worse than no login.
+    session_days: int = 14
+
+    # Failed password/code attempts before the account locks. Reset by the
+    # break-glass script, which needs the machine itself.
+    max_failed_logins: int = 8
+
     # Plaid. Absent means the linked-accounts feature is simply off — unlike the
     # database, the app is entirely usable without it, so these do have
     # defaults and the router reports "not configured" rather than failing at
