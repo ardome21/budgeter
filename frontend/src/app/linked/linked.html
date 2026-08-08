@@ -1,0 +1,332 @@
+<h1>Linked banks</h1>
+
+@if (error(); as e) {
+  <div class="banner error">{{ e }}</div>
+}
+
+@if (status(); as s) {
+  @if (!s.configured) {
+    <div class="banner warn">
+      Plaid is not configured. Add <code>PLAID_CLIENT_ID</code>,
+      <code>PLAID_SECRET</code> and <code>PLAID_TOKEN_KEY</code> to
+      <code>.env</code> — see <code>.env.example</code> — then restart the API.
+    </div>
+  } @else {
+    <section class="card">
+      <div class="summary-row">
+        <div>
+          <strong>{{ s.items.length }}</strong>
+          {{ s.items.length === 1 ? "bank" : "banks" }} linked
+          <span class="pill env">{{ s.environment }}</span>
+        </div>
+        <div class="actions">
+          <button type="button" (click)="link()" [disabled]="linking()">
+            {{ linking() ? "Opening…" : "Link a bank" }}
+          </button>
+          @if (hasItems()) {
+            <button
+              class="primary"
+              type="button"
+              (click)="refresh()"
+              [disabled]="busy()"
+            >
+              {{ busy() ? "Refreshing…" : "Refresh" }}
+            </button>
+          }
+        </div>
+      </div>
+
+      @if (!s.items.length) {
+        <p class="dim">
+          Nothing linked yet. Linking a bank replaces the export-and-upload trip
+          on the Import screen — that screen stays, for the accounts no
+          aggregator reaches.
+        </p>
+      }
+
+      @for (item of s.items; track item.id) {
+        <div class="item" [class.stale]="item.needs_reauth">
+          <div class="item-head">
+            <strong>{{ item.institution_name }}</strong>
+            @if (item.needs_reauth) {
+              <span class="pill over">needs signing in again</span>
+            }
+            <span class="dim small">
+              @if (item.last_synced_at) {
+                last refreshed {{ item.last_synced_at | date: "d MMM, HH:mm" }}
+              } @else {
+                never refreshed
+              }
+              · from {{ item.sync_start_on }}
+            </span>
+          </div>
+
+          <div class="item-accounts small dim">
+            @for (a of item.accounts; track a.account_id) {
+              <span class="acct"
+                >{{ a.name }}@if (a.mask) {
+                  <span class="mask">••{{ a.mask }}</span>
+                }</span
+              >
+            }
+          </div>
+
+          <div class="item-actions">
+            @if (item.needs_reauth) {
+              <button type="button" class="primary" (click)="link(item.id)">
+                Sign in again
+              </button>
+            }
+            <button
+              type="button"
+              class="linkish"
+              (click)="rewind(item.id)"
+              title="Offer everything since the start date again — for a row unticked by mistake"
+            >
+              Re-offer everything
+            </button>
+            <button
+              type="button"
+              class="linkish danger"
+              (click)="unlink(item.id, item.institution_name)"
+            >
+              Unlink
+            </button>
+          </div>
+        </div>
+      }
+    </section>
+  }
+}
+
+@if (result(); as r) {
+  <div class="banner ok">
+    <strong>{{ r.created }}</strong>
+    {{ r.created === 1 ? "transaction" : "transactions" }} added.
+    @if (r.skipped) {
+      <span class="dim">{{ r.skipped }} were already on file.</span>
+    }
+    @if (r.errors.length) {
+      <ul>
+        @for (e of r.errors; track e) {
+          <li>{{ e }}</li>
+        }
+      </ul>
+    }
+  </div>
+}
+
+@if (sync(); as s) {
+  @if (s.reauth_needed.length) {
+    <div class="banner warn">
+      Skipped, because the login has gone stale:
+      <strong>{{ s.reauth_needed.join(", ") }}</strong
+      >. Sign in again above — the rest of the refresh went through.
+    </div>
+  }
+  @if (s.errors.length) {
+    <div class="banner error">
+      <ul>
+        @for (e of s.errors; track e) {
+          <li>{{ e }}</li>
+        }
+      </ul>
+    </div>
+  }
+
+  @if (s.updated || s.removed) {
+    <div class="banner info">
+      The bank revised its own record:
+      @if (s.updated) {
+        <strong>{{ s.updated }}</strong>
+        {{ s.updated === 1 ? "charge" : "charges" }} updated
+      }
+      @if (s.updated && s.removed) {
+        ·
+      }
+      @if (s.removed) {
+        <strong>{{ s.removed }}</strong>
+        {{ s.removed === 1 ? "charge" : "charges" }} withdrawn
+      }
+      — applied already. Usually a pending charge settling at its final amount.
+    </div>
+  }
+
+  @if (!s.rows.length) {
+    <div class="banner ok">Nothing new to review.</div>
+  } @else {
+    <section class="card">
+      <div class="summary-row">
+        <div>
+          <strong>{{ s.rows.length }}</strong> new
+          @if (s.near_duplicate_count) {
+            · <strong class="over">{{ s.near_duplicate_count }}</strong> look
+            like repeats
+          }
+          @if (s.uncategorised_count) {
+            · <strong class="over">{{ s.uncategorised_count }}</strong> need a
+            category
+          }
+        </div>
+      </div>
+
+      @if (flaggedCount()) {
+        <div class="banner warn">
+          <strong>{{ flaggedCount() }}</strong> ticked
+          {{ flaggedCount() === 1 ? "row matches" : "rows match" }} something
+          already on file for the same amount within a few days. They stay
+          ticked because a near match can be a genuine repeat purchase — check
+          the ones marked below, or
+          <button type="button" class="linkish" (click)="untickFlagged()">
+            untick all {{ flaggedCount() }}
+          </button>
+          if this covers a period you already have.
+        </div>
+      }
+
+      @if (needsCategory()) {
+        <div class="bulk">
+          <span class="small">Set every uncategorised row to:</span>
+          <select #bulk (change)="fillBlanks(bulk.value); bulk.value = ''">
+            <option value="">Choose…</option>
+            @for (c of categories(); track c.id) {
+              <option [value]="c.id">{{ c.name }}</option>
+            }
+          </select>
+        </div>
+      }
+
+      <div class="scroll-x">
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>Date</th>
+              <th>Account</th>
+              <th>Description</th>
+              <th>Merchant</th>
+              <th>Category</th>
+              <th class="num">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (r of review(); track r.key) {
+              <tr
+                [class.near]="r.near_duplicates.length"
+                [class.skip]="!r.include"
+              >
+                <td>
+                  <input
+                    type="checkbox"
+                    [checked]="r.include"
+                    (change)="toggle(r)"
+                    [attr.aria-label]="'Include ' + r.raw_description"
+                  />
+                </td>
+                <td class="num dim">{{ r.occurred_on }}</td>
+                <td class="dim small">{{ r.account_label }}</td>
+                <td
+                  [class.truncate]="!r.near_duplicates.length"
+                  [title]="r.raw_description"
+                >
+                  {{ r.raw_description }}
+                  @for (n of r.notes; track n) {
+                    <span class="pill">{{ n }}</span>
+                  }
+                  @if (r.near_duplicates.length) {
+                    <div class="near-list small">
+                      @for (m of r.near_duplicates; track m.id) {
+                        <div class="dim">
+                          ↳ same amount
+                          {{
+                            m.days_apart === 0
+                              ? "that day"
+                              : m.days_apart +
+                                (m.days_apart === 1 ? " day" : " days") +
+                                " apart"
+                          }}:
+                          <span class="near-desc">{{ m.raw_description }}</span>
+                          <span class="dim">({{ m.occurred_on ?? "—" }})</span>
+                        </div>
+                      }
+                    </div>
+                  }
+                </td>
+                <td class="merchant">
+                  <app-merchant-field
+                    [value]="r.merchant_key"
+                    (valueChange)="setMerchant(r, $event)"
+                    placeholder="—"
+                    [label]="'Merchant for ' + r.raw_description"
+                  />
+                </td>
+                <td class="cat-cell">
+                  <select
+                    [ngModel]="r.categoryId"
+                    (ngModelChange)="setCategory(r, $event)"
+                    [class.missing]="!r.categoryId"
+                    [attr.aria-label]="'Category for ' + r.raw_description"
+                  >
+                    <option [ngValue]="null">— pick one —</option>
+                    @for (c of categories(); track c.id) {
+                      <option [value]="c.id">{{ c.name }}</option>
+                    }
+                  </select>
+
+                  @if (r.category_options.length > 1) {
+                    <div class="alts">
+                      @for (o of r.category_options; track o.id) {
+                        <button
+                          type="button"
+                          class="chip"
+                          [class.on]="r.categoryId === o.id"
+                          (click)="setCategory(r, o.id)"
+                          [title]="
+                            'Used ' +
+                            o.count +
+                            '× at ' +
+                            (r.merchant_key ?? 'this shop')
+                          "
+                        >
+                          {{ o.name }}
+                          <span class="n">{{ o.count }}</span>
+                        </button>
+                      }
+                    </div>
+                  }
+                </td>
+                <td class="num" [class.over]="+r.amount < 0">
+                  {{ fmt(r.amount) }}
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <div class="actions commit-row">
+        <button
+          class="primary"
+          type="button"
+          (click)="commit()"
+          [disabled]="busy() || !canCommit()"
+        >
+          {{ busy() ? "Saving…" : "Commit " + includedCount() + " rows" }}
+        </button>
+        <button type="button" (click)="discard()" [disabled]="busy()">
+          Not now
+        </button>
+        @if (needsCategory()) {
+          <span class="small over">
+            {{ needsCategory() }} ticked
+            {{ needsCategory() === 1 ? "row needs" : "rows need" }} a category.
+          </span>
+        }
+        <span class="small dim">
+          Unticked rows are treated as rejected and will not be offered again —
+          use <em>Re-offer everything</em> above if that was a mistake.
+        </span>
+      </div>
+    </section>
+  }
+}

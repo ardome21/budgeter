@@ -285,3 +285,70 @@ export interface Reconciliation {
   expected_total: Money;
   matched_total: Money;
 }
+
+/** One account at a linked institution, as budgeter knows it. */
+export interface LinkedAccount {
+  account_id: number;
+  name: string;
+  mask: string | null;
+  subtype: string | null;
+}
+
+/** A linked institution. Plaid calls it an Item; one bank, many accounts. */
+export interface LinkedItem {
+  id: number;
+  institution_name: string;
+  accounts: LinkedAccount[];
+  sync_start_on: string;
+  last_synced_at: string | null;
+  /** The login has gone stale. Only re-running Link fixes it. */
+  needs_reauth: boolean;
+}
+
+export interface PlaidStatus {
+  /** False when there are no credentials in .env — say so rather than
+   *  offering a button that can only fail. */
+  configured: boolean;
+  environment: string;
+  items: LinkedItem[];
+}
+
+/**
+ * One transaction the bank sent that is not yet on file.
+ *
+ * `key` is Plaid's transaction id and travels through to the commit unchanged.
+ * It is identity, not a content hash: when a pending charge posts the date and
+ * amount move, and this is what recognises it as the same charge.
+ */
+export interface SyncRow {
+  key: string;
+  account_id: number;
+  account_label: string;
+  occurred_on: string;
+  raw_description: string;
+  amount: Money;
+  suggested_category_id: number | null;
+  suggested_category_name: string | null;
+  category_options: CategoryOption[];
+  merchant_key: string | null;
+  near_duplicates: NearDuplicate[];
+  notes: string[];
+}
+
+export interface SyncResult {
+  rows: SyncRow[];
+  /** Charges the bank revised. Already applied — not a question. */
+  updated: number;
+  /** Charges the bank withdrew. Already removed. */
+  removed: number;
+  near_duplicate_count: number;
+  uncategorised_count: number;
+  reauth_needed: string[];
+  errors: string[];
+}
+
+export interface SyncCommitResult {
+  created: number;
+  skipped: number;
+  errors: string[];
+}

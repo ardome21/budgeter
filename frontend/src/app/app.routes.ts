@@ -19,6 +19,11 @@ export const routes: Routes = [
     loadComponent: () => import('./import/import').then((m) => m.Import),
   },
   {
+    path: 'linked',
+    title: 'Linked banks · budgeter',
+    loadComponent: () => import('./linked/linked').then((m) => m.Linked),
+  },
+  {
     path: 'settings',
     title: 'Settings · budgeter',
     loadComponent: () => import('./settings/settings').then((m) => m.Settings),

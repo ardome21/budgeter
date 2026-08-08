@@ -5,7 +5,15 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import get_session
-from .routers import accounts, config, imports, merchants, transactions, views
+from .routers import (
+    accounts,
+    config,
+    imports,
+    merchants,
+    plaid_link,
+    transactions,
+    views,
+)
 
 app = FastAPI(title="budgeter")
 
@@ -43,5 +51,6 @@ api.include_router(config.router)
 api.include_router(transactions.router)
 api.include_router(merchants.router)
 api.include_router(imports.router)
+api.include_router(plaid_link.router)
 
 app.include_router(api)

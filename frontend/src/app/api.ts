@@ -14,9 +14,13 @@ import {
   AccountRow,
   Allocations,
   FixedCost,
+  LinkedItem,
   NetWorth,
   PaycheckLine,
+  PlaidStatus,
   Reconciliation,
+  SyncCommitResult,
+  SyncResult,
   Transaction,
 } from './models';
 
@@ -232,5 +236,45 @@ export class Api {
     const params = new URLSearchParams({ limit: String(limit) });
     if (q) params.set('q', q);
     return this.http.get<MerchantKey[]>(`/api/merchants/keys?${params}`);
+  }
+
+  // --- Linked accounts -----------------------------------------------------
+
+  plaidStatus(): Observable<PlaidStatus> {
+    return this.http.get<PlaidStatus>('/api/plaid/status');
+  }
+
+  /** Authorises one run of Plaid Link. Pass an item to re-authenticate it
+   *  rather than adding the same bank a second time. */
+  linkToken(itemId: number | null = null): Observable<{ link_token: string }> {
+    return this.http.post<{ link_token: string }>('/api/plaid/link-token', {
+      item_id: itemId,
+    });
+  }
+
+  exchangePublicToken(publicToken: string): Observable<LinkedItem> {
+    return this.http.post<LinkedItem>('/api/plaid/exchange', {
+      public_token: publicToken,
+    });
+  }
+
+  /** Pull every linked bank. Writes nothing: the cursor only moves on commit,
+   *  so closing this without acting re-offers the same rows next time. */
+  syncLinked(): Observable<SyncResult> {
+    return this.http.post<SyncResult>('/api/plaid/sync', {});
+  }
+
+  commitLinked(rows: unknown[]): Observable<SyncCommitResult> {
+    return this.http.post<SyncCommitResult>('/api/plaid/commit', { rows });
+  }
+
+  unlinkItem(id: number): Observable<unknown> {
+    return this.http.delete(`/api/plaid/items/${id}`);
+  }
+
+  /** Offer everything since the start date again — for a row unticked by
+   *  mistake, which committing otherwise steps past for good. */
+  rewindItem(id: number): Observable<LinkedItem> {
+    return this.http.post<LinkedItem>(`/api/plaid/items/${id}/rewind`, {});
   }
 }

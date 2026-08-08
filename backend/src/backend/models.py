@@ -10,20 +10,23 @@ derived on read, so it can never go stale the way the workbook's did.
 """
 
 import enum
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Date,
+    DateTime,
     Enum,
     ForeignKey,
     Index,
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -58,6 +61,7 @@ class TransactionSource(str, enum.Enum):
     WORKBOOK = "WORKBOOK"  # one-shot import of the Excel history
     CSV = "CSV"  # bank export
     MANUAL = "MANUAL"  # typed in by hand
+    LINKED = "LINKED"  # pulled from the bank over Plaid
 
 
 class PaycheckLineKind(str, enum.Enum):
@@ -118,6 +122,82 @@ class AccountBalance(Base):
     account: Mapped[Account] = relationship(back_populates="balances")
 
 
+class PlaidItem(Base):
+    """One linked institution. Plaid calls it an Item.
+
+    Chase is a single Item however many cards and checking accounts sit behind
+    it, so this — not the account — is the thing that gets re-authenticated,
+    re-synced and unlinked.
+    """
+
+    __tablename__ = "plaid_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(120), unique=True)
+    institution_id: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    institution_name: Mapped[str] = mapped_column(String(60))
+
+    # Fernet-encrypted, never the raw token. A Plaid access token is a
+    # long-lived read key to a real bank account, and this database gets dumped
+    # and copied around like ordinary data. See Settings.plaid_token_key.
+    access_token: Mapped[str] = mapped_column(Text)
+
+    # How far /transactions/sync has been consumed. Advanced only when a sync
+    # is *committed*, never when one is previewed — abandoning a preview has to
+    # re-offer the same rows next time rather than skip past them for good.
+    cursor: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Where the last *preview* got to. Held here rather than in the response so
+    # that the commit advances to exactly the point the reviewed batch ended,
+    # even if the browser was reloaded in between. Copied over `cursor` on
+    # commit and cleared.
+    pending_cursor: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Nothing dated before this is offered. Plaid returns up to 24 months on a
+    # first sync and the workbook already holds every one of those months, so
+    # without a floor the first refresh is a thousand rows of near-duplicates
+    # against hand-typed history.
+    sync_start_on: Mapped[date] = mapped_column(Date)
+
+    # Set when Plaid reports the login has gone stale. The item stays — its
+    # accounts and their history are still real — it just cannot sync until
+    # Link is run again in update mode.
+    needs_reauth: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    accounts: Mapped[list["PlaidAccount"]] = relationship(
+        back_populates="item", cascade="all, delete-orphan"
+    )
+
+
+class PlaidAccount(Base):
+    """Ties one account at the bank to one account in budgeter.
+
+    Kept as its own table rather than a column on `accounts` because the
+    mapping is the part that is Plaid's business. Unlinking an institution
+    drops these rows and leaves the accounts, their balances and their
+    transactions exactly where they were.
+    """
+
+    __tablename__ = "plaid_accounts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("plaid_items.id"))
+    plaid_account_id: Mapped[str] = mapped_column(String(120), unique=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+
+    # The last four digits, for telling two cards at one bank apart on screen.
+    mask: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    subtype: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+    item: Mapped[PlaidItem] = relationship(back_populates="accounts")
+    account: Mapped[Account] = relationship()
+
+
 class BudgetPeriod(Base):
     """A calendar month. The unit everything rolls up to."""
 
@@ -155,6 +235,16 @@ class Transaction(Base):
     __table_args__ = (
         Index("ix_transactions_period_category", "period_id", "category_id"),
         Index("ix_transactions_occurred_on", "occurred_on"),
+        # Only for linked rows, where source_ref is Plaid's transaction id and
+        # therefore an identity. For workbook rows the same column is a cell
+        # reference — provenance, not a key — so the constraint is deliberately
+        # not imposed on them.
+        Index(
+            "uq_transactions_linked_source_ref",
+            "source_ref",
+            unique=True,
+            postgresql_where=text("source = 'LINKED'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -200,8 +290,11 @@ class Transaction(Base):
         String(64), nullable=True, unique=True
     )
 
-    # Provenance for the one-shot workbook import, so any imported row can be
-    # traced back to the cell it came from.
+    # Two jobs, decided by `source`. For a workbook row it is provenance — the
+    # cell the figure came from. For a LINKED row it is Plaid's transaction id,
+    # which is identity: the bank rewrites a charge when it posts (the date
+    # moves, the amount settles, the descriptor is replaced), so a content hash
+    # sees a new row where this correctly sees the same one.
     source_ref: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     period: Mapped[BudgetPeriod] = relationship()

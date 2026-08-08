@@ -189,7 +189,77 @@ JavaScript has no decimal type, so a JSON number is a float the moment it is
 parsed. The browser formats what it is handed and never sums anything — every
 total on screen was computed in Postgres.
 
+### Linked banks
+
+A **Refresh** button instead of a trip to five bank websites. Link an
+institution once through Plaid, and every refresh pulls what has posted since
+the last one.
+
+The same rule as the CSV import governs it: **preview first, commit second**. A
+bank feed guesses a merchant and a category exactly as a CSV does, and a guess
+that writes itself is a guess nobody checks.
+
+Set up with `PLAID_CLIENT_ID`, `PLAID_SECRET` and `PLAID_TOKEN_KEY` in `.env` —
+see `.env.example`. Without them the Linked screen says so and every other
+screen carries on unchanged.
+
+#### The cursor is what protects the data
+
+Plaid hands back changes since a cursor. The cursor advances **only on commit**,
+never on a preview, so closing the screen without acting re-offers the same
+rows next time rather than stepping past them for good. A row you *untick* is a
+decision that it does not belong, and the cursor passes it too — `Re-offer
+everything` clears the cursor when that was a mistake, and rows already
+committed are filtered out by their transaction id, so only the genuinely
+missing ones come back.
+
+#### A charge is not immutable, so a content hash is the wrong key
+
+This is where a bank feed differs from a CSV. A CSV is a snapshot; a feed is a
+record the bank keeps editing. A pending coffee posts two days later with a
+different date, often a different amount, and usually a rewritten descriptor —
+and a hash over content sees a brand-new transaction where there is one charge.
+
+So a linked row is keyed by **Plaid's transaction id**, in `source_ref`. That
+column already existed for workbook provenance (the cell a figure came from),
+which is why its unique index is partial: the column is a key on one side of
+`source` and a note on the other.
+
+Revisions and withdrawals are applied **silently**. They are the bank settling
+its own record, not a suggestion, and holding them behind a prompt would leave
+the ledger knowingly wrong until someone clicked. The screen reports the counts.
+
+**Pending charges are not offered at all.** They get withdrawn and re-sent when
+they post; waiting costs a day and saves reviewing the same coffee twice.
+
+#### Two things it does not solve
+
+**Fidelity cannot be linked.** It shares data only through Akoya, which has no
+individual developer access. Fidelity stays on balance snapshots and the CSV
+screen — which is the reason that screen stays.
+
+**Bilt moved.** The Wells Fargo card was retired in February 2026 and Bilt Card
+2.0 is issued by Cardless, so the historical `BILT CARD HOUSING` rows and
+anything linked today sit on either side of that change.
+
+#### What it does not touch
+
+Linked accounts are created fresh. The lumped `Credit Cards` account and the
+1,291 workbook rows filed against it are left exactly as they are — the split
+is simply the day an institution was linked. Each linked institution also gets
+a **start date**, defaulting to the day after the newest transaction on file:
+Plaid returns up to 24 months, the workbook already holds all of them, and
+without the floor a first refresh is a thousand rows of near-duplicates against
+history typed by hand.
+
+Access tokens are Fernet-encrypted before they are stored. A Plaid access token
+is a long-lived read key to a real bank account, which is a different class of
+secret from anything else here, and this database gets dumped like ordinary
+data.
+
 ### Importing a bank export
+
+Still here, and still the answer for anything no aggregator reaches.
 
 Preview first, commit second; nothing is written until the preview comes back
 and you confirm it. Columns are detected across the usual header spellings,

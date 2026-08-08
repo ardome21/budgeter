@@ -1,0 +1,283 @@
+h1 {
+  margin-bottom: 1.25rem;
+}
+
+section.card {
+  margin-bottom: 1rem;
+
+  h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 0.7rem;
+  }
+}
+
+.actions {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+
+  &.commit {
+    margin-top: 1rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--border);
+  }
+}
+
+
+
+
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  margin-bottom: 0.8rem;
+}
+
+
+.bulk {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.8rem;
+  background: var(--surface-2);
+  border-radius: 8px;
+
+  select {
+    width: auto;
+    min-width: 11rem;
+  }
+}
+
+tr.dup {
+  color: var(--text-dim);
+}
+
+/* A near match is a question, not a verdict — marked, but not dimmed like a
+   confirmed duplicate, because it is still ticked and still going in. */
+tr.near td {
+  box-shadow: inset 3px 0 0 -1px var(--warn);
+}
+
+tr.skip {
+  opacity: 0.45;
+}
+
+.near-list {
+  margin-top: 0.25rem;
+  line-height: 1.5;
+  white-space: normal;
+}
+
+.near-desc {
+  color: var(--text);
+}
+
+/* A button that reads as a link — the bulk action inside a sentence. */
+.linkish {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+
+select.missing {
+  border-color: var(--over);
+}
+
+select {
+  width: auto;
+  min-width: 10rem;
+  font-size: 13px;
+  padding: 0.2rem 0.35rem;
+}
+
+.truncate {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pill {
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  margin-left: 0.4rem;
+  white-space: nowrap;
+
+  &.dup-pill {
+    border-color: var(--over);
+    color: var(--over);
+  }
+}
+
+.banner {
+  margin-bottom: 1rem;
+
+  &.ok {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  ul {
+    margin: 0.4rem 0 0;
+    padding-left: 1.1rem;
+  }
+}
+
+.small {
+  font-size: 12.5px;
+}
+
+
+.cat-cell {
+  min-width: 15rem;
+}
+
+/* A shop is not one category. These are the ones it has actually been filed
+   under, so switching is a click rather than a hunt through sixteen. */
+.alts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+}
+
+.chip {
+  font-size: 11.5px;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+
+  .n {
+    font-family: var(--mono);
+    font-size: 10px;
+    opacity: 0.7;
+  }
+
+  &:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  &.on {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-weight: 500;
+  }
+}
+
+// The guessed merchant, editable before the row exists. A wrong guess used to
+// be fixable only by merging afterwards; this is where it gets fixed now.
+td.merchant input {
+  width: 100%;
+  min-width: 8rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.2rem 0.35rem;
+  color: var(--text-dim);
+  font: inherit;
+
+  &:hover {
+    border-color: var(--border);
+  }
+  &:focus {
+    background: var(--bg);
+    border-color: var(--accent);
+    color: var(--text);
+    outline: none;
+  }
+}
+
+/* --- Specific to the linked-banks screen -------------------------------- */
+
+.item {
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--border);
+
+  &.stale {
+    /* The one state the user has to act on: a bank that cannot sync until
+       they sign in again. Marked rather than hidden. */
+    box-shadow: inset 3px 0 0 -1px var(--over);
+    padding-left: 0.6rem;
+  }
+}
+
+.item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.item-accounts {
+  margin-top: 0.3rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.acct {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+
+  .mask {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    margin-left: 0.25rem;
+    opacity: 0.75;
+  }
+}
+
+.item-actions {
+  display: flex;
+  gap: 0.9rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.danger:hover {
+  color: var(--over);
+}
+
+.pill.env {
+  font-family: var(--mono);
+  text-transform: lowercase;
+}
+
+/* Not a warning and not a success: the bank corrected itself and the ledger
+   already reflects it. Stated, not asked about. */
+.banner.info {
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+
+.commit-row {
+  margin-top: 1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}

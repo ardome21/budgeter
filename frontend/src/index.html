@@ -9,5 +9,17 @@
   </head>
   <body>
     <app-root></app-root>
+
+    <!--
+      Plaid Link. Loaded from Plaid's CDN because it is the only supported way
+      to run it — the flow hands bank credentials straight to Plaid and they
+      never touch this app, which is the entire point of the arrangement.
+      `defer` so it never delays the app; the Linked screen checks for it and
+      says so plainly if it did not arrive.
+    -->
+    <script
+      src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"
+      defer
+    ></script>
   </body>
 </html>
