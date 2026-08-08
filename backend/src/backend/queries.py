@@ -19,7 +19,6 @@ from .models import (
     Category,
     CategoryKind,
     FixedCost,
-    Merchant,
     PaycheckLine,
     PaycheckLineKind,
     Transaction,
@@ -27,10 +26,8 @@ from .models import (
 from .schemas import (
     BiggestPurchase,
     CategoryLine,
-    CategoryMix,
     CommitmentSplit,
     FixedCostGroup,
-    MerchantRow,
     MonthDays,
     MonthSummary,
     OverviewOut,
@@ -250,93 +247,3 @@ def overview(session: Session) -> OverviewOut:
         paychecks_per_month=n,
         fixed_by_category=groups,
     )
-
-
-MERCHANT_SORTS = {
-    "spend": func.coalesce(func.sum(Transaction.amount), 0).desc(),
-    "count": func.count(Transaction.id).desc(),
-    "recent": func.max(Transaction.occurred_on).desc().nullslast(),
-    "name": Merchant.canonical_name.asc(),
-}
-
-
-def merchant_workbench(
-    session: Session, q: str | None, sort: str, limit: int, offset: int
-) -> tuple[list[MerchantRow], int]:
-    """The merchant list, with what each one actually cost.
-
-    Sorted by spend by default: 277 of the 401 merchants were seen exactly
-    once, so an alphabetical list buries the handful that matter.
-    """
-    order = MERCHANT_SORTS.get(sort, MERCHANT_SORTS["spend"])
-
-    base = (
-        select(
-            Merchant.id,
-            Merchant.canonical_name,
-            func.count(Transaction.id).label("n"),
-            func.coalesce(func.sum(Transaction.amount), 0).label("total"),
-            func.max(Transaction.occurred_on).label("last_seen"),
-        )
-        .join(Transaction, Transaction.merchant_id == Merchant.id, isouter=True)
-        .group_by(Merchant.id, Merchant.canonical_name)
-    )
-    if q:
-        base = base.where(Merchant.canonical_name.ilike(f"%{q}%"))
-
-    total = session.scalar(
-        select(func.count()).select_from(
-            select(Merchant.id)
-            .where(Merchant.canonical_name.ilike(f"%{q}%") if q else True)
-            .subquery()
-        )
-    )
-
-    rows = session.execute(
-        base.order_by(order, Merchant.canonical_name).limit(limit).offset(offset)
-    ).all()
-
-    ids = [r[0] for r in rows]
-    mix: dict[int, list[CategoryMix]] = {}
-    if ids:
-        for merchant_id, name, count in session.execute(
-            select(Transaction.merchant_id, Category.name, func.count(Transaction.id))
-            .join(Category, Category.id == Transaction.category_id)
-            .where(Transaction.merchant_id.in_(ids))
-            .group_by(Transaction.merchant_id, Category.name)
-            .order_by(func.count(Transaction.id).desc())
-        ).all():
-            mix.setdefault(merchant_id, []).append(CategoryMix(name=name, count=count))
-
-    return (
-        [
-            MerchantRow(
-                id=mid,
-                canonical_name=name,
-                transaction_count=n,
-                total_spent=_q(total_spent),
-                last_seen=last_seen,
-                categories=mix.get(mid, []),
-            )
-            for mid, name, n, total_spent, last_seen in rows
-        ],
-        total or 0,
-    )
-
-
-def merchant_rows(session: Session, q: str | None, limit: int):
-    """Merchants with their usage counts, for the consolidation pass."""
-    stmt = (
-        select(
-            Merchant.id,
-            Merchant.canonical_name,
-            func.count(Transaction.id),
-        )
-        .join(Transaction, Transaction.merchant_id == Merchant.id, isouter=True)
-        .group_by(Merchant.id, Merchant.canonical_name)
-        .order_by(func.count(Transaction.id).desc(), Merchant.canonical_name)
-        .limit(limit)
-    )
-    if q:
-        stmt = stmt.where(Merchant.canonical_name.ilike(f"%{q}%"))
-    return session.execute(stmt).all()

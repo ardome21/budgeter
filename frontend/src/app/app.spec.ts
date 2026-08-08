@@ -27,7 +27,6 @@ describe('App', () => {
       'Month',
       'Transactions',
       'Import',
-      'Merchants',
       'Accounts',
       'Settings',
     ]);

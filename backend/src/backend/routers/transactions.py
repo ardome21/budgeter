@@ -1,17 +1,15 @@
 """Transaction CRUD — the hand-entry half of getting off the spreadsheet."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..merchants import display_name, normalize_merchant
+from ..merchants import suggest_key
 from ..models import (
     Account,
     BudgetPeriod,
     Category,
-    Merchant,
-    MerchantPattern,
     Transaction,
     TransactionSource,
 )
@@ -33,27 +31,53 @@ def get_or_create_period(session: Session, year: int, month: int) -> BudgetPerio
     return period
 
 
-def resolve_merchant(session: Session, description: str) -> Merchant | None:
-    """Find the merchant for a descriptor, creating one the first time.
+def settle_merchant_key(
+    session: Session, given: str | None, description: str
+) -> str | None:
+    """The merchant name to store: what was chosen, or a guess from the text.
 
-    The category is not recorded on the merchant. What makes the next
-    transaction from the same shop categorise itself is the shop's history,
-    read at the time it is needed — which cannot go stale.
+    A name typed rather than picked is matched case-insensitively against what
+    already exists and snapped to that spelling, so 'harris teeter' joins
+    'Harris Teeter' instead of becoming a second entry. This is the whole of
+    what the merge queue used to do, done before the row exists.
     """
-    key = normalize_merchant(description)
-    if not key:
-        return None
-    pattern = session.scalar(
-        select(MerchantPattern).where(MerchantPattern.pattern == key)
-    )
-    if pattern is not None:
-        return session.get(Merchant, pattern.merchant_id)
+    name = (given or "").strip() or suggest_key(description)
+    return snap_to_existing(session, name) if name else None
 
-    merchant = Merchant(canonical_name=display_name(key))
-    session.add(merchant)
-    session.flush()
-    session.add(MerchantPattern(merchant_id=merchant.id, pattern=key))
-    return merchant
+
+def snap_to_existing(session: Session, name: str) -> str:
+    """The spelling already in use for this name, or the name unchanged.
+
+    Two rules, both exact — no similarity scoring, because a wrong merge is
+    what this whole change exists to make impossible.
+
+    1. Same name, different case: 'harris teeter' is 'Harris Teeter'.
+    2. An existing name that is a whole-word *prefix* of the guess. The old
+       schema kept a pattern per descriptor, so a hand-merge taught it that
+       NETFLIX.COM was Netflix; dropping the patterns lost that, and the guess
+       regressed to 'Netflix Com'. The longest matching prefix wins, so
+       'Uber Eats Delivery' resolves to 'Uber Eats' and not to 'Uber'.
+
+    Still only a default on an editable field. Rule 2 is a guess, and the
+    reason it is allowed to be one is that it lands in a picker the user can
+    correct before the row is written.
+    """
+    exact = session.scalar(
+        select(Transaction.merchant_key).where(
+            func.lower(Transaction.merchant_key) == name.lower()
+        )
+    )
+    if exact:
+        return exact
+
+    prefix = session.scalar(
+        select(Transaction.merchant_key)
+        .where(Transaction.merchant_key.is_not(None))
+        .where(func.lower(name).startswith(func.lower(Transaction.merchant_key) + " "))
+        .order_by(func.length(Transaction.merchant_key).desc())
+        .limit(1)
+    )
+    return prefix or name
 
 
 def to_out(txn: Transaction) -> TransactionOut:
@@ -63,8 +87,7 @@ def to_out(txn: Transaction) -> TransactionOut:
         year=txn.period.year,
         month=txn.period.month,
         raw_description=txn.raw_description,
-        merchant_id=txn.merchant_id,
-        merchant_name=txn.merchant.canonical_name if txn.merchant else None,
+        merchant_key=txn.merchant_key,
         category_id=txn.category_id,
         category_name=txn.category.name,
         amount=txn.amount,
@@ -145,13 +168,14 @@ def create_transaction(payload: TransactionIn, session: Session = Depends(get_se
     check_account(session, payload.account_id)
 
     period = get_or_create_period(session, year, month)
-    merchant = resolve_merchant(session, payload.raw_description)
 
     txn = Transaction(
         occurred_on=payload.occurred_on,
         period_id=period.id,
         raw_description=payload.raw_description.strip(),
-        merchant_id=merchant.id if merchant else None,
+        merchant_key=settle_merchant_key(
+            session, payload.merchant_key, payload.raw_description
+        ),
         category_id=payload.category_id,
         amount=payload.amount,
         is_recurring=payload.is_recurring,
@@ -179,6 +203,15 @@ def update_transaction(
         raise HTTPException(422, "amount must not be zero")
     if "account_id" in data:
         check_account(session, data["account_id"])
+    if "merchant_key" in data:
+        # Blank clears the merchant deliberately — some rows genuinely have no
+        # payee ('NON-CHASE ATM WITHDRAW'), and forcing a guess back on would
+        # make the field impossible to empty. Anything else snaps to an
+        # existing spelling rather than starting a near-duplicate name.
+        given = (data["merchant_key"] or "").strip()
+        data["merchant_key"] = (
+            settle_merchant_key(session, given, "") if given else None
+        )
 
     for key, value in data.items():
         setattr(txn, key, value)

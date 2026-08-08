@@ -32,27 +32,6 @@ class CategoryOut(BaseModel):
     sort_order: int
 
 
-class MerchantOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    canonical_name: str
-    transaction_count: int = 0
-
-
-class MerchantMergeIn(BaseModel):
-    into_id: int = Field(description="The merchant that survives the merge")
-
-
-class MerchantRenameIn(BaseModel):
-    canonical_name: str = Field(min_length=1, max_length=120)
-
-
-class CategoryMix(BaseModel):
-    name: str
-    count: int
-
-
 class AccountOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -118,63 +97,6 @@ class NetWorthOut(BaseModel):
     accounts_tracked: int
 
 
-class MerchantRow(BaseModel):
-    """A merchant as it appears on the workbench: what it cost and when."""
-
-    id: int
-    canonical_name: str
-    transaction_count: int
-    total_spent: Money
-    last_seen: date | None
-    categories: list[CategoryMix]
-
-
-class MergeManyIn(BaseModel):
-    """Fold several merchants into one, optionally renaming the survivor.
-
-    Needed because the suggestion rule keys on the first word, so it can never
-    propose 'Airbnb', 'Future Rent Airbnb' and 'Revolution Park Air Bnb' as one
-    place. Those have to be picked by hand.
-    """
-
-    source_ids: list[int] = Field(min_length=1)
-    into_id: int
-    canonical_name: str | None = Field(default=None, max_length=120)
-
-
-class SuggestionMember(BaseModel):
-    """One merchant inside a proposal, with the descriptors behind it.
-
-    The raw descriptors are the point: 'Rhino Mart' and 'Rhino Market Deli'
-    are indistinguishable as names, but seeing what the bank actually wrote
-    is what makes the call obvious.
-    """
-
-    id: int
-    canonical_name: str
-    transaction_count: int
-    examples: list[str]
-
-
-class Suggestion(BaseModel):
-    key: str
-    members: list[SuggestionMember]
-    total_transactions: int
-
-
-class RejectIn(BaseModel):
-    """Record that names are different places.
-
-    With `anchor`, only anchor-to-each pairs are recorded. That is the partial
-    case: after merging 'Uber Eats' and 'Uber Eat', the leftovers are known to
-    differ *from Uber Eats*, but nothing has been decided about whether
-    'Uber Trip' and 'Uber To Airport' are each other.
-    """
-
-    names: list[str] = Field(min_length=1)
-    anchor: str | None = None
-
-
 class PeriodOut(BaseModel):
     year: int
     month: int
@@ -190,8 +112,7 @@ class TransactionOut(BaseModel):
     year: int
     month: int
     raw_description: str
-    merchant_id: int | None
-    merchant_name: str | None
+    merchant_key: str | None
     category_id: int
     category_name: str
     amount: Money
@@ -216,6 +137,9 @@ class TransactionIn(BaseModel):
     year: int | None = Field(default=None, ge=1990, le=2100)
     month: int | None = Field(default=None, ge=1, le=12)
     raw_description: str = Field(min_length=1, max_length=200)
+    # Who was paid. Omit it and one is guessed from the description; pass an
+    # empty string to say this row has no merchant and mean it.
+    merchant_key: str | None = Field(default=None, max_length=120)
     category_id: int
     amount: Decimal
     is_recurring: bool = False
@@ -239,6 +163,9 @@ class TransactionIn(BaseModel):
 class TransactionPatch(BaseModel):
     occurred_on: date | None = None
     raw_description: str | None = Field(default=None, min_length=1, max_length=200)
+    # Blank or null clears the merchant; any other value snaps to the spelling
+    # already in use so editing cannot create a near-duplicate name.
+    merchant_key: str | None = Field(default=None, max_length=120)
     category_id: int | None = None
     amount: Decimal | None = None
     is_recurring: bool | None = None

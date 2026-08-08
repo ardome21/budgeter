@@ -2,6 +2,7 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { Api } from '../api';
+import { MerchantField } from '../merchant-field/merchant-field';
 import {
   AccountRow,
   Category,
@@ -19,7 +20,7 @@ interface ReviewRow extends PreviewRow {
 
 @Component({
   selector: 'app-import',
-  imports: [FormsModule],
+  imports: [FormsModule, MerchantField],
   templateUrl: './import.html',
   styleUrl: './import.scss',
 })
@@ -115,6 +116,15 @@ export class Import {
     });
   }
 
+  /** Correct the guessed merchant before the row exists. */
+  setMerchant(row: ReviewRow, value: string | null): void {
+    this.review.update((rows) =>
+      rows.map((r) =>
+        r.row_number === row.row_number ? { ...r, merchant_key: value } : r,
+      ),
+    );
+  }
+
   setCategory(row: ReviewRow, value: string | number): void {
     this.review.update((rows) =>
       rows.map((r) =>
@@ -161,6 +171,9 @@ export class Import {
         raw_description: r.raw_description,
         amount: r.amount,
         category_id: r.categoryId,
+        // Sent even when unchanged, so what the reviewer saw is what lands
+        // rather than the backend guessing a second time.
+        merchant_key: r.merchant_key ?? '',
         import_hash: r.import_hash,
       }));
     if (!rows.length) return;

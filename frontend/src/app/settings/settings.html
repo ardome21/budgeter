@@ -157,14 +157,14 @@
                 <td>
                   @if (r.suggestions.length) {
                     <span class="dim small">is it</span>
-                    @for (s of r.suggestions; track s[0]) {
+                    @for (s of r.suggestions; track s) {
                       <button
                         type="button"
                         class="chip"
                         [disabled]="busy()"
-                        (click)="link(r, s[0], s[1])"
+                        (click)="link(r, s)"
                       >
-                        {{ s[1] }}
+                        {{ s }}
                       </button>
                     }
                     <span class="dim small">?</span>

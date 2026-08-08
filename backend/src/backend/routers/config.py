@@ -190,7 +190,7 @@ class FixedCostOut(BaseModel):
     effective_from: date
     effective_to: date | None
     parent_id: int | None
-    merchant_id: int | None
+    merchant_key: str | None
     components: list["FixedCostOut"] = []
 
 
@@ -210,7 +210,7 @@ class FixedCostPatch(BaseModel):
     is_exact: bool | None = None
     effective_to: date | None = None
     # Link the commitment to whoever actually charges for it.
-    merchant_id: int | None = None
+    merchant_key: str | None = Field(default=None, max_length=120)
 
 
 def _fc_out(fc: FixedCost, children: list[FixedCost] | None = None) -> FixedCostOut:
@@ -224,7 +224,7 @@ def _fc_out(fc: FixedCost, children: list[FixedCost] | None = None) -> FixedCost
         effective_from=fc.effective_from,
         effective_to=fc.effective_to,
         parent_id=fc.parent_id,
-        merchant_id=fc.merchant_id,
+        merchant_key=fc.merchant_key,
         components=[_fc_out(c) for c in (children or [])],
     )
 
@@ -292,6 +292,11 @@ def update_fixed_cost(
     data = payload.model_dump(exclude_unset=True)
     if "category_id" in data and session.get(Category, data["category_id"]) is None:
         raise HTTPException(422, f"no category with id {data['category_id']}")
+    if "merchant_key" in data:
+        # Blank unlinks. iCloud is deliberately unlinked — it shares the
+        # APPLE.COM/BILL descriptor with Apple TV, so no link can tell 0.99
+        # from 12.99 — and that has to stay expressible.
+        data["merchant_key"] = (data["merchant_key"] or "").strip() or None
 
     new_amount = data.pop("amount", None)
     for key, value in data.items():
@@ -426,7 +431,7 @@ class ReconcileRow(BaseModel):
     merchant: str | None
     charges: int
     note: str | None
-    suggestions: list[tuple[int, str]]
+    suggestions: list[str]
 
 
 class ReconcileOut(BaseModel):

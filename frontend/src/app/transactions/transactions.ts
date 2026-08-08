@@ -2,6 +2,7 @@ import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { Api } from '../api';
+import { MerchantField } from '../merchant-field/merchant-field';
 import {
   Category,
   MONTH_NAMES,
@@ -14,6 +15,8 @@ import {
 interface EntryForm {
   occurred_on: string;
   raw_description: string;
+  /** Blank means "guess it from the description" — the common case. */
+  merchant_key: string;
   category_id: number;
   amount: string;
   is_recurring: boolean;
@@ -21,7 +24,7 @@ interface EntryForm {
 
 @Component({
   selector: 'app-transactions',
-  imports: [FormsModule],
+  imports: [FormsModule, MerchantField],
   templateUrl: './transactions.html',
   styleUrl: './transactions.scss',
 })
@@ -46,6 +49,7 @@ export class Transactions {
   form = signal<EntryForm>({
     occurred_on: new Date().toISOString().slice(0, 10),
     raw_description: '',
+    merchant_key: '',
     category_id: 0,
     amount: '',
     is_recurring: false,
@@ -111,6 +115,9 @@ export class Transactions {
     const body: NewTransaction = {
       occurred_on: f.occurred_on || null,
       raw_description: f.raw_description.trim(),
+      // Omitted, not empty: an empty string means "this row has no merchant",
+      // while leaving it out asks for a guess from the description.
+      ...(f.merchant_key.trim() ? { merchant_key: f.merchant_key.trim() } : {}),
       category_id: Number(f.category_id),
       amount: f.amount.trim(),
       is_recurring: f.is_recurring,
@@ -131,6 +138,7 @@ export class Transactions {
         this.form.update((prev) => ({
           ...prev,
           raw_description: '',
+          merchant_key: '',
           amount: '',
           is_recurring: false,
         }));
@@ -142,6 +150,20 @@ export class Transactions {
         this.error.set(this.describe(e));
       },
     });
+  }
+
+  /** Correct who was paid, in place. There is no merge queue to do it later. */
+  setMerchant(txn: Transaction, merchantKey: string | null): void {
+    if ((merchantKey ?? '') === (txn.merchant_key ?? '')) return;
+    this.api
+      .updateTransaction(txn.id, { merchant_key: merchantKey ?? '' })
+      .subscribe({
+        next: (updated) =>
+          this.rows.update((rows) =>
+            rows.map((r) => (r.id === updated.id ? updated : r)),
+          ),
+        error: (e) => this.error.set(this.describe(e)),
+      });
   }
 
   recategorise(txn: Transaction, categoryId: string): void {

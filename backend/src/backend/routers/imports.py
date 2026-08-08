@@ -16,17 +16,19 @@ from sqlalchemy.orm import Session
 
 from ..csv_import import CandidateRow, NearMatch, hash_key, parse_csv, row_hash
 from ..db import get_session
-from ..merchants import display_name, normalize_merchant
+from ..merchants import suggest_key
 from ..models import (
     Account,
     Category,
-    Merchant,
-    MerchantPattern,
     Transaction,
     TransactionSource,
 )
 from ..schemas import Money
-from .transactions import get_or_create_period
+from .transactions import (
+    get_or_create_period,
+    settle_merchant_key,
+    snap_to_existing,
+)
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -67,7 +69,9 @@ class PreviewRow(BaseModel):
     # category the merchant has actually been filed under is offered, ranked
     # by how often, rather than forcing one answer.
     category_options: list[CategoryOption]
-    merchant_name: str | None
+    # Editable on the preview. A wrong guess is corrected here, before the row
+    # exists — there is no merge queue downstream to fix it later.
+    merchant_key: str | None
     import_hash: str
     duplicate_of: int | None
     # Same amount, within a few days, but not an exact match. A prompt to look,
@@ -95,6 +99,9 @@ class CommitRow(BaseModel):
     amount: Money
     category_id: int
     is_recurring: bool = False
+    # Whatever the reviewer left in the merchant field. Omitted means "guess
+    # from the description"; an explicit empty string means "no merchant".
+    merchant_key: str | None = Field(default=None, max_length=120)
     import_hash: str | None = None
 
 
@@ -112,58 +119,65 @@ class CommitOut(BaseModel):
 
 
 def _category_history(
-    session: Session, merchant_ids: set[int]
-) -> dict[int, list[tuple[int, str, int]]]:
+    session: Session, names: set[str]
+) -> dict[str, list[tuple[int, str, int]]]:
     """What each merchant has actually been filed under, most used first.
 
-    Read from the transactions rather than from merchants.default_category_id,
-    because that column records whatever the merchant's *first* transaction
-    happened to be and does not move when a merge changes the population. On
-    this data it disagreed with history for ten merchants, the largest being
-    113 transactions. History cannot go stale.
+    Read from the transactions, never from a stored default on the merchant:
+    a default records whatever the first charge happened to be and never moves
+    again. On this data it disagreed with history for ten merchants, the
+    largest across 113 transactions. History cannot go stale.
+
+    Keyed case-insensitively so a name that differs only in casing still finds
+    its own history.
     """
-    if not merchant_ids:
+    if not names:
         return {}
 
+    lowered = {n.lower() for n in names}
     rows = session.execute(
         select(
-            Transaction.merchant_id,
+            func.lower(Transaction.merchant_key),
             Transaction.category_id,
             Category.name,
             func.count(Transaction.id),
         )
         .join(Category, Category.id == Transaction.category_id)
-        .where(Transaction.merchant_id.in_(merchant_ids))
-        .group_by(Transaction.merchant_id, Transaction.category_id, Category.name)
+        .where(func.lower(Transaction.merchant_key).in_(lowered))
+        .group_by(
+            func.lower(Transaction.merchant_key), Transaction.category_id, Category.name
+        )
     ).all()
 
-    out: dict[int, list[tuple[int, str, int]]] = {}
-    for merchant_id, category_id, name, count in rows:
-        out.setdefault(merchant_id, []).append((category_id, name, count))
+    out: dict[str, list[tuple[int, str, int]]] = {}
+    for merchant_key, category_id, name, count in rows:
+        out.setdefault(merchant_key, []).append((category_id, name, count))
     for options in out.values():
         options.sort(key=lambda o: (-o[2], o[1]))
     return out
 
 
 def _enrich(session: Session, rows: list[CandidateRow]) -> None:
-    """Resolve merchants, offer the categories they have been used with, flag
-    duplicates."""
+    """Suggest a merchant, offer the categories it has been used with, flag
+    duplicates.
+
+    The merchant is a suggestion on an editable field, not a resolution. If it
+    is wrong the reviewer fixes it on the row before committing, which is the
+    whole reason the merge queue is gone.
+    """
     if not rows:
         return
 
-    keys = {r.raw_description: normalize_merchant(r.raw_description) for r in rows}
-    known = {
-        pattern: (merchant_id, name)
-        for pattern, merchant_id, name in session.execute(
-            select(
-                MerchantPattern.pattern,
-                Merchant.id,
-                Merchant.canonical_name,
-            )
-            .join(Merchant, Merchant.id == MerchantPattern.merchant_id)
-            .where(MerchantPattern.pattern.in_(set(keys.values()) - {""}))
-        ).all()
-    }
+    # Snapped exactly as the commit will snap it, so the name on the preview is
+    # the name that gets written. A preview that shows a different answer from
+    # the one it commits is worse than no preview.
+    guesses: dict[str, str | None] = {}
+    for r in rows:
+        if r.raw_description in guesses:
+            continue
+        guess = suggest_key(r.raw_description)
+        guesses[r.raw_description] = snap_to_existing(session, guess) if guess else None
+
     hashes = [r.import_hash for r in rows if r.import_hash]
     existing = dict(
         session.execute(
@@ -173,24 +187,21 @@ def _enrich(session: Session, rows: list[CandidateRow]) -> None:
         ).all()
     )
 
-    matched_ids = {merchant_id for merchant_id, _ in known.values()}
-    history = _category_history(session, matched_ids)
+    history = _category_history(session, {g for g in guesses.values() if g})
 
     for row in rows:
-        key = keys[row.raw_description]
-        if key and key in known:
-            merchant_id, name = known[key]
-            row.merchant_id = merchant_id
-            row.merchant_name = name
-            row.category_options = history.get(merchant_id, [])
+        guess = guesses[row.raw_description]
+        if guess:
+            row.merchant_key = guess
+            row.category_options = history.get(guess.lower(), [])
 
             if row.category_options:
                 # The most-used category leads; the rest are one click away.
                 category_id, category_name, _ = row.category_options[0]
                 row.suggested_category_id = category_id
                 row.suggested_category_name = category_name
-        elif key:
-            row.notes.append("new merchant")
+            else:
+                row.notes.append("new merchant")
         row.duplicate_of = existing.get(row.import_hash)
 
     _find_near_duplicates(session, rows)
@@ -286,7 +297,7 @@ async def preview(
                     CategoryOption(id=cid, name=name, count=count)
                     for cid, name, count in r.category_options
                 ],
-                merchant_name=r.merchant_name,
+                merchant_key=r.merchant_key,
                 import_hash=r.import_hash,
                 duplicate_of=r.duplicate_of,
                 near_duplicates=[
@@ -384,13 +395,19 @@ def commit(payload: CommitIn, session: Session = Depends(get_session)):
         written.add(digest)
 
         period = get_or_create_period(session, year, month)
-        merchant = _merchant_for(session, row.raw_description)
+        # An explicit empty string is a decision that this row has no merchant
+        # and must not be overridden by a guess; None means it was never asked.
+        merchant_key = (
+            settle_merchant_key(session, row.merchant_key, row.raw_description)
+            if row.merchant_key is None or row.merchant_key.strip()
+            else None
+        )
         session.add(
             Transaction(
                 occurred_on=row.occurred_on,
                 period_id=period.id,
                 raw_description=row.raw_description.strip(),
-                merchant_id=merchant.id if merchant else None,
+                merchant_key=merchant_key,
                 category_id=row.category_id,
                 amount=row.amount,
                 is_recurring=row.is_recurring,
@@ -418,23 +435,3 @@ def _check_account(session: Session, account_id: int | None) -> None:
             f"{account.institution} {account.name} was closed on "
             f"{account.closed_on} — reopen it before importing to it",
         )
-
-
-def _merchant_for(session: Session, description: str) -> Merchant | None:
-    key = normalize_merchant(description)
-    if not key:
-        return None
-    pattern = session.scalar(
-        select(MerchantPattern).where(MerchantPattern.pattern == key)
-    )
-    if pattern is not None:
-        return session.get(Merchant, pattern.merchant_id)
-    merchant = Merchant(canonical_name=display_name(key))
-    session.add(merchant)
-    session.flush()
-    session.add(MerchantPattern(merchant_id=merchant.id, pattern=key))
-    # Flushed, not just added: with autoflush off the next row's pattern lookup
-    # is a fresh query that cannot see a pending insert, so it would miss this
-    # one and try to create the same merchant a second time.
-    session.flush()
-    return merchant

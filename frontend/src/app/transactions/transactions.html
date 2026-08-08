@@ -25,6 +25,16 @@
       />
     </label>
 
+    <label class="f-merch">
+      <span>Merchant</span>
+      <app-merchant-field
+        [value]="form().merchant_key"
+        (valueChange)="setField('merchant_key', $event ?? '')"
+        placeholder="left blank, we'll guess"
+        label="Merchant"
+      />
+    </label>
+
     <label class="f-cat">
       <span>Category</span>
       <select
@@ -129,7 +139,14 @@
                   <span class="pill">recurring</span>
                 }
               </td>
-              <td class="dim truncate">{{ t.merchant_name ?? "—" }}</td>
+              <td class="merchant">
+                <app-merchant-field
+                  [value]="t.merchant_key"
+                  (valueChange)="setMerchant(t, $event)"
+                  placeholder="—"
+                  label="Merchant"
+                />
+              </td>
               <td>
                 <select
                   class="inline"

@@ -118,61 +118,6 @@ class AccountBalance(Base):
     account: Mapped[Account] = relationship(back_populates="balances")
 
 
-class Merchant(Base):
-    """A real-world place, collapsing the many strings a bank uses for it.
-
-    'Harris Teeter' arrives as eleven distinct descriptors across the history;
-    resolving them to one merchant is what lets a category be inferred rather
-    than typed.
-    """
-
-    __tablename__ = "merchants"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    canonical_name: Mapped[str] = mapped_column(String(120), unique=True)
-
-    # A merchant deliberately has no default category. It has a *history* of
-    # them, read from its transactions — Rhino Market & Deli is Food and Drinks
-    # 74 times and Groceries 39, and both are right. A stored default recorded
-    # whichever came first and never followed a merge; on this data it
-    # contradicted history for twelve merchants, the worst across 113 rows.
-    patterns: Mapped[list["MerchantPattern"]] = relationship(
-        back_populates="merchant", cascade="all, delete-orphan"
-    )
-
-
-class MerchantPattern(Base):
-    """A normalized descriptor fragment that resolves to a merchant."""
-
-    __tablename__ = "merchant_patterns"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    merchant_id: Mapped[int] = mapped_column(ForeignKey("merchants.id"))
-    pattern: Mapped[str] = mapped_column(String(120), unique=True)
-
-    merchant: Mapped[Merchant] = relationship(back_populates="patterns")
-
-
-class MerchantSplit(Base):
-    """A pair the user has said are NOT the same place.
-
-    Without this, saying "no" to a suggestion accomplishes nothing — the
-    similarity rules would propose the same pair on every visit, and a review
-    queue you cannot empty is one nobody works through.
-
-    Keyed by name rather than id: merging deletes the losing merchant, so an
-    id-based record would dangle. Names are stored in sorted order, so the
-    pair (a, b) and (b, a) are the same row.
-    """
-
-    __tablename__ = "merchant_splits"
-    __table_args__ = (UniqueConstraint("left_name", "right_name"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    left_name: Mapped[str] = mapped_column(String(120))
-    right_name: Mapped[str] = mapped_column(String(120))
-
-
 class BudgetPeriod(Base):
     """A calendar month. The unit everything rolls up to."""
 
@@ -224,8 +169,13 @@ class Transaction(Base):
     period_id: Mapped[int] = mapped_column(ForeignKey("budget_periods.id"))
 
     raw_description: Mapped[str] = mapped_column(String(200))
-    merchant_id: Mapped[int | None] = mapped_column(
-        ForeignKey("merchants.id"), nullable=True
+
+    # Who was paid, as a name rather than a foreign key. Two rows are the same
+    # place when this string matches, so the entry form picks from what already
+    # exists instead of letting a second spelling in — which is what the merge
+    # queue used to clean up afterwards.
+    merchant_key: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, index=True
     )
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
 
@@ -256,7 +206,6 @@ class Transaction(Base):
 
     period: Mapped[BudgetPeriod] = relationship()
     category: Mapped[Category] = relationship()
-    merchant: Mapped[Merchant | None] = relationship()
     account: Mapped[Account | None] = relationship()
 
 
@@ -288,12 +237,9 @@ class FixedCost(Base):
     # Which merchant actually charges for this. Guessing from the description
     # gets Netflix right and rent wrong — the bill is called "Rent" and the
     # charge says BILT CARD HOUSING. Set once, correct forever.
-    merchant_id: Mapped[int | None] = mapped_column(
-        ForeignKey("merchants.id"), nullable=True
-    )
+    merchant_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     category: Mapped[Category] = relationship()
-    merchant: Mapped["Merchant | None"] = relationship()
     components: Mapped[list["FixedCost"]] = relationship(
         back_populates="parent", cascade="all, delete-orphan"
     )

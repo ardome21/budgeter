@@ -250,3 +250,26 @@ textarea {
     font-weight: 500;
   }
 }
+
+// The guessed merchant, editable before the row exists. A wrong guess used to
+// be fixable only by merging afterwards; this is where it gets fixed now.
+td.merchant input {
+  width: 100%;
+  min-width: 8rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.2rem 0.35rem;
+  color: var(--text-dim);
+  font: inherit;
+
+  &:hover {
+    border-color: var(--border);
+  }
+  &:focus {
+    background: var(--bg);
+    border-color: var(--accent);
+    color: var(--text);
+    outline: none;
+  }
+}

@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from backend.db import SessionLocal
-from backend.merchants import display_name, normalize_merchant
+from backend.merchants import suggest_key
 from backend.models import (
     Account,
     AccountBalance,
@@ -38,8 +38,6 @@ from backend.models import (
     Category,
     CategoryKind,
     FixedCost,
-    Merchant,
-    MerchantPattern,
     PaycheckLine,
     PaycheckLineKind,
     Transaction,
@@ -222,7 +220,7 @@ class Importer:
         self.r = report
         self.categories: dict[str, Category] = {}
         self.periods: dict[tuple[int, int], BudgetPeriod] = {}
-        self.merchants: dict[str, Merchant] = {}
+        self.merchants: set[str] = set()
         self.accounts: dict[tuple[str, str], Account] = {}
         self.seen_allocations: set[tuple[int, int]] = set()
         self.sheet_totals: dict[str, Decimal] = defaultdict(Decimal)
@@ -271,17 +269,13 @@ class Importer:
             self.periods[key] = p
         return self.periods[key]
 
-    def merchant(self, raw: str) -> Merchant | None:
-        key = normalize_merchant(raw)
-        if not key:
-            return None
-        if key not in self.merchants:
-            m = Merchant(canonical_name=display_name(key))
-            self.s.add(m)
-            self.s.flush()
-            self.s.add(MerchantPattern(merchant_id=m.id, pattern=key))
-            self.merchants[key] = m
-        return self.merchants[key]
+    def merchant(self, raw: str) -> str | None:
+        """The merchant name for a description, counted so the report can
+        report it. Just a string now — there is no row to create."""
+        key = suggest_key(raw)
+        if key:
+            self.merchants.add(key)
+        return key
 
     # -- transactions -----------------------------------------------------
 
@@ -347,14 +341,14 @@ class Importer:
 
             description = str(desc).strip()
             category = self.category_for(raw_cat, description, where)
-            merchant = self.merchant(description)
+            merchant_key = self.merchant(description)
 
             self.s.add(
                 Transaction(
                     occurred_on=occurred_on,
                     period_id=period.id,
                     raw_description=description[:200],
-                    merchant_id=merchant.id if merchant else None,
+                    merchant_key=merchant_key,
                     category_id=category.id,
                     amount=amount,
                     is_recurring=str(raw_auto).strip().lower() in {"yes", "true"},
@@ -646,8 +640,6 @@ def reset(session: Session) -> None:
         Transaction,
         BudgetAllocation,
         AccountBalance,
-        MerchantPattern,
-        Merchant,
         FixedCost,
         PaycheckLine,
         Account,
@@ -661,8 +653,8 @@ def reset(session: Session) -> None:
 def reset_config(session: Session) -> None:
     """Wipe fixed costs and paycheck lines only.
 
-    Same reasoning as reset_accounts: a full --reset destroys merchant merges
-    and split decisions, which are the user's own work.
+    Same reasoning as reset_accounts: a full --reset destroys the merchant
+    names chosen by hand, which are the user's own work.
     """
     session.execute(delete(FixedCost).where(FixedCost.parent_id.is_not(None)))
     session.execute(delete(FixedCost))
@@ -673,7 +665,7 @@ def reset_config(session: Session) -> None:
 def reset_accounts(session: Session) -> None:
     """Wipe only accounts and their snapshots.
 
-    A full --reset also destroys merchant merges and split decisions, which are
+    A full --reset also destroys the merchant names chosen by hand, which are
     the user's own work and not reproducible from the workbooks. Re-importing
     the Accounts sheets alone must not cost them that.
     """

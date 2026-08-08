@@ -56,8 +56,7 @@ class CandidateRow:
     suggested_category_name: str | None = None
     # (category_id, name, times used) for this merchant, most used first.
     category_options: list[tuple[int, str, int]] = field(default_factory=list)
-    merchant_id: int | None = None
-    merchant_name: str | None = None
+    merchant_key: str | None = None
     import_hash: str = ""
     # 0 for the first row with this date/description/amount, 1 for the next,
     # and so on. Two identical charges in one export are two real purchases.

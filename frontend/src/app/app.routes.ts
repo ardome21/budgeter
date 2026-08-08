@@ -28,18 +28,5 @@ export const routes: Routes = [
     title: 'Accounts · budgeter',
     loadComponent: () => import('./accounts/accounts').then((m) => m.Accounts),
   },
-  {
-    path: 'merchants',
-    title: 'Merchants · budgeter',
-    loadComponent: () =>
-      import('./merchants/workbench').then((m) => m.Workbench),
-  },
-  {
-    // The suggestion queue, reachable from the workbench when it has items.
-    path: 'merchants/review',
-    title: 'Review merchants · budgeter',
-    loadComponent: () =>
-      import('./merchants/merchants').then((m) => m.Merchants),
-  },
   { path: '**', redirectTo: 'month' },
 ];

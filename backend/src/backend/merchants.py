@@ -1,9 +1,17 @@
-"""Collapsing bank descriptors to merchants.
+"""Guessing a merchant name from a bank descriptor.
 
-Shared by the workbook importer and the CSV import endpoint — if the two used
-different rules, the same shop would resolve one way in history and another way
-going forward, and the category defaults learned from history would stop
-applying to new transactions.
+A *guess*, and only ever a guess. The merchant that ends up on a transaction is
+whatever the entry form or the import preview says it is; this module exists to
+pre-fill that field so the common case needs no typing.
+
+That is a smaller job than it used to be. When resolution was authoritative, a
+miss here created a duplicate merchant that could only be undone by merging.
+Now a miss is a wrong default on a form, corrected in place before the row is
+written — so the rules below can stay conservative without a queue behind them
+to catch what they drop.
+
+Shared by the workbook importer and the CSV import endpoint, so the same shop
+pre-fills the same way in history and going forward.
 """
 
 import re
@@ -54,3 +62,16 @@ def normalize_merchant(raw: str) -> str:
 def display_name(key: str) -> str:
     """Human-facing name for a normalized key."""
     return key.title()
+
+
+def suggest_key(raw: str) -> str | None:
+    """The merchant name to pre-fill for a descriptor, or None if there is none.
+
+    'HARRIS TEETER #412 CHARLOTTE NC' suggests 'Harris Teeter', which is the
+    name already on 130 rows, so the suggestion matches by string equality and
+    the history behind it is found. Where normalization yields nothing —
+    'NON-CHASE ATM WITHDRAW 690124' has no merchant in it — the answer is None
+    and the field is left blank rather than filled with noise.
+    """
+    key = normalize_merchant(raw)
+    return display_name(key) if key else None

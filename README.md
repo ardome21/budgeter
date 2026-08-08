@@ -65,7 +65,7 @@ not what makes the app work — it is a safety net for direct calls to `:8000`.
 
 ## The app
 
-Four screens, all reading and writing the same database the workbook was
+Five screens, all reading and writing the same database the workbook was
 imported into.
 
 | Screen | What it replaces |
@@ -73,7 +73,6 @@ imported into.
 | **Month** | The `*Budget` sheets — allocations vs actuals, committed/flexible, pace |
 | **Transactions** | The `*Spending` sheets — list, add by hand, recategorise inline |
 | **Import** | Pasting a bank export into a sheet, then categorising it by hand |
-| **Merchants** | Nothing. A workbench for what each merchant costs, plus the consolidation the spreadsheet had no way to do |
 | **Accounts** | The `Accounts` sheet — net worth over time, and recording a new snapshot |
 | **Settings** | The `Monthly Fixed Costs`, `Paycheck` and `Rent` sheets, plus reconciliation |
 
@@ -131,62 +130,56 @@ Net worth counts what you owe. The workbook's own `Total` row omitted the
 student loan and the credit card balance, reporting 53,742.84 for March 2024
 against a real 47,742.84.
 
-### The merchant workbench
+### The merchant is chosen at entry, not merged afterwards
 
-`/merchants` lists every merchant with what it cost, how often, when it was last
-seen and its category mix — sorted by spend, because 277 of the 401 merchants
-were seen exactly once and an alphabetical list buries the handful that matter.
-Names are editable inline.
+A transaction records **who was paid as a name on the row** (`merchant_key`),
+not a foreign key into a merchant table. That is a deliberate reversal.
 
-It also allows **hand-merging any selection**, which exists because the
-suggestion rule keys on the first word and therefore can never propose
-`Airbnb`, `Future Rent Airbnb` and `Revolution Park Air Bnb` — $6,599 split
-across three records. Those have to be picked.
+The tables it replaces resolved a merchant from the description on write, which
+meant a second spelling could only be discovered *after* it was already in the
+data — so there was a review queue to fold the duplicates back together. That
+produced 403 merchants from 1,291 transactions, **278 of them used exactly
+once**, and a queue nobody could empty. Its suggestion pass was also O(n²):
+88 ms at 403 names, 57 s at 10,000.
 
-`/merchants/review` is the suggestion queue, linked from the workbench whenever
-it has items.
+Offering the names already in use **at the moment of entry** means the second
+spelling never arrives. The picker (`GET /merchants/keys`) appears on the entry
+form, on every transaction row, and on every import preview row, ranked by use
+rather than alphabetically because most names are used once.
 
-### The merchant review queue
+Free typing is still allowed — a shop nobody has visited has to be nameable —
+and what is typed is snapped to an existing spelling by two **exact** rules,
+never a similarity score:
 
-Normalization is conservative and under-merges on purpose: wrongly merging two
-shops silently corrupts every total they appear in and cannot be undone, while
-leaving one shop split is a click to fix.
+1. Same name, different case: `harris teeter` is `Harris Teeter`.
+2. An existing name that is a whole-word **prefix** of the guess, longest
+   first. `UBER EATS 4471` is `Uber Eats`, not `Uber`.
 
-The one thing normalization must not do is discard the name. It strips the
-opaque reference a bank appends — `APPLE.COM/BILL`'s `CAMMGGH21Q0DA0` — by
-looking for **a long run containing a digit**, because that is what separates
-an identifier from a word. Matching on length alone ate the merchant instead:
-descriptors arrive in capitals, so `DUKEENERGY BILL PAY 910175813041` became
-`bill pay`, which is one typo from `BILT CARD HOUSING`, and the power bill and
-the rent were duly proposed as one merchant and merged. Four other names —
-`CHARLOTTE OBSERVER`, `POTBELLY SANDWICH`, `GRANDFATHER MOUNTAIN`,
-`GUESTRS*BELLAGIO` — normalized to nothing at all and their charges got no
-merchant, which is why the Observer subscription reconciled against an empty
-month while the charge sat one table away.
+Rule 2 also covers several descriptor forms the normalizer alone misses, since
+it never sees a real bank export until one is imported: `SPOTIFY USA 8774471`,
+`HARRIS TEETER 0412` (no `#`, and four digits is under the 8-character id
+floor) and `LYFT *RIDE THU 3PM`, which otherwise minted a merchant per ride.
 
-A proposal is built from one rule — **two merchants are proposed when their
-first word is the same brand**, allowing one character of typo. In a bank
-descriptor the first token is the shop and everything after it is a branch, a
-service or noise. So a proposal asks *"these share a brand, are they one
-place?"*, which is a question with a real "no": `Uber Eats` is Food and Drinks
-and `Uber Trip` is Transportation.
+**What this gives up**, honestly: there is no longer any way to merge two names
+after the fact. The old schema kept a pattern per descriptor, so hand-merges
+taught it that `Netlix` and `Harris Teater` were typos of real shops. Those
+corrections are gone, and a typo now has to be fixed in the picker on the row.
+That is the trade — and it is a good one here, because every one of those typos
+came from a hand-typed workbook cell that no bank will ever send again.
 
-Because of that, members are ticked individually rather than accepted as a
-group, and each proposal shows the **raw descriptors** behind every merchant —
-`Rhino Mart` and `Rhino Market Deli` are indistinguishable as names, but what
-the bank actually wrote makes the call obvious.
+### The normalizer
 
-The surviving merchant gets **whatever name you type** — the normalized key is
-a machine's guess (`Rhino Market Deli`), and `Rhino Market & Deli` is probably
-what you actually want to see. Renaming rewrites the split records that
-reference the old name, and merging deletes the folded name's records, so a
-decision never ends up attached to a name that no longer exists.
+`normalize_merchant` collapses a descriptor to a stable key, and it is only ever
+a **guess** that pre-fills an editable field. It strips processor prefixes
+(`TST*`, `SQ *`), phone numbers, store numbers, trailing state codes, known city
+names and opaque bank references.
 
-Every answer is recorded in `merchant_splits`, so a rejected pair is never
-proposed again. A review queue that cannot be emptied is one nobody works
-through. After a partial merge only the pairs *against the surviving name* are
-recorded — nothing has been decided about whether the leftovers match each
-other.
+It strips an appended id by looking for **a long run containing a digit**,
+because that is what separates an identifier from a word. Matching on length
+alone ate the merchant instead: descriptors arrive in capitals, so
+`DUKEENERGY BILL PAY 910175813041` became `bill pay`, one typo away from
+`BILT CARD HOUSING` — and the power bill and the rent were duly treated as one
+merchant.
 
 ### Money is a string on the wire
 
@@ -202,8 +195,10 @@ and you confirm it. Columns are detected across the usual header spellings,
 amounts parse from `$1,234.56` / `(45.00)` / `-45`, and there is a toggle for
 banks that export purchases as negative.
 
-Merchants resolve against the three years of history already imported, so most
-rows arrive with the right category already filled in.
+The merchant is guessed against the three years of history already imported, so
+most rows arrive with the right category already filled in — and the guess sits
+in an editable picker, because a wrong one has to be fixable here. Nothing
+downstream will fix it.
 
 A merchant does not *have* a category, it has a **history** of categories.
 Rhino Market & Deli is Food and Drinks on a sandwich run and Groceries on a
@@ -211,10 +206,10 @@ shop, and both are right. So the preview suggests the most-used one and offers
 every other category that merchant has genuinely been filed under as a
 one-click chip, each showing how often.
 
-There is no stored default to drift from that history — the column that held
-one is gone. It recorded whichever transaction created the merchant, never
-followed a merge, and ended up contradicting the merchant's own history for
-twelve of them.
+There is no stored default to drift from that history, and nowhere left to put
+one. The column that held it recorded whichever transaction created the
+merchant, never followed a merge, and ended up contradicting the merchant's own
+history for twelve of them.
 
 #### Which account it came from
 

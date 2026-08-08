@@ -21,8 +21,6 @@ from .merchants import normalize_merchant
 from .models import (
     BudgetPeriod,
     FixedCost,
-    Merchant,
-    MerchantPattern,
     Transaction,
 )
 
@@ -39,36 +37,29 @@ class Match:
     merchant: str | None
     charges: int
     note: str | None
-    suggestions: list[tuple[int, str]]
+    suggestions: list[str]
 
 
-def _merchant_for_key(session: Session, key: str) -> tuple[int, str] | None:
-    """Resolve a commitment's description to a merchant.
+def _key_for_description(session: Session, key: str) -> str | None:
+    """Resolve a commitment's description to a merchant name in use.
 
-    By descriptor pattern first, then by the merchant's own name. Both are
-    needed: 'Netflix' matches the pattern behind NETFLIX.COM, while
-    'Inner Peaks' matches only the merchant name, because the pattern behind it
-    is 'inner peaks noda' — the gym's descriptor carries the neighbourhood.
+    Matches the normalized description against the normalized merchant name, so
+    'Netflix' finds 'Netflix' however the descriptor behind it was spelled.
+    Where the bill and the charge are named differently — rent, billed as
+    BILT CARD HOUSING — nothing matches, and `fixed_costs.merchant_key` is what
+    carries the answer instead.
     """
     row = session.execute(
-        select(Merchant.id, Merchant.canonical_name)
-        .join(MerchantPattern, MerchantPattern.merchant_id == Merchant.id)
-        .where(MerchantPattern.pattern == key)
+        select(Transaction.merchant_key)
+        .where(Transaction.merchant_key.is_not(None))
+        .where(func.lower(Transaction.merchant_key) == key)
+        .limit(1)
     ).first()
-    if row:
-        return (row[0], row[1])
-    row = session.execute(
-        select(Merchant.id, Merchant.canonical_name).where(
-            func.lower(Merchant.canonical_name) == key
-        )
-    ).first()
-    return (row[0], row[1]) if row else None
+    return row[0] if row else None
 
 
-def suggest_merchants(
-    session: Session, description: str, limit: int = 3
-) -> list[tuple[int, str]]:
-    """Plausible merchants for an unmatched commitment, by shared words.
+def suggest_merchants(session: Session, description: str, limit: int = 3) -> list[str]:
+    """Plausible merchant names for an unmatched commitment, by shared words.
 
     A suggestion, never an assignment. 'The Observer' should offer
     'Charlotte Observer' rather than quietly adopting it.
@@ -81,16 +72,14 @@ def suggest_merchants(
         return []
     pattern = r"\y(" + "|".join(words) + r")\y"
     rows = session.execute(
-        select(Merchant.id, Merchant.canonical_name).where(
-            func.lower(Merchant.canonical_name).op("~")(pattern)
-        )
+        select(Transaction.merchant_key)
+        .where(Transaction.merchant_key.is_not(None))
+        .where(func.lower(Transaction.merchant_key).op("~")(pattern))
+        .distinct()
     ).all()
-    # Prefer the merchant sharing the most words with the description.
-    scored = sorted(
-        rows,
-        key=lambda r: -sum(1 for w in words if w in r[1].lower()),
-    )
-    return [(mid, name) for mid, name in scored][:limit]
+    # Prefer the name sharing the most words with the description.
+    scored = sorted(rows, key=lambda r: -sum(1 for w in words if w in r[0].lower()))
+    return [name for (name,) in scored][:limit]
 
 
 def reconcile_month(session: Session, year: int, month: int) -> list[Match]:
@@ -111,24 +100,20 @@ def reconcile_month(session: Session, year: int, month: int) -> list[Match]:
     for fc in costs:
         note: str | None = None
         merchant_name: str | None = None
-        merchant_id: int | None = None
         actual: Decimal | None = None
         charges = 0
-        suggestions: list[tuple[int, str]] = []
+        suggestions: list[str] = []
 
-        if fc.merchant_id is not None:
-            merchant_id = fc.merchant_id
-            merchant_name = fc.merchant.canonical_name if fc.merchant else None
+        if fc.merchant_key is not None:
+            merchant_name = fc.merchant_key
         else:
             key = normalize_merchant(fc.description)
             if key:
-                found = _merchant_for_key(session, key)
-                if found is not None:
-                    merchant_id, merchant_name = found
+                merchant_name = _key_for_description(session, key)
 
         if period is None:
             note = f"no data for {year}-{month:02d}"
-        elif merchant_id is None:
+        elif merchant_name is None:
             # No category fallback. Comparing rent against every rent-category
             # transaction produces a number that looks like an answer and is
             # not one; an honest blank invites the link that fixes it forever.
@@ -141,7 +126,7 @@ def reconcile_month(session: Session, year: int, month: int) -> list[Match]:
                     func.count(Transaction.id),
                 ).where(
                     Transaction.period_id == period.id,
-                    Transaction.merchant_id == merchant_id,
+                    Transaction.merchant_key == merchant_name,
                 )
             ).one()
             actual, charges = Decimal(total), count
@@ -179,7 +164,7 @@ def recurring_candidates(session: Session) -> list[tuple[int, str, str]]:
     # bill is named differently from its charge — rent, phone, the paper — and
     # those are the standing commitments, so the backfill skipped precisely the
     # rows it exists to find.
-    by_merchant: dict[int, str] = {}
+    by_merchant: dict[str, str] = {}
     unlinked: dict[str, str] = {}
     for fc in session.scalars(
         # Top-level only. A component is part of its parent's bill, and its
@@ -189,33 +174,37 @@ def recurring_candidates(session: Session) -> list[tuple[int, str, str]]:
             FixedCost.effective_to.is_(None), FixedCost.parent_id.is_(None)
         )
     ).all():
-        if fc.merchant_id is not None:
-            by_merchant.setdefault(fc.merchant_id, fc.description)
+        if fc.merchant_key is not None:
+            by_merchant.setdefault(fc.merchant_key, fc.description)
             continue
         key = normalize_merchant(fc.description)
         if key:
             unlinked.setdefault(key, fc.description)
 
     if unlinked:
-        for merchant_id, pattern in session.execute(
-            select(MerchantPattern.merchant_id, MerchantPattern.pattern).where(
-                MerchantPattern.pattern.in_(unlinked)
-            )
+        # Match the commitment's normalized description against the merchant
+        # names actually in use, so 'Netflix' finds the rows filed under
+        # 'Netflix' without a pattern table in between.
+        for (name,) in session.execute(
+            select(Transaction.merchant_key)
+            .where(Transaction.merchant_key.is_not(None))
+            .where(func.lower(Transaction.merchant_key).in_(unlinked))
+            .distinct()
         ).all():
-            by_merchant.setdefault(merchant_id, unlinked[pattern])
+            by_merchant.setdefault(name, unlinked[name.lower()])
 
     if not by_merchant:
         return []
 
     rows = session.execute(
-        select(Transaction.id, Transaction.raw_description, Transaction.merchant_id)
+        select(Transaction.id, Transaction.raw_description, Transaction.merchant_key)
         .where(
-            Transaction.merchant_id.in_(by_merchant),
+            Transaction.merchant_key.in_(by_merchant),
             ~Transaction.is_recurring,
         )
         .order_by(Transaction.id)
     ).all()
     return [
-        (txn_id, description, by_merchant[merchant_id])
-        for txn_id, description, merchant_id in rows
+        (txn_id, description, by_merchant[merchant_key])
+        for txn_id, description, merchant_key in rows
     ]

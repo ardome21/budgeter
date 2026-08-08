@@ -5,7 +5,7 @@ import { Observable } from 'rxjs';
 import {
   Category,
   CommitResult,
-  Merchant,
+  MerchantKey,
   MonthSummary,
   NewTransaction,
   Overview,
@@ -14,12 +14,9 @@ import {
   AccountRow,
   Allocations,
   FixedCost,
-  MerchantPage,
-  MerchantSort,
   NetWorth,
   PaycheckLine,
   Reconciliation,
-  Suggestion,
   Transaction,
 } from './models';
 
@@ -169,7 +166,7 @@ export class Api {
       description: string;
       amount: string;
       category_id: number;
-      merchant_id: number | null;
+      merchant_key: string | null;
     }>,
   ): Observable<FixedCost> {
     return this.http.patch<FixedCost>(`/api/fixed-costs/${id}`, body);
@@ -224,64 +221,16 @@ export class Api {
     });
   }
 
-  merchants(
-    q: string,
-    sort: MerchantSort,
-    limit = 100,
-    offset = 0,
-  ): Observable<MerchantPage> {
-    const params = new URLSearchParams({
-      sort,
-      limit: String(limit),
-      offset: String(offset),
-    });
+  /**
+   * Merchant names already in use, most-used first.
+   *
+   * All that is left of the merchant screens. Offering what exists at the
+   * moment of entry is what stops a second spelling getting in — which is the
+   * job the merge queue used to do afterwards, badly.
+   */
+  merchantKeys(q = '', limit = 20): Observable<MerchantKey[]> {
+    const params = new URLSearchParams({ limit: String(limit) });
     if (q) params.set('q', q);
-    return this.http.get<MerchantPage>(`/api/merchants?${params}`);
-  }
-
-  /**
-   * Fold several merchants into one, optionally renaming the survivor.
-   * The suggestion rule keys on the first word, so it can never propose
-   * 'Airbnb' and 'Revolution Park Air Bnb' — those get picked by hand.
-   */
-  mergeMany(
-    sourceIds: number[],
-    intoId: number,
-    canonicalName?: string,
-  ): Observable<Merchant> {
-    return this.http.post<Merchant>('/api/merchants/merge', {
-      source_ids: sourceIds,
-      into_id: intoId,
-      canonical_name: canonicalName ?? null,
-    });
-  }
-
-  suggestions(): Observable<Suggestion[]> {
-    return this.http.get<Suggestion[]>('/api/merchants/suggestions');
-  }
-
-  /**
-   * Record that names are different places.
-   * With `anchor`, only anchor-to-each pairs are recorded — the partial case
-   * after merging some of a group.
-   */
-  rejectSuggestion(names: string[], anchor?: string): Observable<void> {
-    return this.http.post<void>('/api/merchants/suggestions/reject', {
-      names,
-      anchor: anchor ?? null,
-    });
-  }
-
-  /** Give a merchant a name of your own. Split records follow the rename. */
-  renameMerchant(id: number, canonicalName: string): Observable<Merchant> {
-    return this.http.patch<Merchant>(`/api/merchants/${id}`, {
-      canonical_name: canonicalName,
-    });
-  }
-
-  mergeMerchant(id: number, intoId: number): Observable<Merchant> {
-    return this.http.post<Merchant>(`/api/merchants/${id}/merge`, {
-      into_id: intoId,
-    });
+    return this.http.get<MerchantKey[]>(`/api/merchants/keys?${params}`);
   }
 }

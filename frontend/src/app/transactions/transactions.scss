@@ -35,6 +35,12 @@ section.card {
     grid-column: span 2;
   }
 
+  // The picker renders a bare input (`:host { display: contents }`), so it
+  // inherits the label's column without a wrapper of its own.
+  .f-merch {
+    grid-column: span 1;
+  }
+
   .check {
     flex-direction: row;
     align-items: center;
@@ -133,4 +139,27 @@ tr.fresh {
 
 .small {
   font-size: 12.5px;
+}
+
+// Editable in place: correcting who was paid is how a wrong guess gets fixed
+// now, so it has to be as reachable as the category dropdown beside it.
+td.merchant input {
+  width: 100%;
+  min-width: 7rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.2rem 0.35rem;
+  color: var(--text-dim);
+  font: inherit;
+
+  &:hover {
+    border-color: var(--border);
+  }
+  &:focus {
+    background: var(--bg);
+    border-color: var(--accent);
+    color: var(--text);
+    outline: none;
+  }
 }

@@ -176,10 +176,10 @@ export class Settings {
   }
 
   /** Point a commitment at whoever actually charges for it. */
-  link(row: ReconcileRow, merchantId: number, name: string): void {
+  link(row: ReconcileRow, name: string): void {
     this.busy.set(true);
     this.api
-      .updateFixedCost(row.fixed_cost_id, { merchant_id: merchantId })
+      .updateFixedCost(row.fixed_cost_id, { merchant_key: name })
       .subscribe({
         next: () => {
           this.notice.set(`${row.description} now reconciles against ${name}.`);

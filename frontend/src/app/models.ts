@@ -70,8 +70,7 @@ export interface Transaction {
   year: number;
   month: number;
   raw_description: string;
-  merchant_id: number | null;
-  merchant_name: string | null;
+  merchant_key: string | null;
   category_id: number;
   category_name: string;
   amount: Money;
@@ -87,6 +86,8 @@ export interface NewTransaction {
   year?: number;
   month?: number;
   raw_description: string;
+  /** Omit to have one guessed from the description; '' means no merchant. */
+  merchant_key?: string | null;
   category_id: number;
   amount: string;
   is_recurring?: boolean;
@@ -113,7 +114,8 @@ export interface PreviewRow {
    * Groceries on a shop, and both are right.
    */
   category_options: CategoryOption[];
-  merchant_name: string | null;
+  /** The guess. Editable on the preview — nothing downstream fixes it. */
+  merchant_key: string | null;
   import_hash: string;
   duplicate_of: number | null;
   /**
@@ -150,46 +152,10 @@ export interface CommitResult {
   errors: string[];
 }
 
-export interface SuggestionMember {
-  id: number;
-  canonical_name: string;
-  transaction_count: number;
-  /** Raw descriptors as the bank wrote them — what makes the call obvious. */
-  examples: string[];
-}
-
-export interface Suggestion {
+/** A merchant name in use, and how many rows carry it. Feeds the picker. */
+export interface MerchantKey {
   key: string;
-  members: SuggestionMember[];
-  total_transactions: number;
-}
-
-export interface CategoryMix {
-  name: string;
   count: number;
-}
-
-/** A merchant as it appears on the workbench: what it cost and when. */
-export interface MerchantRow {
-  id: number;
-  canonical_name: string;
-  transaction_count: number;
-  total_spent: Money;
-  last_seen: string | null;
-  categories: CategoryMix[];
-}
-
-export interface MerchantPage {
-  rows: MerchantRow[];
-  total: number;
-}
-
-export type MerchantSort = 'spend' | 'count' | 'recent' | 'name';
-
-export interface Merchant {
-  id: number;
-  canonical_name: string;
-  transaction_count: number;
 }
 
 export const MONTH_NAMES = [
@@ -284,7 +250,7 @@ export interface FixedCost {
   effective_from: string;
   effective_to: string | null;
   parent_id: number | null;
-  merchant_id: number | null;
+  merchant_key: string | null;
   /** The bill's own breakdown. Part of `amount`, never counted beside it. */
   components: FixedCost[];
 }
@@ -308,8 +274,8 @@ export interface ReconcileRow {
   merchant: string | null;
   charges: number;
   note: string | null;
-  /** [merchant id, name] candidates for an unlinked commitment. */
-  suggestions: [number, string][];
+  /** Candidate merchant names for an unlinked commitment. */
+  suggestions: string[];
 }
 
 export interface Reconciliation {

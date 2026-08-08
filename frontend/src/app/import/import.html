@@ -206,7 +206,14 @@
                     </div>
                   }
                 </td>
-                <td class="dim truncate">{{ r.merchant_name ?? "—" }}</td>
+                <td class="merchant">
+                  <app-merchant-field
+                    [value]="r.merchant_key"
+                    (valueChange)="setMerchant(r, $event)"
+                    placeholder="—"
+                    [label]="'Merchant for ' + r.raw_description"
+                  />
+                </td>
                 <td class="cat-cell">
                   <select
                     [ngModel]="r.categoryId"
@@ -232,7 +239,7 @@
                             'Used ' +
                             o.count +
                             '× at ' +
-                            (r.merchant_name ?? 'this shop')
+                            (r.merchant_key ?? 'this shop')
                           "
                         >
                           {{ o.name }}
