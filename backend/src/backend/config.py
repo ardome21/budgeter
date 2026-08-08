@@ -39,6 +39,21 @@ class Settings(BaseSettings):
     # break-glass script, which needs the machine itself.
     max_failed_logins: int = 8
 
+    # Passkeys. The relying-party id must be a registrable suffix of whatever
+    # origin the browser is on — for http://localhost:4200 that is exactly
+    # "localhost". A passkey is bound to this value, so changing it invalidates
+    # every one already registered, which is why it is configuration and not a
+    # constant: moving the app to a real hostname is a deliberate act.
+    webauthn_rp_id: str = "localhost"
+    webauthn_rp_name: str = "budgeter"
+
+    # Every origin the app is genuinely served from. Checked exactly — this is
+    # what stops another site standing in front of a stolen passkey.
+    webauthn_origins: list[str] = [
+        "http://localhost:4200",  # ng serve
+        "http://localhost:8000",  # the API serving a built frontend
+    ]
+
     # Plaid. Absent means the linked-accounts feature is simply off — unlike the
     # database, the app is entirely usable without it, so these do have
     # defaults and the router reports "not configured" rather than failing at

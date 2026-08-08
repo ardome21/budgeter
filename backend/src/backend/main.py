@@ -13,6 +13,7 @@ from .routers import (
     config,
     imports,
     merchants,
+    passkeys,
     plaid_link,
     transactions,
     views,
@@ -86,6 +87,7 @@ def health_db(session: Session = Depends(get_session)) -> dict[str, str]:
 
 
 api.include_router(auth_routes.router)
+api.include_router(passkeys.router)
 api.include_router(views.router)
 api.include_router(accounts.router)
 api.include_router(config.router)

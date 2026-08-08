@@ -1,9 +1,15 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { Observable, tap } from 'rxjs';
+import { Observable, firstValueFrom, tap } from 'rxjs';
 
-import { AuthStatus, SetupResult } from '../models';
+import { AuthStatus, PasskeyRow, SetupResult } from '../models';
+import {
+  assertionToJson,
+  registrationToJson,
+  toCreationOptions,
+  toRequestOptions,
+} from './webauthn';
 
 /**
  * Who is signed in, and the calls that change that.
@@ -59,6 +65,62 @@ export class Auth {
         code,
       })
       .pipe(tap(() => this.refresh().subscribe()));
+  }
+
+  // --- Passkeys ------------------------------------------------------------
+
+  passkeys(): Observable<PasskeyRow[]> {
+    return this.http.get<PasskeyRow[]>('/api/auth/passkeys');
+  }
+
+  removePasskey(id: number): Observable<unknown> {
+    return this.http.delete(`/api/auth/passkeys/${id}`);
+  }
+
+  /**
+   * Register this device. Requires an existing session — adding a passkey
+   * sets a credential, so it sits behind the login it will go on to replace.
+   */
+  async registerPasskey(label: string): Promise<void> {
+    const options = await firstValueFrom(
+      this.http.post<Record<string, unknown>>(
+        '/api/auth/passkeys/register/begin',
+        {},
+      ),
+    );
+    const credential = (await navigator.credentials.create({
+      publicKey: toCreationOptions(options),
+    })) as PublicKeyCredential | null;
+    if (!credential) throw new Error('cancelled');
+
+    await firstValueFrom(
+      this.http.post('/api/auth/passkeys/register/finish', {
+        label,
+        credential: registrationToJson(credential),
+      }),
+    );
+    await firstValueFrom(this.refresh());
+  }
+
+  /** Sign in with Touch ID. One gesture — the passkey is both factors. */
+  async loginWithPasskey(): Promise<void> {
+    const options = await firstValueFrom(
+      this.http.post<Record<string, unknown>>(
+        '/api/auth/passkeys/login/begin',
+        {},
+      ),
+    );
+    const credential = (await navigator.credentials.get({
+      publicKey: toRequestOptions(options),
+    })) as PublicKeyCredential | null;
+    if (!credential) throw new Error('cancelled');
+
+    await firstValueFrom(
+      this.http.post('/api/auth/passkeys/login/finish', {
+        credential: assertionToJson(credential),
+      }),
+    );
+    await firstValueFrom(this.refresh());
   }
 
   logout(): void {

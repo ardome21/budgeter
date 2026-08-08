@@ -43,6 +43,11 @@ PUBLIC_PATHS = {
     "/api/auth/setup/confirm",
     "/api/auth/login",
     "/api/auth/logout",
+    # Signing in with a passkey has to be reachable while signed out. The
+    # *register* endpoints deliberately are not: adding one sets a credential,
+    # so it sits behind the login it will go on to replace.
+    "/api/auth/passkeys/login/begin",
+    "/api/auth/passkeys/login/finish",
 }
 
 

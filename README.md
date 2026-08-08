@@ -224,6 +224,41 @@ open, and nothing about it looks wrong. Session expiry is checked server-side as
 well as on the cookie, since a cookie's own max-age is a hint an attacker
 replaying a stolen one is free to ignore.
 
+#### Passkeys: Touch ID instead of a code
+
+Once you are in, **Settings → Signing in** registers this device. After that,
+signing in is one gesture and the six-digit code becomes the thing you never
+use.
+
+A passkey is multi-factor **on its own**: the private key never leaves the
+machine (what you have) and the authenticator will not use it without a
+fingerprint or the device password (what you are, or know). That is why signing
+in with one asks for nothing else — a password prompt in front of it would be
+theatre, not a third factor. `userVerification` is `required`, which is what
+makes that true rather than assumed.
+
+Registering is behind the login; signing in is not. Adding a passkey sets a
+credential, so it has to sit behind the login it will go on to replace.
+
+The relying-party id is `localhost`, and a passkey is bound to it. Serving the
+app from a real hostname invalidates every passkey already registered, which is
+why `WEBAUTHN_RP_ID` is configuration rather than a constant — the password and
+code keep working, and the passkeys get registered again.
+
+Nothing secret is stored. The public key verifies signatures and cannot produce
+them, so unlike the TOTP secret that table is not worth encrypting. The one
+attack the protocol can detect is a cloned authenticator — a signature counter
+that has not advanced past what was last seen — and that is refused.
+
+**Why not email or SMS.** SMS needs a paid provider and is the weakest factor
+there is; email needs SMTP credentials and is usually the reset path for
+everything else, which makes it close to circular. Both add a delivery failure
+mode: no signal, no internet, or a provider having a bad day, and you cannot
+open your own budget on your own laptop. For an app that runs on one machine,
+an external service in the login path is a lot of machinery for a downgrade.
+That calculus changes the day this has more than one user or needs recovery on
+a device you do not have.
+
 #### Locked out
 
 Recovery codes first. If those are gone too:

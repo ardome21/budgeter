@@ -163,6 +163,9 @@ class AppUser(Base):
     recovery_codes: Mapped[list["RecoveryCode"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    passkeys: Mapped[list["Passkey"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class RecoveryCode(Base):
@@ -186,6 +189,47 @@ class RecoveryCode(Base):
     )
 
     user: Mapped[AppUser] = relationship(back_populates="recovery_codes")
+
+
+class Passkey(Base):
+    """A credential the device holds, unlocked by Touch ID.
+
+    Multi-factor on its own: the private key never leaves the machine (what you
+    have) and the authenticator will not use it without a fingerprint or the
+    device password (what you are, or know). That is why signing in with one
+    asks for nothing else — a password prompt in front of it would be theatre,
+    not a third factor.
+
+    Nothing secret is stored here. The public key verifies signatures and
+    cannot produce them, so unlike the TOTP secret this table is not worth
+    encrypting — an attacker who reads it learns nothing they can sign with.
+    """
+
+    __tablename__ = "passkeys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("app_users.id"))
+
+    # Base64url, as the browser reports it.
+    credential_id: Mapped[str] = mapped_column(String(500), unique=True)
+    public_key: Mapped[str] = mapped_column(Text)
+
+    # The authenticator's own counter. It must never go backwards: a lower
+    # count than last time means the credential has been cloned, which is the
+    # one thing this protocol can detect and must refuse.
+    sign_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # What the user calls it, so revoking the right one is possible when there
+    # are several. "MacBook Touch ID", "iPhone".
+    label: Mapped[str] = mapped_column(String(60))
+    transports: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    user: Mapped[AppUser] = relationship(back_populates="passkeys")
 
 
 class PlaidItem(Base):

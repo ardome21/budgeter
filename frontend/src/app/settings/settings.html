@@ -214,3 +214,68 @@
     </p>
   </section>
 }
+
+<section class="card">
+  <h2>Signing in</h2>
+
+  @if (passkeyError(); as e) {
+    <div class="banner error">{{ e }}</div>
+  }
+
+  <p class="dim small">
+    A passkey is Touch ID instead of a six-digit code. It counts as both
+    factors on its own: the key never leaves this machine, and the machine
+    will not use it without your fingerprint. The password and code keep
+    working, for a device that has neither.
+  </p>
+
+  @if (passkeys().length) {
+    <div class="passkey-list">
+      @for (k of passkeys(); track k.id) {
+        <div class="passkey">
+          <div>
+            <strong>{{ k.label }}</strong>
+            <span class="dim small">
+              added {{ k.created_at | date: 'd MMM yyyy' }}
+              @if (k.last_used_at) {
+                · last used {{ k.last_used_at | date: 'd MMM, HH:mm' }}
+              } @else {
+                · never used
+              }
+            </span>
+          </div>
+          <button type="button" class="linkish danger" (click)="removePasskey(k)">
+            Remove
+          </button>
+        </div>
+      }
+    </div>
+  } @else {
+    <p class="dim small">Nothing registered yet.</p>
+  }
+
+  @if (canAddPasskey()) {
+    <div class="actions">
+      <input
+        class="passkey-name"
+        placeholder="This Mac"
+        [ngModel]="passkeyLabel()"
+        (ngModelChange)="passkeyLabel.set($event)"
+        aria-label="Name for this device"
+      />
+      <button
+        type="button"
+        class="primary"
+        (click)="addPasskey()"
+        [disabled]="passkeyBusy() || !passkeyLabel().trim()"
+      >
+        {{ passkeyBusy() ? 'Waiting for Touch ID…' : 'Add a passkey' }}
+      </button>
+    </div>
+  } @else {
+    <p class="dim small">
+      This device has no built-in authenticator, so there is nothing to
+      register here. Passkeys added on another device still work there.
+    </p>
+  }
+</section>

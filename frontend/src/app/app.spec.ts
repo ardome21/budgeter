@@ -31,6 +31,7 @@ describe('App', () => {
       configured: true,
       authenticated: true,
       username: 'ardome',
+      has_passkeys: false,
     });
 
     const fixture = TestBed.createComponent(App);
@@ -53,6 +54,7 @@ describe('App', () => {
       configured: true,
       authenticated: false,
       username: null,
+      has_passkeys: false,
     });
 
     const fixture = TestBed.createComponent(App);

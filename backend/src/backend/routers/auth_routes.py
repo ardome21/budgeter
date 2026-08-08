@@ -17,6 +17,7 @@ import qrcode
 import qrcode.image.svg
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth import (
@@ -39,7 +40,7 @@ from ..auth import (
     verify_totp,
 )
 from ..db import get_session
-from ..models import AppUser
+from ..models import AppUser, Passkey
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -50,6 +51,10 @@ class StatusOut(BaseModel):
     configured: bool
     authenticated: bool
     username: str | None
+    # Whether to offer the Touch ID button at all. Readable while signed out
+    # by necessity — the login screen has to decide before anyone has proved
+    # anything, and "a passkey exists here" is not worth protecting.
+    has_passkeys: bool = False
 
 
 class SetupIn(BaseModel):
@@ -104,6 +109,11 @@ def status(request: Request, session: Session = Depends(get_session)):
         configured=True,
         authenticated=current is not None,
         username=current.username if current else None,
+        has_passkeys=bool(
+            session.scalar(
+                select(Passkey.id).where(Passkey.user_id == user.id).limit(1)
+            )
+        ),
     )
 
 

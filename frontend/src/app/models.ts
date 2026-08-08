@@ -358,6 +358,9 @@ export interface AuthStatus {
   configured: boolean;
   authenticated: boolean;
   username: string | null;
+  /** Whether to offer the Touch ID button. Readable while signed out, because
+   *  the login screen has to decide before anyone has proved anything. */
+  has_passkeys: boolean;
 }
 
 export interface SetupResult {
@@ -368,4 +371,13 @@ export interface SetupResult {
   qr_svg: string;
   /** Shown exactly once. No endpoint returns them again. */
   recovery_codes: string[];
+}
+
+/** A device registered to sign in with. Nothing secret — the public key
+ *  verifies signatures and cannot produce them. */
+export interface PasskeyRow {
+  id: number;
+  label: string;
+  created_at: string;
+  last_used_at: string | null;
 }

@@ -1,11 +1,15 @@
+import { DatePipe } from '@angular/common';
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { Api } from '../api';
+import { Auth } from '../auth/auth';
+import { platformAuthenticatorAvailable } from '../auth/webauthn';
 import {
   Category,
   FixedCost,
   MONTH_NAMES,
+  PasskeyRow,
   PaycheckLine,
   Period,
   ReconcileRow,
@@ -20,12 +24,13 @@ import {
  */
 @Component({
   selector: 'app-settings',
-  imports: [FormsModule],
+  imports: [DatePipe, FormsModule],
   templateUrl: './settings.html',
   styleUrl: './settings.scss',
 })
 export class Settings {
   private api = inject(Api);
+  private auth = inject(Auth);
 
   costs = signal<FixedCost[]>([]);
   paycheck = signal<PaycheckLine[]>([]);
@@ -85,6 +90,7 @@ export class Settings {
 
   constructor() {
     this.load();
+    this.loadPasskeys();
   }
 
   load(): void {
@@ -199,5 +205,49 @@ export class Settings {
     if (err?.status === 0)
       return 'Cannot reach the API. Is the backend running?';
     return err?.error?.detail ?? 'Something went wrong.';
+  }
+
+  // --- Passkeys ------------------------------------------------------------
+
+  passkeys = signal<PasskeyRow[]>([]);
+  passkeyLabel = signal('');
+  passkeyBusy = signal(false);
+  passkeyError = signal<string | null>(null);
+  /** Nothing to register on a machine with no Touch ID or equivalent. */
+  canAddPasskey = signal(false);
+
+  private loadPasskeys(): void {
+    this.auth.passkeys().subscribe({
+      next: (k) => this.passkeys.set(k),
+      error: () => this.passkeys.set([]),
+    });
+    platformAuthenticatorAvailable().then((ok) => this.canAddPasskey.set(ok));
+  }
+
+  async addPasskey(): Promise<void> {
+    this.passkeyBusy.set(true);
+    this.passkeyError.set(null);
+    try {
+      await this.auth.registerPasskey(this.passkeyLabel().trim());
+      this.passkeyLabel.set('');
+      this.loadPasskeys();
+    } catch (e) {
+      // A cancelled Touch ID prompt is a decision, not a failure.
+      const name = (e as { name?: string })?.name;
+      if (name !== 'NotAllowedError' && (e as Error)?.message !== 'cancelled') {
+        this.passkeyError.set(this.auth.describe(e));
+      }
+    } finally {
+      this.passkeyBusy.set(false);
+    }
+  }
+
+  removePasskey(key: PasskeyRow): void {
+    if (!confirm(`Remove ${key.label}?\n\nYour password and code still work.`))
+      return;
+    this.auth.removePasskey(key.id).subscribe({
+      next: () => this.loadPasskeys(),
+      error: (e) => this.passkeyError.set(this.auth.describe(e)),
+    });
   }
 }
