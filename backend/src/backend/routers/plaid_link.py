@@ -68,7 +68,18 @@ def _plaid_error(exc: ApiException) -> str:
     against production, or an account not yet approved for Production access —
     and naming the environment turns the message into the fix.
     """
-    return f"Plaid ({settings.plaid_env}) — {describe_api_error(exc)}"
+    described = describe_api_error(exc)
+    if "INVALID_API_KEYS" in described:
+        # Nearly always this, and the raw message does not hint at it: keys are
+        # per-environment, and pasting the production secret while PLAID_ENV
+        # still says sandbox looks exactly like a bad key.
+        other = "production" if settings.plaid_env == "sandbox" else "sandbox"
+        return (
+            f"Plaid ({settings.plaid_env}) rejected the credentials. Keys are "
+            f"per-environment — if the secret in .env is a {other} one, set "
+            f"PLAID_ENV={other} and restart the API. ({described})"
+        )
+    return f"Plaid ({settings.plaid_env}) — {described}"
 
 
 # --------------------------------------------------------------------------
