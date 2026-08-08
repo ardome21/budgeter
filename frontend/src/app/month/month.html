@@ -146,8 +146,11 @@
             <tr>
               <td>
                 {{ c.category }}
-                @if (c.kind === "SAVINGS") {
-                  <span class="pill">saved, not spent</span>
+                <!-- A row whose kind is not SPENDING has a number in the Spent
+                     column that the Total below deliberately leaves out. Say so
+                     on the row, or the column looks like it fails to add up. -->
+                @if (asideLabel(c.kind); as aside) {
+                  <span class="pill">{{ aside }}</span>
                 }
               </td>
               <td class="num dim">

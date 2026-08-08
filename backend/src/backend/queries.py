@@ -43,19 +43,37 @@ ZERO = Decimal("0.00")
 PAYCHECKS_PER_MONTH = 2
 
 
+def _spending_only(column):
+    """`column` where the row's category is spending, zero everywhere else.
+
+    Every "you spent this" figure needs this. A transfer to your own card and a
+    paycheck landing are both transaction rows now that a checking account is
+    linked, and neither is money spent — the card payment in particular settles
+    purchases that are already on file one by one, so counting it too counts
+    them twice. Requires `Category` to be joined.
+    """
+    return case((Category.kind == CategoryKind.SPENDING, column), else_=0)
+
+
 def _q(value: Decimal | None) -> Decimal:
     return (value or ZERO).quantize(Decimal("0.01"))
 
 
 def list_periods(session: Session) -> list[PeriodOut]:
+    # The count is every row on file; the total is spending only. A credit-card
+    # payment is a row worth listing and worth opening, and it is not a month's
+    # outgoings — the purchases it settles are already on file individually.
+    # Summed conditionally rather than filtered, so a month is still listed at
+    # its true row count when part of it is transfers.
     rows = session.execute(
         select(
             BudgetPeriod.year,
             BudgetPeriod.month,
             func.count(Transaction.id),
-            func.coalesce(func.sum(Transaction.amount), 0),
+            func.coalesce(func.sum(_spending_only(Transaction.amount)), 0),
         )
         .join(Transaction, Transaction.period_id == BudgetPeriod.id, isouter=True)
+        .join(Category, Category.id == Transaction.category_id, isouter=True)
         .group_by(BudgetPeriod.year, BudgetPeriod.month)
         .order_by(BudgetPeriod.year.desc(), BudgetPeriod.month.desc())
     ).all()
@@ -177,13 +195,22 @@ def month_summary(
         )
     )
 
+    # Spending only, for the same reason the totals are. A card payment is
+    # large by nature — it is a month of purchases in one row — so left in it
+    # outranks almost every real purchase and describes none of them. August
+    # 2026 had DISCOVER E-PAYMENT 1249 sitting second, above the power bill.
     biggest = [
         BiggestPurchase(description=d, amount=_q(a), occurred_on=o)
         for d, a, o in session.execute(
             select(
                 Transaction.raw_description, Transaction.amount, Transaction.occurred_on
             )
-            .where(Transaction.period_id == period.id, Transaction.amount > 0)
+            .join(Category, Category.id == Transaction.category_id)
+            .where(
+                Transaction.period_id == period.id,
+                Transaction.amount > 0,
+                Category.kind == CategoryKind.SPENDING,
+            )
             .order_by(Transaction.amount.desc())
             .limit(5)
         ).all()

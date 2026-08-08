@@ -615,6 +615,21 @@ def test_transfers_and_income_stay_out_of_the_month_total(client, session):
     shown = {line.category for line in summary.categories}
     assert "Transfer Test" in shown and "Income Test" in shown
 
+    # The transfer is the largest row in the month. "Biggest purchases" is a
+    # monthly total too — it ranks by amount, so a card payment settling a
+    # month of purchases wins it and describes nothing the user bought.
+    assert [b.description for b in summary.biggest] == ["x"], (
+        "a card payment is not one of the month's biggest purchases"
+    )
+    assert summary.biggest[0].amount == Decimal("100.00")
+
+    # And the period list's total, which is the same claim one screen up.
+    from backend.queries import list_periods
+
+    row = next(p for p in list_periods(session) if (p.year, p.month) == (2026, 9))
+    assert row.total == Decimal("100.00")
+    assert row.transaction_count == 3, "every row still counts as a row"
+
 
 def test_a_charge_from_a_standing_commitment_arrives_committed(
     client, session, linked, monkeypatch, category_id

@@ -3,12 +3,24 @@ import { FormsModule } from '@angular/forms';
 
 import { Api } from '../api';
 import {
+  CategoryKind,
   MONTH_NAMES,
   MonthSummary,
   Overview,
   Period,
   formatMoney,
 } from '../models';
+
+/**
+ * What to say on a category row the "Spent" total leaves out, keyed by kind.
+ * SPENDING and OTHER are absent on purpose — they are counted, so there is
+ * nothing to explain.
+ */
+const ASIDE: Partial<Record<CategoryKind, string>> = {
+  SAVINGS: 'saved, not spent',
+  TRANSFER: 'moved, not spent',
+  INCOME: 'money in',
+};
 
 @Component({
   selector: 'app-month',
@@ -37,8 +49,14 @@ export class Month {
   );
 
   unbudgeted = computed(() =>
-    (this.summary()?.categories ?? []).filter((c) => Number(c.allocated) === 0),
+    (this.summary()?.categories ?? []).filter(
+      (c) => Number(c.allocated) === 0 && c.kind === 'SPENDING',
+    ),
   );
+
+  asideLabel(kind: CategoryKind): string | undefined {
+    return ASIDE[kind];
+  }
 
   constructor() {
     this.api.overview().subscribe({

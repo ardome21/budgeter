@@ -9,8 +9,13 @@
 
 export type Money = string;
 
-export type CategoryKind = 'SPENDING' | 'SAVINGS' | 'OTHER';
-export type TransactionSource = 'WORKBOOK' | 'CSV' | 'MANUAL';
+export type CategoryKind =
+  | 'SPENDING'
+  | 'SAVINGS'
+  | 'OTHER'
+  | 'TRANSFER'
+  | 'INCOME';
+export type TransactionSource = 'WORKBOOK' | 'CSV' | 'MANUAL' | 'LINKED';
 
 export interface Category {
   id: number;
