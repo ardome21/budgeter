@@ -44,7 +44,18 @@
                   </button>
                 }
               </td>
-              <td class="dim">{{ c.category }}</td>
+              <td class="cat-cell">
+                <select
+                  [ngModel]="c.category_id"
+                  (ngModelChange)="saveCategory(c, $event)"
+                  [disabled]="busy()"
+                  [attr.aria-label]="'Category for ' + c.description"
+                >
+                  @for (cat of categories(); track cat.id) {
+                    <option [value]="cat.id">{{ cat.name }}</option>
+                  }
+                </select>
+              </td>
               <td class="num">
                 @if (editingCost() === c.id) {
                   <span class="edit">

@@ -7,6 +7,7 @@ assert on real Postgres constraints rather than a stand-in.
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 
 
 class TestReadViews:
@@ -1196,3 +1197,42 @@ class TestRecurringBackfill:
         session.flush()
 
         assert txn.id not in {t[0] for t in recurring_candidates(session)}
+
+
+class TestFixedCostCategory:
+    """Re-filing a commitment.
+
+    Untested until the UI turned out not to offer it at all: the endpoint
+    accepted `category_id`, the client sent it, and the Settings screen
+    rendered the category as plain text. Nothing failed, so nothing noticed.
+    """
+
+    def test_a_commitment_can_be_refiled(self, client, session):
+        from backend.models import Category, FixedCost
+
+        costs = client.get("/api/fixed-costs").json()
+        assert costs, "no fixed costs to exercise"
+        cost = costs[0]
+
+        other = session.scalars(
+            select(Category).where(Category.id != cost["category_id"])
+        ).first()
+
+        response = client.patch(
+            f"/api/fixed-costs/{cost['id']}", json={"category_id": other.id}
+        )
+        assert response.status_code == 200
+        assert response.json()["category"] == other.name
+
+        # In place, not a new effective row: correcting where a bill was always
+        # meant to sit is not a change in what it costs.
+        assert (
+            session.get(FixedCost, cost["id"]).effective_to is None
+        ), "re-filing must not end the commitment"
+
+    def test_an_unknown_category_is_refused(self, client):
+        cost = client.get("/api/fixed-costs").json()[0]
+        response = client.patch(
+            f"/api/fixed-costs/{cost['id']}", json={"category_id": 999999}
+        )
+        assert response.status_code == 422

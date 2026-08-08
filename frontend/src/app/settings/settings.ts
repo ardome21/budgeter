@@ -155,6 +155,37 @@ export class Settings {
     this.draftAmount.set('');
   }
 
+  /**
+   * Re-file a commitment under a different category.
+   *
+   * Unlike changing the amount, this is not a price change: it corrects where
+   * a bill was always meant to sit, so it edits in place rather than ending
+   * the current row and opening a new one. Filing it wrong makes every
+   * category rollup wrong for as long as it stands.
+   */
+  saveCategory(c: FixedCost, categoryId: string | number): void {
+    const category_id = Number(categoryId);
+    if (!category_id || category_id === c.category_id) return;
+
+    this.busy.set(true);
+    this.api.updateFixedCost(c.id, { category_id }).subscribe({
+      next: () => {
+        const name =
+          this.categories().find((x) => x.id === category_id)?.name ?? 'it';
+        this.notice.set(`${c.description} now files under ${name}.`);
+        this.busy.set(false);
+        this.load();
+        this.loadReconcile();
+        setTimeout(() => this.notice.set(null), 6000);
+      },
+      error: (e) => {
+        this.error.set(this.describe(e));
+        this.busy.set(false);
+        this.load();
+      },
+    });
+  }
+
   saveAmount(c: FixedCost): void {
     const amount = this.draftAmount().trim();
     if (!amount || amount === c.amount) {

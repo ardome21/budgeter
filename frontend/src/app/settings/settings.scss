@@ -213,3 +213,12 @@ tr.component {
 .danger:hover {
   color: var(--over);
 }
+
+/* The category was plain text for as long as this screen existed — the
+   backend accepted a change nobody could make. */
+.cat-cell select {
+  width: auto;
+  min-width: 9rem;
+  font-size: 13px;
+  padding: 0.2rem 0.35rem;
+}
