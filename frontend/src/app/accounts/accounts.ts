@@ -2,7 +2,13 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { Api } from '../api';
-import { AccountRow, NetWorthPoint, formatMoney, parseDay } from '../models';
+import {
+  AccountRow,
+  LiveNetWorth,
+  NetWorthPoint,
+  formatMoney,
+  parseDay,
+} from '../models';
 
 /** A point with its plotted geometry attached. */
 interface Plotted {
@@ -15,6 +21,9 @@ interface Plotted {
   liquid: number;
   /** True when the previous snapshot is far enough back to be a real gap. */
   gapBefore: boolean;
+  /** Priced today rather than read from a statement. Drawn hollow and dashed,
+   *  because it is the one point on this chart that was not measured. */
+  estimated: boolean;
 }
 
 // Geometry. A viewBox rather than measured pixels: the chart scales with its
@@ -38,7 +47,9 @@ export class Accounts {
   private api = inject(Api);
 
   accounts = signal<AccountRow[]>([]);
-  points = signal<NetWorthPoint[]>([]);
+  /** Snapshots as recorded. Never contains a computed figure. */
+  measured = signal<NetWorthPoint[]>([]);
+  live = signal<LiveNetWorth | null>(null);
   loading = signal(true);
   saving = signal(false);
   error = signal<string | null>(null);
@@ -57,7 +68,42 @@ export class Accounts {
   readonly PLOT_W = PLOT_W;
   readonly PLOT_H = PLOT_H;
 
-  latest = computed(() => this.points().at(-1) ?? null);
+  /**
+   * The measured snapshots, plus today's repriced figure when it is genuinely
+   * a later point.
+   *
+   * The estimate is appended only if the market has moved *since* the last
+   * reading — on the day a statement is imported the two coincide, and drawing
+   * a second point on the same date would claim a movement that has not
+   * happened yet. Nothing here is written back: this array is rebuilt from the
+   * API on every load, and the history it draws from stays exactly as measured.
+   */
+  points = computed<NetWorthPoint[]>(() => {
+    const measured = this.measured();
+    const live = this.live();
+    if (!live?.is_estimated || !live.measured_on) return measured;
+
+    const today = new Date().toISOString().slice(0, 10);
+    if (today <= live.measured_on) return measured;
+
+    return [
+      ...measured,
+      {
+        as_of: today,
+        net_worth: live.estimated,
+        retirement: live.estimated_retirement,
+        liquid: live.estimated_liquid,
+        accounts_reported: live.marked_accounts + live.carried_accounts,
+      },
+    ];
+  });
+
+  /** True when the last point on the chart is priced rather than read. */
+  private estimatedTail = computed(
+    () => this.points().length > this.measured().length,
+  );
+
+  latest = computed(() => this.measured().at(-1) ?? null);
 
   /** Counted in the most recent net worth figure. */
   currentAccounts = computed(() =>
@@ -110,8 +156,10 @@ export class Accounts {
   plotted = computed<Plotted[]>(() => {
     const x = this.xScale();
     const y = this.yScale();
+    const points = this.points();
+    const lastMeasured = points.length - (this.estimatedTail() ? 1 : 0);
     let previous: number | null = null;
-    return this.points().map((p) => {
+    return points.map((p, i) => {
       const t = parseDay(p.as_of).getTime();
       const gapBefore =
         previous !== null && (t - previous) / 86_400_000 > GAP_DAYS;
@@ -125,6 +173,7 @@ export class Accounts {
         retirement: Number(p.retirement),
         liquid: Number(p.liquid),
         gapBefore,
+        estimated: i >= lastMeasured,
       };
     });
   });
@@ -136,8 +185,12 @@ export class Accounts {
    */
   segments = computed(() => {
     const pts = this.plotted();
-    const out: { d: string; series: 'retirement' | 'liquid'; gap: boolean }[] =
-      [];
+    const out: {
+      d: string;
+      series: 'retirement' | 'liquid';
+      gap: boolean;
+      estimated: boolean;
+    }[] = [];
     for (let i = 1; i < pts.length; i++) {
       const a = pts[i - 1];
       const b = pts[i];
@@ -145,11 +198,13 @@ export class Accounts {
         d: `M${a.x},${a.yRetirement} L${b.x},${b.yRetirement}`,
         series: 'retirement',
         gap: b.gapBefore,
+        estimated: b.estimated,
       });
       out.push({
         d: `M${a.x},${a.yLiquid} L${b.x},${b.yLiquid}`,
         series: 'liquid',
         gap: b.gapBefore,
+        estimated: b.estimated,
       });
     }
     return out;
@@ -223,7 +278,7 @@ export class Accounts {
     this.loading.set(true);
     this.api.netWorth().subscribe({
       next: (nw) => {
-        this.points.set(nw.points);
+        this.measured.set(nw.points);
         this.loading.set(false);
       },
       error: (e) => {
@@ -235,6 +290,23 @@ export class Accounts {
       next: (rows) => this.accounts.set(rows),
       error: (e) => this.error.set(this.describe(e)),
     });
+    // Fetches quotes, so it is deliberately not what the page waits on. The
+    // measured figures render immediately and the estimate arrives beside them.
+    this.api.liveNetWorth().subscribe({
+      next: (l) => this.live.set(l),
+      error: () => this.live.set(null),
+    });
+  }
+
+  /** When the estimate's prices were fetched, for the tile's own subline. */
+  pricedAt(): string {
+    const iso = this.live()?.priced_at;
+    if (!iso) return '';
+    const when = new Date(iso);
+    return when.toLocaleTimeString(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
   }
 
   axisLabel(value: number): string {
@@ -244,7 +316,8 @@ export class Accounts {
     return `${value < 0 ? '−' : ''}$${Math.round(abs)}`;
   }
 
-  longDate(iso: string): string {
+  longDate(iso: string | null): string {
+    if (!iso) return '—';
     return parseDay(iso).toLocaleDateString(undefined, {
       day: 'numeric',
       month: 'short',

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .. import valuation
 from ..db import get_session
 from ..models import Account, AccountBalance
 from ..schemas import (
@@ -19,6 +20,7 @@ from ..schemas import (
     AccountPatch,
     BalanceIn,
     BalanceOut,
+    LiveNetWorthOut,
     NetWorthOut,
     NetWorthPoint,
 )
@@ -229,4 +231,34 @@ def net_worth(session: Session = Depends(get_session)):
             for as_of, total, retirement, liquid, count in rows
         ],
         accounts_tracked=session.scalar(select(func.count(Account.id))) or 0,
+    )
+
+
+@router.get("/net-worth/live", response_model=LiveNetWorthOut)
+def net_worth_live(refresh: bool = True, session: Session = Depends(get_session)):
+    """Net worth with securities repriced, beside the figure that was measured.
+
+    Both numbers, always, plus the date the measured one was taken. An estimate
+    on its own invites being read as fact; an estimate next to what it is an
+    estimate *of*, with the date it was last exact, does not.
+
+    Nothing here is written. The repricing happens on this request and is gone
+    when it returns, which is what keeps `account_balances` a record of
+    readings rather than a mix of readings and arithmetic.
+    """
+    live = valuation.live_net_worth(session, refresh=refresh)
+    return LiveNetWorthOut(
+        measured_on=live.measured_on,
+        measured=live.measured,
+        measured_retirement=live.measured_retirement,
+        measured_liquid=live.measured_liquid,
+        estimated=live.estimated,
+        estimated_retirement=live.estimated_retirement,
+        estimated_liquid=live.estimated_liquid,
+        change=live.change,
+        is_estimated=live.is_estimated,
+        priced_at=live.priced_at.isoformat() if live.priced_at else None,
+        marked_accounts=live.marked_accounts,
+        carried_accounts=live.carried_accounts,
+        warnings=live.warnings,
     )

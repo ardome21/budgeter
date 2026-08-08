@@ -1,0 +1,357 @@
+<div class="head">
+  <h1>Investments</h1>
+  <div class="head-actions">
+    <button type="button" (click)="load()" [disabled]="loading()">
+      {{ loading() ? "Pricing…" : "Refresh prices" }}
+    </button>
+    <button type="button" (click)="importOpen.set(!importOpen())">
+      {{ importOpen() ? "Close" : "Import positions" }}
+    </button>
+  </div>
+</div>
+
+@if (error()) {
+  <div class="banner error">{{ error() }}</div>
+}
+
+@if (result(); as r) {
+  <div class="banner ok">
+    Imported {{ r.positions }} positions across {{ r.accounts }} accounts.
+    @if (r.balances_recorded) {
+      {{ r.balances_recorded }} balance snapshots recorded.
+    }
+    @if (r.securities_created) {
+      {{ r.securities_created }} new securities.
+    }
+  </div>
+}
+
+<!-- ---------------------------------------------------------------- import -->
+@if (importOpen()) {
+  <section class="card entry">
+    <h2>Import a positions export</h2>
+    <p class="dim small lead">
+      Fidelity shares data only through Akoya, which has no individual
+      developer access, so these accounts can never be linked the way a bank
+      is. Dropping the export is the refresh.
+    </p>
+
+    <label class="file">
+      <input type="file" accept=".csv,text/csv" (change)="onFile($event)" />
+      <span>{{ fileName() ?? "Choose a Portfolio Positions CSV" }}</span>
+    </label>
+
+    @if (busy()) {
+      <p class="dim">Reading…</p>
+    }
+
+    @if (preview(); as p) {
+      @if (p.errors.length) {
+        <ul class="notes">
+          @for (e of p.errors; track e) {
+            <li>{{ e }}</li>
+          }
+        </ul>
+      }
+
+      @if (p.as_of) {
+        <p class="stamp">
+          Positions as of <strong>{{ longDate(p.as_of) }}</strong>
+          @if (p.replaces_existing) {
+            <span class="pill warn">replaces the snapshot already on file</span>
+          }
+        </p>
+
+        @for (m of mappings(); track m.entry.external_number) {
+          <div class="map">
+            <div class="map-head">
+              <div>
+                <strong>{{ m.entry.external_name }}</strong>
+                <span class="dim small">· {{ m.entry.external_number }}</span>
+              </div>
+              <span class="total">{{ fmt(m.entry.total_value) }}</span>
+            </div>
+
+            <label class="field">
+              <span class="dim small">Belongs to</span>
+              <select
+                [value]="m.accountId ?? ''"
+                (change)="setMapping(m, $any($event.target).value)"
+              >
+                <option value="">Choose an account…</option>
+                @for (a of accounts(); track a.id) {
+                  <option [value]="a.id">
+                    {{ a.institution }} · {{ a.name }}
+                  </option>
+                }
+              </select>
+              @if (m.entry.match_note) {
+                <span class="dim small note">{{ m.entry.match_note }}</span>
+              }
+            </label>
+
+            <div class="scroll-x">
+              <table class="compact">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th class="num">Quantity</th>
+                    <th class="num">Price</th>
+                    <th class="num">Value</th>
+                    <th class="num">Cost basis</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (p of m.entry.positions; track p.symbol) {
+                    <tr>
+                      <td>
+                        <span class="sym">{{ p.symbol }}</span>
+                        @if (p.is_new) {
+                          <span class="pill">new</span>
+                        }
+                        <span class="dim small desc">{{ p.description }}</span>
+                        @for (n of p.notes; track n) {
+                          <span class="dim small note">{{ n }}</span>
+                        }
+                      </td>
+                      <td class="num dim">{{ p.quantity ?? "—" }}</td>
+                      <td class="num dim">{{ p.price ?? "—" }}</td>
+                      <td class="num">{{ fmt(p.value) }}</td>
+                      <td class="num dim">{{ fmt(p.cost_basis) }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        }
+
+        @if (duplicateMapping()) {
+          <p class="banner error">
+            Two statement accounts point at the same account. Each one holds its
+            own positions, so committing would overwrite one with the other.
+          </p>
+        }
+
+        <label class="check">
+          <input
+            type="checkbox"
+            [checked]="recordBalances()"
+            (change)="recordBalances.set($any($event.target).checked)"
+          />
+          <span>
+            Also record each account's balance for this date
+            <span class="dim small">
+              — the file already states it, so the alternative is typing a
+              number that has just been read
+            </span>
+          </span>
+        </label>
+
+        <div class="actions">
+          <button
+            class="primary"
+            type="button"
+            [disabled]="!canCommit() || duplicateMapping() || busy()"
+            (click)="commit()"
+          >
+            {{ busy() ? "Importing…" : "Import positions" }}
+          </button>
+          <button type="button" (click)="cancelPreview()">Cancel</button>
+          @if (unmappedCount()) {
+            <span class="dim small">
+              {{ unmappedCount() }} still need an account
+            </span>
+          }
+        </div>
+      }
+    }
+  </section>
+}
+
+<!-- ------------------------------------------------------------- portfolio -->
+@if (loading() && !portfolio()) {
+  <p class="dim">Loading…</p>
+} @else if (portfolio(); as p) {
+  @if (!p.accounts.length) {
+    <section class="card empty">
+      <h2>No positions yet</h2>
+      <p class="dim">
+        Import a Portfolio Positions export and this becomes a live view of
+        what you hold — including how much of the balance you saved and how
+        much the market added.
+      </p>
+    </section>
+  } @else {
+    <section class="tiles">
+      <div class="tile accent">
+        <span class="k">Portfolio value</span>
+        <span class="v">{{ fmt(p.value) }}</span>
+        <span class="dim small">
+          @if (hasEstimate()) {
+            estimated · {{ pricedAt(p.priced_at) }}
+          } @else {
+            as stated on {{ longDate(oldestStatement()) }}
+          }
+        </span>
+      </div>
+      <div class="tile">
+        <span class="k">What you put in</span>
+        <span class="v">{{ fmt(p.cost_basis) }}</span>
+        <span class="dim small">cost basis across every position</span>
+      </div>
+      <div class="tile">
+        <span class="k">What the market added</span>
+        <span class="v" [class.over]="+(p.gain ?? 0) < 0">
+          {{ fmt(p.gain) }}
+        </span>
+        <span class="dim small">
+          {{ growthLabel() ?? "not every position reports a cost basis" }}
+        </span>
+      </div>
+    </section>
+
+    @if (hasEstimate()) {
+      <p class="provenance">
+        Last stated <strong>{{ longDate(oldestStatement()) }}</strong> at
+        {{ fmt(p.statement_value) }}. Since then prices have moved it by
+        <strong [class.over]="(sinceStatement() ?? 0) < 0">{{
+          signed(sinceStatement())
+        }}</strong
+        >. Nothing on this page is written to your history — the balances behind
+        net worth stay as they were measured.
+      </p>
+    }
+
+    @if (p.needs_proxy.length) {
+      <section class="card proxy-card">
+        <h2>No public quote</h2>
+        <p class="dim small lead">
+          These are identified by CUSIP rather than a ticker, which means a fund
+          sold only inside an employer plan. No provider will ever quote one, so
+          without a stand-in the position is frozen at its last statement — and
+          on this portfolio that is the largest holding.
+        </p>
+        <p class="dim small lead">
+          A stand-in lends only its <em>movement</em>: the value here is the
+          statement figure multiplied by the change in the stand-in since that
+          date, never by the stand-in's own price. Fidelity Freedom Index 2065
+          in a plan is <code>FFIJX</code> in public.
+        </p>
+        @if (proxyError()) {
+          <div class="banner error">{{ proxyError() }}</div>
+        }
+        @for (symbol of p.needs_proxy; track symbol) {
+          <div class="proxy-row">
+            <span class="sym">{{ symbol }}</span>
+            <input
+              type="text"
+              placeholder="Stand-in ticker, e.g. FFIJX"
+              [value]="proxyDraft()[symbol] ?? ''"
+              (input)="setProxyDraft(symbol, $any($event.target).value)"
+            />
+            <button
+              type="button"
+              class="primary"
+              [disabled]="proxyBusy() === symbol"
+              (click)="saveProxy(symbol)"
+            >
+              {{ proxyBusy() === symbol ? "Checking…" : "Use it" }}
+            </button>
+          </div>
+        }
+      </section>
+    }
+
+    @for (a of p.accounts; track a.account_id) {
+      <section class="card account">
+        <div class="acct-head">
+          <div>
+            <h2>
+              {{ a.institution }} · {{ a.name }}
+              @if (a.is_retirement) {
+                <span class="pill">retirement</span>
+              }
+            </h2>
+            <span class="dim small">
+              positions from {{ longDate(a.as_of) }}
+            </span>
+          </div>
+          <div class="acct-figures">
+            <span class="acct-value">{{ fmt(a.value) }}</span>
+            @if (a.cost_basis) {
+              <span class="dim small" [class.over]="+(a.gain ?? 0) < 0">
+                {{ signed(a.gain) }} on {{ fmt(a.cost_basis) }} paid in
+              </span>
+            }
+          </div>
+        </div>
+
+        <div class="scroll-x">
+          <table>
+            <thead>
+              <tr>
+                <th>Holding</th>
+                <th class="num">Quantity</th>
+                <th class="num">Price</th>
+                <th class="num">Value</th>
+                <th class="num">Since statement</th>
+                <th class="num">Gain</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (h of a.holdings; track h.symbol) {
+                <tr>
+                  <td>
+                    <span class="sym">{{ h.symbol }}</span>
+                    <span
+                      class="pill basis"
+                      [class.b-live]="h.basis === 'LIVE'"
+                      [class.b-proxy]="h.basis === 'PROXY'"
+                      [class.b-carried]="h.basis === 'CARRIED'"
+                      [title]="basisTitle(h)"
+                    >
+                      {{ basisLabel(h.basis) }}
+                    </span>
+                    <span class="dim small desc">{{ h.description }}</span>
+                    @if (h.note) {
+                      <span class="dim small note">{{ h.note }}</span>
+                    }
+                  </td>
+                  <td class="num dim">{{ quantityOf(h) }}</td>
+                  <td class="num dim">{{ h.price ?? "—" }}</td>
+                  <td class="num">{{ fmt(h.value) }}</td>
+                  <td class="num" [class.over]="+h.change < 0">
+                    @if (h.basis === "LIVE" || h.basis === "PROXY") {
+                      {{ signed(h.change) }}
+                    } @else {
+                      <span class="dim">—</span>
+                    }
+                  </td>
+                  <td class="num" [class.over]="+(h.gain ?? 0) < 0">
+                    {{ h.gain === null ? "—" : signed(h.gain) }}
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    }
+
+    @if (p.warnings.length) {
+      <section class="card">
+        <h2>Prices that could not be fetched</h2>
+        <ul class="notes">
+          @for (w of p.warnings; track w) {
+            <li>{{ w }}</li>
+          }
+        </ul>
+        <p class="dim small">
+          The affected positions show their last known figure rather than a
+          guess.
+        </p>
+      </section>
+    }
+  }
+}

@@ -57,5 +57,12 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./accounts/accounts').then((m) => m.Accounts),
   },
+  {
+    path: 'investments',
+    title: 'Investments · budgeter',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./investments/investments').then((m) => m.Investments),
+  },
   { path: '**', redirectTo: 'month' },
 ];

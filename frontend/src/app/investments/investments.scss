@@ -1,0 +1,327 @@
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.head-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+section.card {
+  margin-bottom: 1rem;
+
+  h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin-bottom: 0.7rem;
+  }
+}
+
+.lead {
+  max-width: 62ch;
+  margin-bottom: 0.7rem;
+  line-height: 1.5;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+
+  &.accent {
+    border-color: var(--accent-dim);
+  }
+
+  .k {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+  }
+
+  .v {
+    font-size: 1.6rem;
+    font-variant-numeric: tabular-nums;
+
+    &.over {
+      color: var(--over);
+    }
+  }
+}
+
+.acct-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+
+  h2 {
+    margin-bottom: 0.15rem;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 15px;
+    color: var(--text);
+  }
+}
+
+.acct-figures {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.acct-value {
+  font-size: 1.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+
+  th,
+  td {
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+    font-weight: 500;
+  }
+
+  .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .over {
+    color: var(--over);
+  }
+}
+
+.sym {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.desc,
+.note {
+  display: block;
+  margin-top: 0.15rem;
+}
+
+.note {
+  font-style: italic;
+}
+
+.pill {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  vertical-align: middle;
+
+  &.warn {
+    background: var(--warn-dim);
+    color: var(--warn);
+  }
+}
+
+/* How a value was arrived at, always on the row. Four different claims that
+   must not read as one confident number: a live quote, a dollar at par, a
+   stand-in's movement, and a statement figure carried unchanged. */
+.pill.basis {
+  cursor: help;
+
+  &.b-live {
+    background: var(--accent-dim);
+    color: var(--accent-active);
+  }
+
+  &.b-proxy {
+    background: var(--warn-dim);
+    color: var(--warn);
+  }
+
+  &.b-carried {
+    background: var(--over-dim);
+    color: var(--over);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .pill.basis.b-live {
+    color: var(--accent);
+  }
+}
+
+.proxy-card {
+  border-color: var(--warn-dim);
+}
+
+.proxy-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  margin-top: 0.6rem;
+
+  input {
+    width: auto;
+    min-width: 14rem;
+    flex: 1 1 14rem;
+  }
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--surface-2);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+}
+
+/* --- Import ------------------------------------------------------------- */
+
+.entry {
+  border-color: var(--accent-dim);
+}
+
+.file {
+  display: block;
+  margin-bottom: 0.8rem;
+
+  input {
+    display: block;
+    margin-bottom: 0.3rem;
+  }
+
+  span {
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+}
+
+.stamp {
+  margin-bottom: 0.8rem;
+  font-size: 14px;
+}
+
+.map {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.8rem;
+  margin-bottom: 0.8rem;
+}
+
+.map-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  margin-bottom: 0.6rem;
+
+  .total {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.field {
+  display: block;
+  margin-bottom: 0.7rem;
+
+  span {
+    display: block;
+    margin-bottom: 0.2rem;
+  }
+
+  select {
+    width: 100%;
+    max-width: 24rem;
+  }
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+  font-size: 14px;
+  line-height: 1.5;
+
+  input {
+    width: auto;
+    margin-top: 0.2rem;
+  }
+}
+
+table.compact {
+  th,
+  td {
+    padding: 0.3rem 0.5rem;
+    font-size: 13px;
+  }
+}
+
+.actions {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+
+.notes {
+  margin: 0 0 0.6rem 1.1rem;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+.scroll-x {
+  overflow-x: auto;
+}
+
+.empty {
+  text-align: center;
+  padding: 2rem 1rem;
+
+  p {
+    max-width: 46ch;
+    margin: 0 auto;
+    line-height: 1.6;
+  }
+}

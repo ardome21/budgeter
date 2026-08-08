@@ -15,10 +15,15 @@ import {
   Allocations,
   FixedCost,
   LinkedItem,
+  LiveNetWorth,
   NetWorth,
   PaycheckLine,
   PlaidStatus,
+  Portfolio,
+  PositionsCommitResult,
+  PositionsPreview,
   Reconciliation,
+  SecurityRow,
   SyncCommitResult,
   SyncResult,
   Transaction,
@@ -212,6 +217,16 @@ export class Api {
     return this.http.get<NetWorth>('/api/accounts/net-worth');
   }
 
+  /**
+   * Net worth with securities repriced, beside the figure that was measured.
+   *
+   * Writes nothing. The repricing happens on the request and is gone when it
+   * returns, which is what keeps the snapshot history a record of readings.
+   */
+  liveNetWorth(): Observable<LiveNetWorth> {
+    return this.http.get<LiveNetWorth>('/api/accounts/net-worth/live');
+  }
+
   /** PUT: a snapshot is identified by its date, so a second reading on the
    *  same day is a correction rather than an additional holding. */
   recordBalance(
@@ -276,5 +291,52 @@ export class Api {
    *  mistake, which committing otherwise steps past for good. */
   rewindItem(id: number): Observable<LinkedItem> {
     return this.http.post<LinkedItem>(`/api/plaid/items/${id}/rewind`, {});
+  }
+
+  // --- Investments ---------------------------------------------------------
+
+  /** Read a brokerage positions export without writing anything. */
+  previewPositions(
+    file: File,
+    institution: string,
+  ): Observable<PositionsPreview> {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('institution', institution);
+    return this.http.post<PositionsPreview>('/api/holdings/preview', form);
+  }
+
+  commitPositions(body: {
+    as_of: string;
+    institution: string;
+    record_balances: boolean;
+    accounts: unknown[];
+  }): Observable<PositionsCommitResult> {
+    return this.http.post<PositionsCommitResult>('/api/holdings/commit', body);
+  }
+
+  /** Every position, valued now. `refresh=false` values from the cache alone. */
+  portfolio(refresh = true): Observable<Portfolio> {
+    return this.http.get<Portfolio>(`/api/holdings?refresh=${refresh}`);
+  }
+
+  securities(): Observable<SecurityRow[]> {
+    return this.http.get<SecurityRow[]>('/api/holdings/securities');
+  }
+
+  /**
+   * Point a security at the symbol that stands in for it.
+   *
+   * Checked against the provider before it saves, so a typo comes back as an
+   * error rather than as a holding that quietly stops being priced.
+   */
+  setQuoteSymbol(
+    symbol: string,
+    quoteSymbol: string | null,
+  ): Observable<SecurityRow> {
+    return this.http.patch<SecurityRow>(
+      `/api/holdings/securities/${encodeURIComponent(symbol)}`,
+      { quote_symbol: quoteSymbol ?? '' },
+    );
   }
 }

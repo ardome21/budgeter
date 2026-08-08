@@ -12,6 +12,9 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "cryptography>=46.0.0",
     "fastapi>=0.141.1",
+    # Fetching market prices. Was already here as a dev dependency, because
+    # TestClient needs it; a runtime import must not rely on that.
+    "httpx>=0.28.1",
     "itsdangerous>=2.2.0",
     "plaid-python>=39.0.0",
     "psycopg[binary]>=3.3.4",
@@ -50,6 +53,13 @@ testpaths = ["tests"]
 # belongs to that month wherever the server happens to be, so naive dates are
 # the correct type here rather than an oversight.
 "src/backend/csv_import.py" = ["DTZ007"]
+# Same reasoning for a statement: 'Date downloaded Aug-08-2026' names a day,
+# and the positions were true on that day in every timezone.
+"src/backend/fidelity_import.py" = ["DTZ007"]
+# A closing price belongs to a trading day, not to an instant. The exchange
+# date is what the cache is keyed on and what a proxy ratio compares, so a
+# calendar date is the correct type rather than a missing timezone.
+"src/backend/prices.py" = ["DTZ011"]
 "src/backend/queries.py" = ["DTZ011"]
 "src/backend/routers/config.py" = ["B008", "DTZ011"]
 # openpyxl hands back naive datetimes; the fixtures mirror that faithfully.

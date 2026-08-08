@@ -83,6 +83,29 @@ class PaycheckLineKind(str, enum.Enum):
     TAX = "TAX"
 
 
+class SecurityKind(str, enum.Enum):
+    """What a holding is, which is what decides how it can be priced.
+
+    Not decoration. Each value is a different pricing rule, and getting the
+    rule wrong is worse than having no price at all:
+
+    - EQUITY, ETF, MUTUAL_FUND quote publicly. Value is quantity x price.
+    - MONEY_MARKET is a dollar. It never moves, so it is never fetched — a
+      quote provider that returns 0.9998 for SPAXX would otherwise wobble a
+      cash balance that is, by construction, exactly its own number.
+    - UNQUOTED has no public price and never will. The Moody's PPP holding is
+      a collective investment trust sold only inside employer plans: no
+      ticker, no provider, no exception. Its value comes from the statement,
+      or from a proxy's *movement* — see Security.quote_symbol.
+    """
+
+    EQUITY = "EQUITY"
+    ETF = "ETF"
+    MUTUAL_FUND = "MUTUAL_FUND"
+    MONEY_MARKET = "MONEY_MARKET"
+    UNQUOTED = "UNQUOTED"
+
+
 class Category(Base):
     __tablename__ = "categories"
 
@@ -132,6 +155,138 @@ class AccountBalance(Base):
     balance: Mapped[Decimal] = mapped_column(Money)
 
     account: Mapped[Account] = relationship(back_populates="balances")
+
+
+# Units held, not dollars. Fidelity reports fractional shares to three decimals
+# on some lines (5460.762) and four on others (12.8131), and a quantity rounded
+# to cents is a position worth thousands of dollars less than it is.
+Quantity = Numeric(20, 6)
+
+# A share price is not money in the NUMERIC(12,2) sense. Intraday quotes carry
+# four decimals (FDEM at 35.5975), and rounding the price before multiplying by
+# 163 shares moves the answer by real dollars.
+Price = Numeric(14, 4)
+
+
+class Security(Base):
+    """Something that can be held, and how to find out what it is worth.
+
+    Keyed by the symbol as the statement writes it, because that is the only
+    identifier the export gives and a second table of surrogate ids would buy
+    nothing. `quote_symbol` is the whole point of this table:
+
+    - equal to `symbol` — it quotes publicly under its own name, the ordinary
+      case for a stock, an ETF or a mutual fund.
+    - different from `symbol` — a **proxy**. The security itself has no public
+      quote, so a similar one stands in and only its *movement* is borrowed.
+      Never its price: FID FRDM INX 2065 T trades at $22.70 a unit and its
+      public twin FFIJX at $19.93, so multiplying units by the proxy's price
+      would understate that account by 14% on the first day.
+    - null — nothing prices this. The holding is carried at its statement
+      value and labelled as such, which is honest and stays honest.
+    """
+
+    __tablename__ = "securities"
+
+    symbol: Mapped[str] = mapped_column(String(20), primary_key=True)
+    description: Mapped[str] = mapped_column(String(120))
+    kind: Mapped[SecurityKind] = mapped_column(Enum(SecurityKind, name="security_kind"))
+
+    # Where a price actually comes from. See the class docstring — the three
+    # states here are three different pricing rules, not a nullable convenience.
+    quote_symbol: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<Security {self.symbol}>"
+
+
+class Holding(Base):
+    """One position in one account on one date, exactly as the statement said.
+
+    A snapshot, deliberately, in the same shape as AccountBalance: dropping a
+    newer export adds rows rather than overwriting, so what was held in August
+    survives September's rebalance. That history is the only way to tell money
+    you added from money the market made.
+
+    Everything here is a *fact off the statement*. Nothing computed from a live
+    quote is ever written to this table — the marked-to-market figure is
+    derived on read, so a bad afternoon quote can never become permanent.
+    """
+
+    __tablename__ = "holdings"
+    __table_args__ = (UniqueConstraint("account_id", "as_of", "symbol"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+    as_of: Mapped[date] = mapped_column(Date)
+    symbol: Mapped[str] = mapped_column(ForeignKey("securities.symbol"))
+
+    # Null for a money-market line: the export gives the HSA's $7,790.53 with
+    # no unit count at all, and inventing quantity = value would be asserting a
+    # $1.00 par the statement never printed.
+    quantity: Mapped[Decimal | None] = mapped_column(Quantity, nullable=True)
+    price: Mapped[Decimal | None] = mapped_column(Price, nullable=True)
+
+    # The statement's own 'Current value'. Authoritative, and the fallback for
+    # every holding that cannot be priced any other way.
+    value: Mapped[Decimal] = mapped_column(Money)
+
+    # What it cost. The difference between this and value is the part of the
+    # balance that was never saved — 41% of the retirement account, which no
+    # amount of budgeting produced.
+    cost_basis: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+
+    account: Mapped[Account] = relationship()
+    security: Mapped[Security] = relationship()
+
+
+class SecurityPrice(Base):
+    """A closing price on a date, cached.
+
+    Deliberately not foreign-keyed to `securities`: the rows for FFIJX exist
+    only because it stands in for a trust nobody holds directly, and a
+    constraint would force a fake holding into existence to keep them.
+
+    Cached because the proxy rule needs a price on the *snapshot* date as well
+    as today, and refetching history on every page load would be both slow and
+    a good way to get rate-limited out of the one provider that works.
+    """
+
+    __tablename__ = "security_prices"
+    __table_args__ = (UniqueConstraint("symbol", "as_of"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(20), index=True)
+    as_of: Mapped[date] = mapped_column(Date)
+    close: Mapped[Decimal] = mapped_column(Price)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class BrokerageAccount(Base):
+    """Ties an account number on a statement to an account in budgeter.
+
+    The same job PlaidAccount does for a linked bank, and kept separate from
+    `accounts` for the same reason: the account number is the brokerage's
+    business, not budgeter's. Mapped once, on the first import, so no later
+    export ever has to be pointed at the right rows by hand.
+    """
+
+    __tablename__ = "brokerage_accounts"
+    __table_args__ = (
+        UniqueConstraint("institution", "external_number"),
+        UniqueConstraint("account_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    institution: Mapped[str] = mapped_column(String(60))
+    external_number: Mapped[str] = mapped_column(String(40))
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
+
+    # What the statement calls it ("ROTH IRA"), kept for the mapping screen so
+    # an unfamiliar account number has a name beside it.
+    external_name: Mapped[str | None] = mapped_column(String(60), nullable=True)
+
+    account: Mapped[Account] = relationship()
 
 
 class AppUser(Base):

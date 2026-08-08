@@ -59,20 +59,56 @@
   <p class="dim">Loading…</p>
 } @else if (latest(); as now) {
   <section class="tiles">
+    <!-- When investments have been repriced, the headline is the current
+         figure and the measured one sits under it with its date. Never the
+         estimate alone: a number that moves on its own is unreadable without
+         the answer to "since when?". -->
     <div class="tile accent">
       <span class="k">Net worth</span>
-      <span class="v">{{ fmt(now.net_worth) }}</span>
-      <span class="dim small">as of {{ longDate(now.as_of) }}</span>
+      @if (live(); as l) {
+        @if (l.is_estimated) {
+          <span class="v">{{ fmt(l.estimated) }}</span>
+          <span class="dim small">
+            estimated at {{ pricedAt() }} · exact on {{ longDate(now.as_of) }}
+            at {{ fmt(l.measured) }}
+          </span>
+        } @else {
+          <span class="v">{{ fmt(now.net_worth) }}</span>
+          <span class="dim small">as of {{ longDate(now.as_of) }}</span>
+        }
+      } @else {
+        <span class="v">{{ fmt(now.net_worth) }}</span>
+        <span class="dim small">as of {{ longDate(now.as_of) }}</span>
+      }
     </div>
     <div class="tile">
       <span class="k">Retirement</span>
-      <span class="v">{{ fmt(now.retirement) }}</span>
+      <span class="v">
+        {{ fmt(live()?.is_estimated ? live()!.estimated_retirement : now.retirement) }}
+      </span>
     </div>
     <div class="tile">
       <span class="k">Everything else</span>
-      <span class="v">{{ fmt(now.liquid) }}</span>
+      <span class="v">
+        {{ fmt(live()?.is_estimated ? live()!.estimated_liquid : now.liquid) }}
+      </span>
     </div>
   </section>
+
+  @if (live(); as l) {
+    @if (l.is_estimated) {
+      <p class="provenance">
+        {{ l.marked_accounts }} accounts repriced from live market data;
+        {{ l.carried_accounts }} carried at their last reading — a checking
+        balance cannot be marked to market. The market has moved this by
+        <strong [class.over]="+l.change < 0">{{
+          +l.change > 0 ? "+" : ""
+        }}{{ fmt(l.change) }}</strong>
+        since {{ longDate(l.measured_on) }}. Nothing here is recorded: your
+        snapshot history stays exactly as it was measured.
+      </p>
+    }
+  }
 
   <section class="card chart-card">
     <div class="chart-head">
@@ -118,6 +154,7 @@
           [class.s-retirement]="s.series === 'retirement'"
           [class.s-liquid]="s.series === 'liquid'"
           [class.gap]="s.gap"
+          [class.estimated]="s.estimated"
         />
       }
 
@@ -131,10 +168,13 @@
         />
       }
 
+      <!-- The estimated point is drawn hollow, so a priced figure never looks
+           like a reading that was taken. -->
       @for (pt of plotted(); track pt.p.as_of) {
         <circle
           class="dot s-retirement"
           [class.on]="hovered()?.p === pt.p"
+          [class.estimated]="pt.estimated"
           [attr.cx]="pt.x"
           [attr.cy]="pt.yRetirement"
           r="4"
@@ -142,6 +182,7 @@
         <circle
           class="dot s-liquid"
           [class.on]="hovered()?.p === pt.p"
+          [class.estimated]="pt.estimated"
           [attr.cx]="pt.x"
           [attr.cy]="pt.yLiquid"
           r="4"

@@ -23,6 +23,32 @@ Money = Annotated[
 Ratio = Annotated[float, Field(ge=-1000, le=1000)]
 
 
+def _trimmed(value: Decimal) -> str:
+    """A share count without the trailing zeros a NUMERIC(20,6) column adds.
+
+    5460.762000 reads as false precision. Done by hand rather than with
+    Decimal.normalize(), which turns a round 100 into 1E+2.
+    """
+    text = f"{value:f}"
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+# Shares, not money. Fractional to six places, because a position rounded to
+# cents is thousands of dollars adrift by the time it is multiplied by a price.
+Quantity = Annotated[
+    Decimal, PlainSerializer(_trimmed, return_type=str, when_used="json")
+]
+
+# A share price, which carries four decimals where money carries two. Rounding
+# 35.5975 to 35.60 before multiplying by 163 shares moves the answer by a
+# dollar, and a portfolio total that disagrees with the brokerage by a dollar
+# is a portfolio total nobody trusts.
+Price = Annotated[
+    Decimal,
+    PlainSerializer(lambda v: f"{v:.4f}", return_type=str, when_used="json"),
+]
+
+
 class CategoryOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -95,6 +121,39 @@ class NetWorthPoint(BaseModel):
 class NetWorthOut(BaseModel):
     points: list[NetWorthPoint]
     accounts_tracked: int
+
+
+class LiveNetWorthOut(BaseModel):
+    """Net worth twice: as measured, and with securities repriced.
+
+    Never one without the other. The measured figure is the one that is true
+    and slightly old; the estimate is the one that is current and slightly
+    uncertain, and a screen that shows only the second has no way to answer
+    "since when?".
+    """
+
+    # When everything was last actually read. Null before any snapshot exists.
+    measured_on: date | None
+    measured: Money
+    measured_retirement: Money
+    measured_liquid: Money
+
+    estimated: Money
+    estimated_retirement: Money
+    estimated_liquid: Money
+    # The market's contribution since that date — the whole difference between
+    # the two figures above.
+    change: Money
+    is_estimated: bool
+
+    # When the prices behind the estimate were fetched, ISO-8601.
+    priced_at: str | None
+    # How many accounts were repriced, and how many are simply their last
+    # reading. A checking balance cannot be marked to market, so an estimate
+    # covering nine accounts of which two moved should say exactly that.
+    marked_accounts: int
+    carried_accounts: int
+    warnings: list[str]
 
 
 class PeriodOut(BaseModel):

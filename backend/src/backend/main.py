@@ -11,6 +11,7 @@ from .routers import (
     accounts,
     auth_routes,
     config,
+    holdings,
     imports,
     merchants,
     passkeys,
@@ -94,6 +95,7 @@ api.include_router(config.router)
 api.include_router(transactions.router)
 api.include_router(merchants.router)
 api.include_router(imports.router)
+api.include_router(holdings.router)
 api.include_router(plaid_link.router)
 
 app.include_router(api)

@@ -210,6 +210,33 @@ table {
   }
 }
 
+/**
+ * The sentence under an estimated figure.
+ *
+ * Shared by Accounts and Investments because it does the same job on both: an
+ * estimate is only readable next to what it is an estimate *of* — what was
+ * measured, when, and how far prices have moved it since. Anywhere a computed
+ * number is shown, this paragraph is what keeps it from reading as a fact.
+ */
+.provenance {
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 1rem;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+  max-width: 78ch;
+
+  strong {
+    color: var(--text);
+
+    &.over {
+      color: var(--over);
+    }
+  }
+}
+
 .banner {
   border-radius: var(--radius);
   padding: 0.7rem 0.9rem;

@@ -157,6 +157,13 @@ section.card {
       stroke-dasharray: 3 5;
       opacity: 0.5;
     }
+
+    /* The run out to today's price. Also drawn rather than measured, and for
+       the same reason distinguished from the readings on either side. */
+    &.estimated {
+      stroke-dasharray: 5 4;
+      opacity: 0.7;
+    }
   }
 
   .dot {
@@ -172,6 +179,19 @@ section.card {
     }
     &.on {
       r: 5.5;
+    }
+
+    /* Hollow: a priced figure, not a reading that was taken. */
+    &.estimated {
+      fill: var(--surface);
+      stroke-width: 2;
+
+      &.s-retirement {
+        stroke: var(--s-retirement);
+      }
+      &.s-liquid {
+        stroke: var(--s-liquid);
+      }
     }
   }
 

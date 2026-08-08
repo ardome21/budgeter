@@ -216,6 +216,142 @@ export interface NetWorth {
 }
 
 /**
+ * Net worth twice: as measured, and with securities repriced.
+ *
+ * Never shown as one number. The measured figure is true and slightly old; the
+ * estimate is current and slightly uncertain, and a screen showing only the
+ * second cannot answer "since when?" — which is the first thing anyone asks of
+ * a number that moves on its own.
+ */
+export interface LiveNetWorth {
+  measured_on: string | null;
+  measured: Money;
+  measured_retirement: Money;
+  measured_liquid: Money;
+  estimated: Money;
+  estimated_retirement: Money;
+  estimated_liquid: Money;
+  /** The market's contribution since the measurement — the whole gap. */
+  change: Money;
+  is_estimated: boolean;
+  priced_at: string | null;
+  /** Repriced from live quotes, versus left at their last reading. A checking
+   *  balance cannot be marked to market and the screen should say so. */
+  marked_accounts: number;
+  carried_accounts: number;
+  warnings: string[];
+}
+
+/** How a holding's current value was arrived at. Always displayed. */
+export type PricingBasis = 'LIVE' | 'PAR' | 'PROXY' | 'CARRIED';
+
+export type SecurityKind =
+  | 'EQUITY'
+  | 'ETF'
+  | 'MUTUAL_FUND'
+  | 'MONEY_MARKET'
+  | 'UNQUOTED';
+
+export interface HoldingRow {
+  symbol: string;
+  description: string;
+  kind: SecurityKind;
+  /** Shares, as a string: fractional to six places and never summed here. */
+  quantity: string | null;
+  cost_basis: Money | null;
+  /** What the statement said, on the day it said it. */
+  statement_value: Money;
+  statement_price: string | null;
+  value: Money;
+  price: string | null;
+  change: Money;
+  gain: Money | null;
+  basis: PricingBasis;
+  priced_on: string | null;
+  proxy_symbol: string | null;
+  note: string | null;
+}
+
+export interface HoldingAccount {
+  account_id: number;
+  institution: string;
+  name: string;
+  is_retirement: boolean;
+  as_of: string;
+  statement_value: Money;
+  value: Money;
+  cost_basis: Money | null;
+  gain: Money | null;
+  is_estimated: boolean;
+  holdings: HoldingRow[];
+}
+
+export interface Portfolio {
+  accounts: HoldingAccount[];
+  statement_value: Money;
+  value: Money;
+  cost_basis: Money | null;
+  /** Value minus what was paid — the part the market provided rather than the
+   *  budget. Null unless every position reports a cost basis. */
+  gain: Money | null;
+  priced_at: string | null;
+  warnings: string[];
+  /** Held securities with no way to reach a price. Each one silently freezes
+   *  an account until a stand-in is set, so the screen asks rather than waits. */
+  needs_proxy: string[];
+}
+
+export interface PositionPreview {
+  symbol: string;
+  description: string;
+  quantity: string | null;
+  price: string | null;
+  value: Money;
+  cost_basis: Money | null;
+  kind: SecurityKind;
+  is_new: boolean;
+  notes: string[];
+}
+
+export interface PreviewAccount {
+  external_number: string;
+  external_name: string;
+  total_value: Money;
+  total_cost_basis: Money | null;
+  positions: PositionPreview[];
+  account_id: number | null;
+  account_label: string | null;
+  /** Mapped on a previous import, so this needs no answer. */
+  is_remembered: boolean;
+  match_note: string | null;
+}
+
+export interface PositionsPreview {
+  as_of: string | null;
+  institution: string;
+  accounts: PreviewAccount[];
+  errors: string[];
+  replaces_existing: boolean;
+}
+
+export interface PositionsCommitResult {
+  accounts: number;
+  positions: number;
+  securities_created: number;
+  balances_recorded: number;
+  needs_proxy: string[];
+  warnings: string[];
+}
+
+export interface SecurityRow {
+  symbol: string;
+  description: string;
+  kind: SecurityKind;
+  quote_symbol: string | null;
+  is_held: boolean;
+}
+
+/**
  * Parse a YYYY-MM-DD calendar date as local time.
  *
  * `new Date('2024-09-04')` is parsed as UTC midnight and then rendered in the

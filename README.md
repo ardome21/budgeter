@@ -67,7 +67,7 @@ not what makes the app work — it is a safety net for direct calls to `:8000`.
 
 ## The app
 
-Six screens, all reading and writing the same database the workbook was
+Seven screens, all reading and writing the same database the workbook was
 imported into, behind a login.
 
 | Screen | What it replaces |
@@ -77,6 +77,7 @@ imported into, behind a login.
 | **Linked** | Downloading an export at all — refresh straight from the bank |
 | **Import** | Pasting a bank export into a sheet, then categorising it by hand |
 | **Accounts** | The `Accounts` sheet — net worth over time, and recording a new snapshot |
+| **Investments** | Nothing — the workbook only ever held a balance, never what it was made of |
 | **Settings** | The `Monthly Fixed Costs`, `Paycheck` and `Rent` sheets, plus reconciliation |
 
 ### Config is editable, and keeps its history
@@ -132,6 +133,52 @@ read a number.
 Net worth counts what you owe. The workbook's own `Total` row omitted the
 student loan and the credit card balance, reporting 53,742.84 for March 2024
 against a real 47,742.84.
+
+### Positions, and what was actually saved
+
+A brokerage account is a list of holdings, not a number. Dropping a Fidelity
+`Portfolio Positions` export records what is held — units, price and cost basis
+per position — and from there two things follow that a balance alone cannot
+give.
+
+The first is **what you put in versus what the market added**. Value minus cost
+basis is the part of the balance no budgeting produced: on the first import,
+$39,187 of $161,187, and 41% of the retirement account alone. A rising net worth
+line cannot tell you which half moved.
+
+The second is **a current figure between statements**. Prices come from a public
+quote endpoint, cached in `security_prices`, and three rules decide each
+holding:
+
+- a public quote, times the units held;
+- a money market at par — never fetched, because a provider returning 0.9998
+  for SPAXX would put a wobble into a cash balance that has none;
+- a **stand-in**, for something with no public quote at all.
+
+That last case is not an edge case here. The largest single holding, 76% of the
+portfolio, is reported by CUSIP `31564E540` — a collective investment trust sold
+only inside employer plans, which no provider will ever quote. Its public twin
+`FFIJX` stands in, and lends **only its movement**: the value is the statement
+figure times the change in the stand-in since that date. Never the stand-in's
+price. The trust trades at $22.70 a unit against FFIJX's $19.93, so units times
+the proxy price would report that account 14% light on day one.
+
+Every current value carries which of the four rules produced it — live, at par,
+estimated, or carried from the statement — because they are four different
+claims and one confident total is the failure this screen exists to avoid.
+
+**No estimate is ever written.** `account_balances` and `holdings` stay a record
+of things that were measured; the repricing happens on the request and is gone
+when it returns. Net worth shows both figures and the date the measured one was
+taken, and the estimated point on the chart is drawn hollow and dashed. That is
+what makes the difference between the two numbers readable as exactly what it
+is: market movement since the last statement.
+
+Fidelity is why this exists rather than a Plaid link. It shares data only
+through Akoya, which has no individual developer access, so those accounts can
+never be linked. Dropping the export **is** the refresh — and since the file
+states each account's value, importing it records the balance snapshot too,
+rather than asking for a number that has just been parsed.
 
 ### The merchant is chosen at entry, not merged afterwards
 

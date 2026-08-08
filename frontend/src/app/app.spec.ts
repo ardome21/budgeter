@@ -45,6 +45,7 @@ describe('App', () => {
       'Linked',
       'Import',
       'Accounts',
+      'Investments',
       'Settings',
     ]);
   });
