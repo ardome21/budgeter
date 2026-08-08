@@ -65,36 +65,59 @@ import { SetupResult } from '../models';
             </button>
           </form>
         } @else {
-          <h1>Scan this, then confirm</h1>
+          <h1>Two things, one step</h1>
 
-          <div class="qr" [innerHTML]="qr()"></div>
+          <section class="step">
+            <h2><span class="n">1</span> Scan this</h2>
+            <div class="qr" [innerHTML]="qr()"></div>
+            <p class="small">
+              Any authenticator works, including Apple Passwords — scanning
+              with the Camera and letting it save there is exactly right.
+            </p>
+            <p class="small dim">
+              Afterwards it shows a <strong>6-digit code that changes every 30
+              seconds</strong>. On a Mac or iPhone that is the
+              <em>Verification Code</em> row under <em>budgeter</em> in the
+              Passwords app. You will type it in below.
+            </p>
+            <details>
+              <summary class="small dim">Can't scan it?</summary>
+              <p class="small dim">Type this into your authenticator instead:</p>
+              <code class="secret">{{ secret() }}</code>
+            </details>
+          </section>
 
-          <p class="dim small">
-            Scan with any authenticator app. If you cannot scan, enter this
-            secret by hand:
-          </p>
-          <code class="secret">{{ secret() }}</code>
-
-          <div class="banner warn codes">
-            <strong>Save these recovery codes now.</strong> Each works once, in
-            place of the six-digit code, and they are the only way back in if
-            you lose the authenticator. They are not shown again.
-            <ul>
-              @for (c of result()!.recovery_codes; track c) {
-                <li><code>{{ c }}</code></li>
-              }
-            </ul>
-            <button type="button" (click)="copyCodes()">
-              {{ copied() ? 'Copied' : 'Copy all' }}
-            </button>
-          </div>
+          <section class="step">
+            <h2><span class="n">2</span> Keep these somewhere safe</h2>
+            <p class="small">
+              <strong>Nothing to do with them now.</strong> They are a spare
+              key, not a step — copy them somewhere you will still have if your
+              phone is gone, then carry on.
+            </p>
+            <div class="banner warn codes">
+              <ul>
+                @for (c of result()!.recovery_codes; track c) {
+                  <li><code>{{ c }}</code></li>
+                }
+              </ul>
+              <button type="button" (click)="copyCodes()">
+                {{ copied() ? 'Copied' : 'Copy all' }}
+              </button>
+              <p class="small dim tail">
+                Each works once, in place of the 6-digit code, if you ever lose
+                the authenticator. They are never shown again.
+              </p>
+            </div>
+          </section>
 
           @if (error(); as e) {
             <div class="banner error">{{ e }}</div>
           }
 
           <form (ngSubmit)="confirm()">
-            <label for="c">Enter the current six-digit code</label>
+            <label for="c">
+              Now type the 6-digit code from your authenticator
+            </label>
             <input
               id="c"
               name="code"
@@ -105,6 +128,10 @@ import { SetupResult } from '../models';
               (ngModelChange)="code.set($event)"
               required
             />
+            <p class="small dim hint">
+              If the countdown is about to run out, wait for the next one — any
+              current code works.
+            </p>
             <button class="primary" type="submit" [disabled]="busy()">
               {{ busy() ? 'Checking…' : 'Finish' }}
             </button>
