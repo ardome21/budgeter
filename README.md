@@ -47,6 +47,7 @@ it and `docker compose up` is a no-op when it's already running.
 | `make api` | http://localhost:8000, API under `/api`, docs at `/docs` | `cd backend && uv run uvicorn backend.main:app --reload` |
 | `make web` | http://localhost:4200 | `cd frontend && npm start` |
 | `make test` | the backend tests | `cd backend && uv run pytest` |
+| `make test-web` | the frontend tests, once, headless | `cd frontend && npx ng test --watch=false --browsers=ChromeHeadless` |
 | `make lint` | ruff over the backend | `cd backend && uv run ruff check .` |
 
 The longhand column is the point of the table: the `Makefile` is shorthand for
@@ -66,13 +67,14 @@ not what makes the app work — it is a safety net for direct calls to `:8000`.
 
 ## The app
 
-Five screens, all reading and writing the same database the workbook was
-imported into.
+Six screens, all reading and writing the same database the workbook was
+imported into, behind a login.
 
 | Screen | What it replaces |
 |---|---|
 | **Month** | The `*Budget` sheets — allocations vs actuals, committed/flexible, pace |
 | **Transactions** | The `*Spending` sheets — list, add by hand, recategorise inline |
+| **Linked** | Downloading an export at all — refresh straight from the bank |
 | **Import** | Pasting a bank export into a sheet, then categorising it by hand |
 | **Accounts** | The `Accounts` sheet — net worth over time, and recording a new snapshot |
 | **Settings** | The `Monthly Fixed Costs`, `Paycheck` and `Rent` sheets, plus reconciliation |

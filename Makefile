@@ -2,7 +2,7 @@
 # target is one line you could type by hand.
 
 .DEFAULT_GOAL := help
-.PHONY: help db db-stop db-reset api web dev test lint
+.PHONY: help db db-stop db-reset api web dev test test-web lint
 
 help:  ## Show this help
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | sed 's/:.*## /\t/' | expand -t14
@@ -30,6 +30,9 @@ dev: db  ## Run backend and frontend together; Ctrl-C stops both
 
 test:  ## Run the backend tests
 	cd backend && uv run pytest
+
+test-web:  ## Run the frontend tests once, headless
+	cd frontend && npx ng test --watch=false --browsers=ChromeHeadless
 
 lint:  ## Lint the backend
 	cd backend && uv run ruff check .

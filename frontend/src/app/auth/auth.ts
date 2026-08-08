@@ -77,10 +77,36 @@ export class Auth {
     this.router.navigateByUrl('/login');
   }
 
+  /**
+   * Turn an error response into something worth reading.
+   *
+   * FastAPI answers a rejected field with `detail` as an *array* of
+   * `{loc, msg}`, not a string. Handling only the string case meant a password
+   * two characters short came back as "That did not work." — the app knew
+   * exactly what was wrong and declined to say so.
+   */
   describe(e: unknown): string {
     const err = e as HttpErrorResponse;
-    if (err?.status === 0) return 'Cannot reach the API. Is the backend running?';
+    if (err?.status === 0)
+      return 'Cannot reach the API. Is the backend running?';
+
     const detail = (err?.error as { detail?: unknown })?.detail;
-    return typeof detail === 'string' ? detail : 'That did not work.';
+    if (typeof detail === 'string') return detail;
+
+    if (Array.isArray(detail)) {
+      const problems = (detail as { loc?: unknown[]; msg?: string }[])
+        .map((d) => {
+          // loc is ['body', 'password']; the field is the useful part.
+          const field = String(d.loc?.[d.loc.length - 1] ?? '');
+          const message = d.msg ?? 'is not valid';
+          if (!field || field === 'body') return message;
+          const label = field.charAt(0).toUpperCase() + field.slice(1);
+          return `${label}: ${message.replace(/^String /, '')}`;
+        })
+        .filter(Boolean);
+      if (problems.length) return problems.join(' · ');
+    }
+
+    return 'That did not work.';
   }
 }

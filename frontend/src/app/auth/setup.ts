@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
@@ -52,9 +52,15 @@ import { SetupResult } from '../models';
               (ngModelChange)="password.set($event)"
               required
             />
-            <p class="dim small hint">At least 12 characters.</p>
+            <p class="small hint" [class.dim]="longEnough()" [class.over]="!longEnough() && password().length > 0">
+              At least 12 characters — {{ password().length }} so far.
+            </p>
 
-            <button class="primary" type="submit" [disabled]="busy()">
+            <button
+              class="primary"
+              type="submit"
+              [disabled]="busy() || !canSubmit()"
+            >
               {{ busy() ? 'Creating…' : 'Continue' }}
             </button>
           </form>
@@ -125,6 +131,13 @@ export class Setup {
 
   /** The bare secret, for anyone whose authenticator cannot scan. */
   secret = signal<string | null>(null);
+
+  // Mirrors the backend's own rule. Checked here so the length requirement is
+  // visible while typing rather than delivered as a rejection afterwards.
+  longEnough = computed(() => this.password().length >= 12);
+  canSubmit = computed(
+    () => this.username().trim().length > 0 && this.longEnough(),
+  );
 
   create(): void {
     this.busy.set(true);
