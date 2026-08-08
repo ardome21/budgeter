@@ -614,3 +614,66 @@ def test_transfers_and_income_stay_out_of_the_month_total(client, session):
     # They are still on screen, just not counted as spending.
     shown = {line.category for line in summary.categories}
     assert "Transfer Test" in shown and "Income Test" in shown
+
+
+def test_a_charge_from_a_standing_commitment_arrives_committed(
+    client, session, linked, monkeypatch, category_id
+):
+    """Rent and the power bill landed as flexible on the first day of real
+    data, because the commit defaults is_recurring to false and nothing
+    suggested otherwise. A commitment names its merchant; that is the answer."""
+    from backend.models import FixedCost
+    from backend.routers.transactions import get_or_create_period
+
+    session.add(
+        FixedCost(
+            description="Rent (billed as one charge)",
+            amount=Decimal("1553.37"),
+            category_id=category_id,
+            is_exact=False,
+            effective_from=date(2026, 1, 1),
+            merchant_key="Zzyzx Housing",
+        )
+    )
+    period_txn = Transaction(
+        occurred_on=date(2026, 5, 1),
+        period_id=get_or_create_period(session, 2026, 5).id,
+        raw_description="ZZYZX HOUSING",
+        merchant_key="Zzyzx Housing",
+        category_id=category_id,
+        amount=Decimal("1553.37"),
+        is_recurring=True,
+        source=TransactionSource.WORKBOOK,
+        source_ref="cell-zzyzx-housing",
+    )
+    session.add(period_txn)
+    session.flush()
+
+    feed(
+        monkeypatch,
+        SyncDiff(
+            added=[
+                txn("t1", name="ZZYZX HOUSING PPD ID: 1844372402",
+                    merchant="Zzyzx Housing", amount="1553.37")
+            ],
+            modified=[], removed=[], cursor="c1",
+        ),
+    )
+    row = client.post("/api/plaid/sync").json()["rows"][0]
+
+    assert row["is_recurring"] is True
+    assert any("committed" in n for n in row["notes"])
+
+
+def test_an_ordinary_charge_is_not_marked_committed(
+    client, session, linked, monkeypatch
+):
+    feed(
+        monkeypatch,
+        SyncDiff(
+            added=[txn("t1", name="Uber Eats", merchant="Uber Eats")],
+            modified=[], removed=[], cursor="c1",
+        ),
+    )
+    row = client.post("/api/plaid/sync").json()["rows"][0]
+    assert row["is_recurring"] is False

@@ -48,6 +48,7 @@ from ..plaid_client import (
     remove_item,
     sync_transactions,
 )
+from ..reconcile import commitments_by_merchant
 from ..schemas import Money
 from .imports import (
     CategoryOption,
@@ -263,6 +264,10 @@ class SyncRow(BaseModel):
     suggested_category_name: str | None
     category_options: list[CategoryOption]
     merchant_key: str | None
+    # True when a standing commitment names this merchant. Committed-vs-flexible
+    # is a property of the transaction, so it has to be decided per row — and
+    # defaulting every linked row to flexible reported rent as discretionary.
+    is_recurring: bool
     near_duplicates: list[NearDuplicate]
     notes: list[str]
 
@@ -525,7 +530,9 @@ def _apply_revisions(
 
 
 def _suggest(
-    session: Session, pairs: list[tuple[CandidateRow, LinkedTransaction]]
+    session: Session,
+    pairs: list[tuple[CandidateRow, LinkedTransaction]],
+    recurring: set[int],
 ) -> None:
     """Fill in a merchant and the categories it has been filed under.
 
@@ -548,6 +555,7 @@ def _suggest(
 
     history = _category_history(session, {g for g in guesses.values() if g})
     masks = _own_account_masks(session)
+    commitments = commitments_by_merchant(session)
 
     for row, txn in pairs:
         # Money moving between accounts you own, recognised by the other
@@ -577,6 +585,11 @@ def _suggest(
         if not guess:
             continue
         row.merchant_key = guess
+        # A charge from a merchant a standing commitment names is committed
+        # spending, decided here rather than left to the backfill script.
+        if guess in commitments:
+            recurring.add(id(row))
+            row.notes.append(f"committed — {commitments[guess]}")
         # An income row keeps the merchant but not the guessed category: three
         # years of history for a name says where its *spending* was filed.
         if row.suggested_category_id is not None:
@@ -708,7 +721,8 @@ def sync(session: Session = Depends(get_session)):
 
         item.last_synced_at = datetime.now(UTC)
 
-    _suggest(session, pairs)
+    recurring: set[int] = set()
+    _suggest(session, pairs, recurring)
     _find_near_duplicates(session, [r for r, _ in pairs])
     session.commit()
 
@@ -732,6 +746,7 @@ def sync(session: Session = Depends(get_session)):
                     for cid, name, count in row.category_options
                 ],
                 merchant_key=row.merchant_key,
+                is_recurring=id(row) in recurring,
                 near_duplicates=[
                     NearDuplicate(
                         id=m.id,

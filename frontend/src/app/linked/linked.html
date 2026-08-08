@@ -214,6 +214,7 @@
               <th>Description</th>
               <th>Merchant</th>
               <th>Category</th>
+              <th title="Committed rather than discretionary">Fixed</th>
               <th class="num">Amount</th>
             </tr>
           </thead>
@@ -302,6 +303,14 @@
                       }
                     </div>
                   }
+                </td>
+                <td class="fixed-cell">
+                  <input
+                    type="checkbox"
+                    [checked]="r.recurring"
+                    (change)="toggleRecurring(r)"
+                    [attr.aria-label]="'Committed spending: ' + r.raw_description"
+                  />
                 </td>
                 <td class="num" [class.over]="+r.amount < 0">
                   {{ fmt(r.amount) }}

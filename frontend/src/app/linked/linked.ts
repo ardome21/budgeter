@@ -18,6 +18,7 @@ import {
 interface ReviewRow extends SyncRow {
   categoryId: number | null;
   include: boolean;
+  recurring: boolean;
 }
 
 /** Plaid Link, injected into the page by the script tag in index.html. */
@@ -159,6 +160,7 @@ export class Linked {
           s.rows.map((r) => ({
             ...r,
             categoryId: r.suggested_category_id,
+            recurring: r.is_recurring,
             // Ticked by default, near-duplicates included. A near match is a
             // question, not a verdict, and quietly dropping real spending is
             // the worse failure.
@@ -186,6 +188,14 @@ export class Linked {
       rows.map((r) =>
         r.key === row.key ? { ...r, categoryId: Number(value) } : r,
       ),
+    );
+  }
+
+  /** Committed or flexible. Suggested from the fixed-cost list, correctable
+   *  here — the gym is a commitment that lives in a discretionary category. */
+  toggleRecurring(row: ReviewRow): void {
+    this.review.update((rows) =>
+      rows.map((r) => (r.key === row.key ? { ...r, recurring: !r.recurring } : r)),
     );
   }
 
@@ -218,6 +228,7 @@ export class Linked {
         raw_description: r.raw_description,
         amount: r.amount,
         category_id: r.categoryId,
+        is_recurring: r.recurring,
         // Sent even when unchanged, so what was reviewed is what lands rather
         // than the backend guessing a second time.
         merchant_key: r.merchant_key ?? '',

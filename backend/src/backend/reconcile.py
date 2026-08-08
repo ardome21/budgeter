@@ -164,6 +164,33 @@ def recurring_candidates(session: Session) -> list[tuple[int, str, str]]:
     # bill is named differently from its charge — rent, phone, the paper — and
     # those are the standing commitments, so the backfill skipped precisely the
     # rows it exists to find.
+    by_merchant = commitments_by_merchant(session)
+
+    if not by_merchant:
+        return []
+
+    rows = session.execute(
+        select(Transaction.id, Transaction.raw_description, Transaction.merchant_key)
+        .where(
+            Transaction.merchant_key.in_(by_merchant),
+            ~Transaction.is_recurring,
+        )
+        .order_by(Transaction.id)
+    ).all()
+    return [
+        (txn_id, description, by_merchant[merchant_key])
+        for txn_id, description, merchant_key in rows
+    ]
+
+
+def commitments_by_merchant(session: Session) -> dict[str, str]:
+    """Merchant name -> the standing commitment it charges for.
+
+    Split out of `recurring_candidates` so the linked-account sync can mark a
+    charge committed *as it arrives*, instead of leaving a backfill to find it
+    later. Rent and the power bill both landed as flexible spending on the
+    first day of real data for exactly that reason.
+    """
     by_merchant: dict[str, str] = {}
     unlinked: dict[str, str] = {}
     for fc in session.scalars(
@@ -193,18 +220,4 @@ def recurring_candidates(session: Session) -> list[tuple[int, str, str]]:
         ).all():
             by_merchant.setdefault(name, unlinked[name.lower()])
 
-    if not by_merchant:
-        return []
-
-    rows = session.execute(
-        select(Transaction.id, Transaction.raw_description, Transaction.merchant_key)
-        .where(
-            Transaction.merchant_key.in_(by_merchant),
-            ~Transaction.is_recurring,
-        )
-        .order_by(Transaction.id)
-    ).all()
-    return [
-        (txn_id, description, by_merchant[merchant_key])
-        for txn_id, description, merchant_key in rows
-    ]
+    return by_merchant

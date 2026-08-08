@@ -331,6 +331,9 @@ export interface SyncRow {
   suggested_category_name: string | null;
   category_options: CategoryOption[];
   merchant_key: string | null;
+  /** True when a standing commitment names this merchant. Committed-vs-flexible
+   *  is a property of the transaction, so it is decided per row. */
+  is_recurring: boolean;
   near_duplicates: NearDuplicate[];
   notes: string[];
 }
