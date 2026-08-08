@@ -30,27 +30,28 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # paste as POSTG
 
 ## Running it
 
-**Database** — start first, stop when you're done for the day:
-
 ```sh
-docker compose up -d db      # start
-docker compose down          # stop (data persists in the volume)
-docker compose down -v       # stop AND erase all data
+make dev        # database, then backend and frontend together — Ctrl-C stops both
+make            # list every target
 ```
 
-**Backend** — http://localhost:8000, API under `/api`, docs at `/docs`:
+Three processes, one per pane if you'd rather watch them separately. `make api`
+and `make dev` start the database first, because the backend is useless without
+it and `docker compose up` is a no-op when it's already running.
 
-```sh
-cd backend
-uv run uvicorn backend.main:app --reload
-```
+| | Runs | Longhand |
+|---|---|---|
+| `make db` | postgres, waited on until it accepts connections | `docker compose up -d --wait db` |
+| `make db-stop` | stops it; data persists in the volume | `docker compose down` |
+| `make db-reset` | stops it **and erases all data** | `docker compose down -v` |
+| `make api` | http://localhost:8000, API under `/api`, docs at `/docs` | `cd backend && uv run uvicorn backend.main:app --reload` |
+| `make web` | http://localhost:4200 | `cd frontend && npm start` |
+| `make test` | the backend tests | `cd backend && uv run pytest` |
+| `make lint` | ruff over the backend | `cd backend && uv run ruff check .` |
 
-**Frontend** — http://localhost:4200:
-
-```sh
-cd frontend
-npm start
-```
+The longhand column is the point of the table: the `Makefile` is shorthand for
+commands that still work typed out, not a build system with rules of its own.
+Nothing else in the repo depends on `make`.
 
 **Verify the whole chain** with the DB running:
 
