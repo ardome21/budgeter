@@ -83,11 +83,22 @@ def test_confirm_rejects_a_wrong_code(client, wipe_users):
     assert client.post("/api/auth/setup/confirm", json={"code": "000000"}).status_code == 401
 
 
-def test_a_short_password_is_refused(client, wipe_users):
-    response = client.post(
-        "/api/auth/setup", json={"username": "ardome", "password": "short"}
+def test_the_password_minimum_is_eight(client, wipe_users):
+    """Pinned at the boundary, so moving it is a deliberate act.
+
+    It was twelve, and twelve cost a password nobody could reproduce. Eight is
+    a floor on one of two factors, behind Argon2id and a lockout, on an app
+    that answers on loopback — not the only thing in the way.
+    """
+    seven = client.post(
+        "/api/auth/setup", json={"username": "ardome", "password": "7chars!"}
     )
-    assert response.status_code == 422
+    assert seven.status_code == 422
+
+    eight = client.post(
+        "/api/auth/setup", json={"username": "ardome", "password": "8chars!!"}
+    )
+    assert eight.status_code == 200
 
 
 # --- Login ---------------------------------------------------------------

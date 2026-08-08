@@ -59,7 +59,12 @@ class StatusOut(BaseModel):
 
 class SetupIn(BaseModel):
     username: str = Field(min_length=1, max_length=60)
-    password: str = Field(min_length=12, max_length=200)
+    # Eight, not twelve. The password is one of two factors, never the only
+    # thing in the way: it is Argon2id-hashed, eight wrong attempts lock the
+    # account for fifteen minutes, and the app answers on loopback only. A
+    # longer minimum bought very little here and cost a password nobody could
+    # remember typing correctly — which is how the first one was lost.
+    password: str = Field(min_length=8, max_length=200)
 
 
 class SetupOut(BaseModel):

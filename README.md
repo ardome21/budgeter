@@ -198,7 +198,14 @@ read tokens to real bank accounts. It had no authentication at all before that,
 which was defensible on loopback and is not once those tokens exist.
 
 **First run claims the app.** Visit it and you get a setup screen: a name, a
-password, then a QR code for any authenticator app and ten recovery codes.
+password — with a **Show** toggle, because a password typed once and never
+displayed is a typo you find out about later — then a QR code for any
+authenticator app and ten recovery codes.
+
+The minimum is **eight characters**, not the twelve it started at. The
+password is one of two factors, Argon2id-hashed, behind a lockout, on an app
+that answers on loopback. Twelve bought very little and cost a password that
+could not be reproduced — which is how the first one was lost.
 Enrolment is two steps on purpose — the account is not usable until a code
 generated from that secret comes back, because a mistyped scan would otherwise
 lock the only person there will ever be out of their own history.

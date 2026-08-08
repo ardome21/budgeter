@@ -4,6 +4,7 @@ import { Router } from '@angular/router';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 
 import { Auth } from './auth';
+import { PasswordField } from './password-field';
 import { SetupResult } from '../models';
 
 /**
@@ -16,15 +17,15 @@ import { SetupResult } from '../models';
  */
 @Component({
   selector: 'app-setup',
-  imports: [FormsModule],
+  imports: [FormsModule, PasswordField],
   template: `
     <div class="gate">
       <div class="card wide">
         @if (!result()) {
           <h1>Set up budgeter</h1>
           <p class="dim small">
-            Nobody has claimed this app yet. Pick a name and a password — you
-            will add a second factor on the next step.
+            Nobody has claimed this app yet. Pick a name and a password — use <em>Show</em> to check it, since a
+            typo here is a password you never had. A second factor comes next.
           </p>
 
           @if (error(); as e) {
@@ -43,17 +44,15 @@ import { SetupResult } from '../models';
             />
 
             <label for="p">Password</label>
-            <input
-              id="p"
-              name="password"
-              type="password"
+            <app-password-field
+              inputId="p"
               autocomplete="new-password"
-              [ngModel]="password()"
-              (ngModelChange)="password.set($event)"
-              required
+              label="New password"
+              [value]="password()"
+              (valueChange)="password.set($event)"
             />
             <p class="small hint" [class.dim]="longEnough()" [class.over]="!longEnough() && password().length > 0">
-              At least 12 characters — {{ password().length }} so far.
+              At least 8 characters — {{ password().length }} so far. Use Show to check it.
             </p>
 
             <button
@@ -161,7 +160,7 @@ export class Setup {
 
   // Mirrors the backend's own rule. Checked here so the length requirement is
   // visible while typing rather than delivered as a rejection afterwards.
-  longEnough = computed(() => this.password().length >= 12);
+  longEnough = computed(() => this.password().length >= 8);
   canSubmit = computed(
     () => this.username().trim().length > 0 && this.longEnough(),
   );

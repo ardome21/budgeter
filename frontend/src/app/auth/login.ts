@@ -3,11 +3,12 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 
 import { Auth } from './auth';
+import { PasswordField } from './password-field';
 import { platformAuthenticatorAvailable } from './webauthn';
 
 @Component({
   selector: 'app-login',
-  imports: [FormsModule],
+  imports: [FormsModule, PasswordField],
   template: `
     <div class="gate">
       <div class="card">
@@ -42,14 +43,11 @@ import { platformAuthenticatorAvailable } from './webauthn';
           />
 
           <label for="p">Password</label>
-          <input
-            id="p"
-            name="password"
-            type="password"
+          <app-password-field
+            inputId="p"
             autocomplete="current-password"
-            [ngModel]="password()"
-            (ngModelChange)="password.set($event)"
-            required
+            [value]="password()"
+            (valueChange)="password.set($event)"
           />
 
           <label for="c">Six-digit code</label>
