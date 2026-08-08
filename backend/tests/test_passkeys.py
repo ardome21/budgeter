@@ -13,9 +13,9 @@ from datetime import UTC, datetime
 
 import pyotp
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
-from backend.models import AppUser, Passkey, RecoveryCode
+from backend.models import AppUser, Passkey
 
 PASSWORD = "a-long-enough-password"
 
@@ -23,11 +23,9 @@ PASSWORD = "a-long-enough-password"
 @pytest.fixture
 def signed_in(client, session):
     """A confirmed user with a live session, and their TOTP secret."""
-    session.execute(delete(Passkey))
-    session.execute(delete(RecoveryCode))
-    session.execute(delete(AppUser))
-    session.flush()
-
+    # No clearing here: the `client` fixture already deletes any user through
+    # the ORM, cascades included. Repeating it as bulk SQL is what broke once,
+    # by deleting a user whose passkeys still referenced it.
     body = client.post(
         "/api/auth/setup", json={"username": "ardome", "password": PASSWORD}
     ).json()

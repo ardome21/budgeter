@@ -21,12 +21,12 @@ from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.db import engine, get_session
 from backend.main import app
-from backend.models import AppUser, Category, RecoveryCode
+from backend.models import AppUser, Category
 
 
 @pytest.fixture
@@ -59,8 +59,14 @@ def client(session: Session) -> Generator[TestClient]:
 
     Tests that care about the guard create their own user; see test_auth.py.
     """
-    session.execute(delete(RecoveryCode))
-    session.execute(delete(AppUser))
+    # Deleted through the ORM, one object at a time, so the relationship
+    # cascades take the recovery codes and passkeys with them. A bulk
+    # `delete(AppUser)` is plain SQL and skips those cascades: the day a real
+    # passkey existed, its foreign key blocked the delete and every test using
+    # this fixture errored at setup. Doing it this way needs no maintenance
+    # when the next table hangs off a user.
+    for user in session.scalars(select(AppUser)).all():
+        session.delete(user)
     session.flush()
 
     app.dependency_overrides[get_session] = lambda: session

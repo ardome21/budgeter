@@ -12,7 +12,7 @@ endpoints do and a test never has to commit a real user to exercise it.
 
 import pyotp
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import select
 
 from backend.auth import hash_password, verify_password
 from backend.models import AppUser, RecoveryCode
@@ -23,10 +23,12 @@ PASSWORD = "a-long-enough-password"
 
 @pytest.fixture
 def wipe_users(session):
-    """Start from no user. The fixture's rollback handles the cleanup."""
-    session.execute(delete(RecoveryCode))
-    session.execute(delete(AppUser))
-    session.flush()
+    """Start from no user.
+
+    The clearing itself lives in the `client` fixture, which every test here
+    uses; this only names the requirement so each test says out loud that it
+    depends on starting from nothing.
+    """
     return session
 
 
