@@ -189,6 +189,27 @@ def preview(item_id: int, db: Session = Depends(get_session)) -> PreviewOut:
     if "investments" in item.product_list:
         holdings_updated = _refresh_holdings(db, item, token)
 
+    # An item answers for the products it was created with and no others.
+    # Asking a brokerage linked for investments alone to sync transactions
+    # returns ADDITIONAL_CONSENT_REQUIRED, which surfaced as a 502 and looked
+    # like the refresh being broken rather than like a question it was never
+    # granted permission to answer.
+    if "transactions" not in item.product_list:
+        item.last_synced_at = datetime.now(UTC)
+        db.commit()
+        return PreviewOut(
+            rows=[],
+            modified=0,
+            removed=0,
+            accounts_updated=accounts_updated,
+            holdings_updated=holdings_updated,
+            cursor_advanced=False,
+            message=(
+                f"{item.institution_name} is linked for holdings only, so there "
+                "are no transactions to review."
+            ),
+        )
+
     try:
         diff = plaid_client.sync_transactions(token, item.cursor)
     except PlaidReauthRequired:
@@ -293,6 +314,8 @@ def commit(body: CommitIn, db: Session = Depends(get_session)) -> PreviewOut:
     item = db.get(PlaidItem, body.item_id)
     if item is None:
         raise HTTPException(404, "no such linked bank")
+    if "transactions" not in item.product_list:
+        raise HTTPException(409, "this bank is linked for holdings only")
     if item.pending_cursor is None:
         raise HTTPException(409, "nothing is waiting to be committed")
 

@@ -197,6 +197,10 @@ class PortfolioOut(BaseModel):
     as_of: date | None
     total_value: Money
     total_cost_basis: Money | None
+    # How much of `total_value` the basis figure actually accounts for. Without
+    # it "paid in" reads as covering the whole portfolio, and here it covers
+    # under a quarter of it.
+    cost_basis_covers: Money = Decimal("0.00")
     holdings: list[HoldingOut]
 
 

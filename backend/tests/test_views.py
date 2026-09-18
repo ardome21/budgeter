@@ -3,6 +3,7 @@
 from datetime import date
 from decimal import Decimal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend import queries
@@ -228,3 +229,70 @@ def test_missing_cost_basis_makes_the_total_unknown_not_wrong(
     assert result["total_value"] == Decimal("2270.00")
     assert result["total_cost_basis"] is None
     assert result["holdings"][0]["gain"] is None
+
+
+def test_a_money_market_basis_is_its_own_value(session: Session, account):
+    """Fidelity reports null for FDRXX and a cash balance because there is
+    nothing to report — a money market is $1.00 a unit by construction, so what
+    was paid in *is* what it is worth. Reading that null as "unknown" is what
+    nulled the cost basis of half the accounts, and the headline growth figure
+    with them, the last time this was computed.
+
+    Derived on read. The stored row keeps the institution's null, so nothing in
+    the table is ever an inference of ours.
+    """
+    cash = Security(
+        plaid_security_id="sec-cash", name="FDRXX", ticker="FDRXX",
+        kind=SecurityKind.CASH, is_cash_equivalent=True,
+    )
+    session.add(cash)
+    session.flush()
+    session.add(
+        Holding(account_id=account.id, security_id=cash.id, as_of=date(2026, 3, 1),
+                quantity=Decimal("8063.08"), price=Decimal("1.0000"),
+                value=Decimal("8063.08"), cost_basis=None)
+    )
+    session.flush()
+
+    row = queries.portfolio(session)["holdings"][0]
+
+    assert row["cost_basis"] == Decimal("8063.08")
+    assert row["gain"] == Decimal("0.00")
+    # Untouched in the table: the null is the institution's answer, not ours.
+    assert session.scalar(select(Holding.cost_basis)) is None
+
+
+def test_the_basis_total_says_how_much_it_covers(session: Session, account):
+    """The real portfolio has no basis for the employer-plan trust that holds
+    three quarters of it. A "paid in" figure that silently describes the other
+    quarter is worse than one that says so."""
+    plan = Security(
+        plaid_security_id="sec-plan", name="FID FRDM INX 2065",
+        ticker=None, kind=SecurityKind.MUTUAL_FUND,
+    )
+    fund = Security(
+        plaid_security_id="sec-fund", name="Fidelity Large Cap", ticker="FELC",
+        kind=SecurityKind.ETF,
+    )
+    session.add_all([plan, fund])
+    session.flush()
+    session.add_all(
+        [
+            Holding(account_id=account.id, security_id=plan.id,
+                    as_of=date(2026, 3, 1), quantity=Decimal(1),
+                    price=None, value=Decimal("75.00"), cost_basis=None),
+            Holding(account_id=account.id, security_id=fund.id,
+                    as_of=date(2026, 3, 1), quantity=Decimal(1),
+                    price=None, value=Decimal("25.00"),
+                    cost_basis=Decimal("20.00")),
+        ]
+    )
+    session.flush()
+
+    result = queries.portfolio(session)
+
+    assert result["total_value"] == Decimal("100.00")
+    assert result["total_cost_basis"] == Decimal("20.00")
+    # …and it accounts for 25 of the 100, which is the half that makes it
+    # readable rather than misleading.
+    assert result["cost_basis_covers"] == Decimal("25.00")

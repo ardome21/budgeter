@@ -104,6 +104,14 @@
     <p class="dim small">
       Priced by the institution that holds them, as of {{ day(p.as_of!) }}.
       Nothing here is estimated.
+      <!-- Said out loud because the employer-plan trust reports no basis and
+           holds most of the money: a "paid in" total that quietly describes a
+           fifth of the portfolio is worse than one that admits its range. -->
+      @if (p.total_cost_basis) {
+        <br />What was paid in is known for {{ p.cost_basis_covers }} of the
+        {{ p.total_value }} here — the rest is held where no cost basis is
+        reported.
+      }
     </p>
     <div class="card scroll-x">
       <table>

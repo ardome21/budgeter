@@ -377,3 +377,43 @@ def test_a_merchant_joins_the_spelling_already_in_use(
     assert rows[0]["merchant"] == "Netflix"
     # And the category it was filed under last time is offered with it.
     assert rows[0]["category_id"] == spending_category.id
+
+
+def test_a_holdings_only_item_is_not_asked_for_transactions(
+    client: TestClient, session: Session, item, linked_account, monkeypatch
+):
+    """An item answers for the products it was created with and no others.
+
+    Fidelity was linked for investments alone, and the refresh called
+    /transactions/sync anyway: Plaid answered ADDITIONAL_CONSENT_REQUIRED, the
+    endpoint turned that into a 502, and on screen it looked like the refresh
+    was broken rather than like a question the item was never granted
+    permission to answer.
+    """
+    item.products = "investments"
+    session.flush()
+
+    def explode(*_args):
+        raise AssertionError("asked a holdings-only item for transactions")
+
+    monkeypatch.setattr(plaid_client, "sync_transactions", explode)
+    monkeypatch.setattr(
+        plaid_client, "get_holdings", lambda _t: HoldingsSnapshot()
+    )
+    monkeypatch.setattr(
+        plaid_client, "get_accounts",
+        lambda _t: [
+            LinkedAccount(
+                plaid_account_id="acct-1", name="Brokerage", official_name=None,
+                mask="0000", type="investment", subtype="brokerage",
+                current=Decimal("1000.00"),
+            )
+        ],
+    )
+
+    body = client.post(f"/api/linked/items/{item.id}/preview").json()
+
+    assert body["rows"] == []
+    assert "holdings only" in body["message"]
+    # The balance still lands — that call works for any item.
+    assert body["accounts_updated"] == 1

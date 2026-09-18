@@ -120,6 +120,9 @@ export interface Portfolio {
   as_of: string | null;
   total_value: string;
   total_cost_basis: string | null;
+  /** How much of total_value the basis figure accounts for. Without it "paid
+   *  in" reads as covering the whole portfolio. */
+  cost_basis_covers: string;
   holdings: Holding[];
 }
 

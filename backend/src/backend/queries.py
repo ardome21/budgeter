@@ -213,16 +213,20 @@ def portfolio(db: Session) -> dict:
 
     holdings = []
     total_value = ZERO
-    total_basis: Decimal | None = ZERO
+    total_basis = ZERO
+    # What the basis total actually accounts for. A "paid in" figure is only
+    # readable next to how much of the portfolio it covers — and here it covers
+    # 23% of it, because the employer-plan trust holding three quarters of the
+    # money reports no basis at all.
+    covered_value = ZERO
+
     for holding, security, account in db.execute(stmt).all():
         total_value += holding.value
-        if holding.cost_basis is None:
-            # One unreported basis makes the portfolio total meaningless, so it
-            # is reported as unknown rather than as a number that silently
-            # excludes a position.
-            total_basis = None
-        elif total_basis is not None:
-            total_basis += holding.cost_basis
+        basis = _basis(holding, security)
+
+        if basis is not None:
+            total_basis += basis
+            covered_value += holding.value
 
         holdings.append(
             {
@@ -236,20 +240,38 @@ def portfolio(db: Session) -> dict:
                 "quantity": holding.quantity,
                 "price": holding.price,
                 "value": holding.value,
-                "cost_basis": holding.cost_basis,
-                "gain": (
-                    None if holding.cost_basis is None
-                    else holding.value - holding.cost_basis
-                ),
+                "cost_basis": basis,
+                "gain": None if basis is None else holding.value - basis,
             }
         )
 
     return {
         "as_of": as_of,
         "total_value": total_value,
-        "total_cost_basis": total_basis,
+        "total_cost_basis": total_basis if covered_value else None,
+        "cost_basis_covers": covered_value,
         "holdings": holdings,
     }
+
+
+def _basis(holding, security) -> Decimal | None:
+    """What was paid in, with the one rule an institution cannot state for you.
+
+    A money market fund and a cash balance are worth $1.00 a unit by
+    construction, so their cost basis *is* their value — Fidelity reports null
+    because there is nothing to report, not because the figure is unknown.
+    Treating that null as unknown is what nulled the cost basis of half the
+    accounts and the headline growth figure with them, the last time this was
+    computed.
+
+    Derived here and never written back: the stored row keeps the institution's
+    null, so nothing in the table is ever an inference of ours.
+    """
+    if holding.cost_basis is not None:
+        return holding.cost_basis
+    if security.is_cash_equivalent:
+        return holding.value
+    return None
 
 
 def months_with_data(db: Session) -> list[date]:
