@@ -64,496 +64,239 @@ curl localhost:4200/api/health/db      # same, through the dev proxy
 The second one matters: the browser only ever talks to `/api` on its own origin,
 which `frontend/proxy.conf.json` forwards to port 8000. CORS is configured but is
 not what makes the app work — it is a safety net for direct calls to `:8000`.
-
 ## The app
 
-Seven screens, all reading and writing the same database the workbook was
-imported into, behind a login.
+Five screens over one database that fills itself from the banks.
 
-| Screen | What it replaces |
+| Screen | What it answers |
 |---|---|
-| **Month** | The `*Budget` sheets — allocations vs actuals, committed/flexible, pace |
-| **Transactions** | The `*Spending` sheets — list, add by hand, recategorise inline |
-| **Linked** | Downloading an export at all — refresh straight from the bank |
-| **Import** | Pasting a bank export into a sheet, then categorising it by hand |
-| **Accounts** | The `Accounts` sheet — net worth over time, and recording a new snapshot |
-| **Investments** | Nothing — the workbook only ever held a balance, never what it was made of |
-| **Settings** | The `Monthly Fixed Costs`, `Paycheck` and `Rent` sheets, plus reconciliation |
+| **Month** | Where the money went, against what you meant it to |
+| **Transactions** | The ledger, and the three things about a row you can change |
+| **Net worth** | What you own and owe, and how that has moved |
+| **Linked** | Refresh, review, commit |
+| **Settings** | Categories, and what each is meant to cost |
 
-### Config is editable, and keeps its history
+### Rebuilt on 2026-09-18, and why
 
-Fixed costs and paycheck lines carry `effective_from` / `effective_to`.
-Changing an amount ends the current row and opens a new one, so last year's rent
-stays answerable; changing a description edits in place, because fixing a typo
-is not a price change. Deleting ends a commitment rather than erasing it — a
-cancelled subscription still explains last month.
+The version before this had nineteen tables and eight screens, and most of the
+difference was not features — it was structure inherited from the Excel
+workbook it replaced. Measured against three years of real data, the parts that
+went had nothing behind them:
 
-A bill can carry its own breakdown. Rent arrives as one charge but is really
-thirteen lines, and the components sum to exactly the parent, never counted
-beside it.
+- **No fixed cost had ever been superseded.** All twenty-nine rows carried
+  `effective_from`/`effective_to` so that changing a commitment's amount could
+  close one row and open another. In three years that path never ran once.
+- **Thirteen of twenty-nine were parent/child components**, which is the only
+  reason every fixed-cost total had to remember `parent_id.is_(None)`.
+- **`is_exact` was true on twenty-seven of twenty-nine.** A flag with no
+  variance is a comment.
+- **Budgets went unmaintained.** Twelve allocations for August 2026; exactly
+  one each for May, June and July.
+- **Reconciliation had finished its job.** It existed to prove the workbook
+  import landed correctly, and it did.
 
-### Reconciliation
+What survived is what the banks feed and what reads it. The 1,291 hand-typed
+workbook rows covering December 2023 to August 2026 were not ported — the app
+now holds what the institutions report and nothing else.
 
-What each commitment expected against what actually left the account. The
-workbook had rent expected at 1553.37 on one sheet and BILT CARD HOUSING
-charging 1535.17 on another, with nothing connecting them.
+### Nothing is stored that can be derived
 
-A commitment is matched to a merchant explicitly, because guessing from the
-description gets Netflix right and rent wrong — the bill is called "Rent" and
-the charge says BILT CARD HOUSING. Unmatched commitments say so and offer
-candidates rather than falling back to a category total, which made Energy and
-Phone both report the entire Utilities figure.
+Spending by category, net worth over time, budget versus actual: all queries,
+none of them tables. The workbook kept its rollups as cells computed by SUMIF
+over a hardcoded list of category names, and any category missing from that
+list silently vanished from the total. Two real cases: May 2024 under-reported
+spending by $28.94 because a charge was typed `' Subscription'`, and monthly
+fixed costs under-reported by $89.00 because the gym was filed under a category
+the rollup list omitted — making disposable income optimistic by exactly that.
 
-The link is worth setting for every commitment. Seven were pointing at names
-nobody bills under — the workbook typed `Phone` and `NYT` by hand for three
-years while the bank writes `Spectrum Mobile` and `NYTIMES*` — and a commitment
-linked to a dead name reports "expected but not charged this month" forever,
-which reads like a missed payment and is not one. Linked, July 2026 reconciles
-15 of 16, and the rent drift the workbook could not see is on screen: 1553.37
-expected against 1535.17 charged.
+A total that is a query cannot drift from the rows it totals.
 
-`iCloud` is deliberately left unlinked. It bills as `APPLE.COM/BILL`, the same
-descriptor as Apple TV, so both resolve to one merchant and no link can tell
-0.99 from 12.99. Apple TV therefore carries a 0.99 drift that is really the
-iCloud charge. An unmatched row that says so beats a link that quietly reports
-one subscription's cost as another's.
+### A card payment is not spending
 
-### Net worth
+`CategoryKind` is `SPENDING`, `INCOME`, `TRANSFER` or `SAVINGS`, and it exists
+because of a bug that took three commits to stamp out. A credit card payment is
+last month's spending moving between two accounts you own. Counting it reported
+August 2026 as $2,278.84 when $207.45 of that was the Discover payment — and
+made that payment the second largest "purchase" of the month, ranked above the
+power bill, describing nothing.
 
-The `Accounts` sheet stored balances wide, a new column per snapshot, which is
-why there were only eight in two years. As rows they are unbounded.
+Every figure claiming you spent something now runs through one `spending_only`
+helper in `queries.py`. Written out by hand at each call site, it came out
+correct in three places and missing in two.
 
-The chart is scaled by **actual date**, not by evenly spaced snapshots, so a
-21-month gap looks like 21 months. Stretches with no reading are drawn dashed:
-the line there is drawn, not measured. Series colours come from a categorical
-palette validated against this app's own light and dark surfaces, and every
-value is also in a table below the chart — a tooltip is never the only way to
-read a number.
+The period list still counts every row and totals only the spending ones —
+summed conditionally, never filtered, so a month is listed at its true row
+count even when part of it is transfers.
 
-Net worth counts what you owe. The workbook's own `Total` row omitted the
-student loan and the credit card balance, reporting 53,742.84 for March 2024
-against a real 47,742.84.
+### Committed versus flexible is gone
 
-### Positions, and what was actually saved
-
-A brokerage account is a list of holdings, not a number. Dropping a Fidelity
-`Portfolio Positions` export records what is held — units, price and cost basis
-per position — and from there two things follow that a balance alone cannot
-give.
-
-The first is **what you put in versus what the market added**. Value minus cost
-basis is the part of the balance no budgeting produced: on the first import,
-$39,187 of $161,187, and 41% of the retirement account alone. A rising net worth
-line cannot tell you which half moved.
-
-The second is **a current figure between statements**. Prices come from a public
-quote endpoint, cached in `security_prices`, and three rules decide each
-holding:
-
-- a public quote, times the units held;
-- a money market at par — never fetched, because a provider returning 0.9998
-  for SPAXX would put a wobble into a cash balance that has none;
-- a **stand-in**, for something with no public quote at all.
-
-That last case is not an edge case here. The largest single holding, 76% of the
-portfolio, is reported by CUSIP `31564E540` — a collective investment trust sold
-only inside employer plans, which no provider will ever quote. Its public twin
-`FFIJX` stands in, and lends **only its movement**: the value is the statement
-figure times the change in the stand-in since that date. Never the stand-in's
-price. The trust trades at $22.70 a unit against FFIJX's $19.93, so units times
-the proxy price would report that account 14% light on day one.
-
-Every current value carries which of the four rules produced it — live, at par,
-estimated, or carried from the statement — because they are four different
-claims and one confident total is the failure this screen exists to avoid.
-
-**No estimate is ever written.** `account_balances` and `holdings` stay a record
-of things that were measured; the repricing happens on the request and is gone
-when it returns. Net worth shows both figures and the date the measured one was
-taken, and the estimated point on the chart is drawn hollow and dashed. That is
-what makes the difference between the two numbers readable as exactly what it
-is: market movement since the last statement.
-
-Fidelity is why this exists rather than a Plaid link. It shares data only
-through Akoya, which has no individual developer access, so those accounts can
-never be linked. Dropping the export **is** the refresh — and since the file
-states each account's value, importing it records the balance snapshot too,
-rather than asking for a number that has just been parsed.
-
-### The merchant is chosen at entry, not merged afterwards
-
-A transaction records **who was paid as a name on the row** (`merchant_key`),
-not a foreign key into a merchant table. That is a deliberate reversal.
-
-The tables it replaces resolved a merchant from the description on write, which
-meant a second spelling could only be discovered *after* it was already in the
-data — so there was a review queue to fold the duplicates back together. That
-produced 403 merchants from 1,291 transactions, **278 of them used exactly
-once**, and a queue nobody could empty. Its suggestion pass was also O(n²):
-88 ms at 403 names, 57 s at 10,000.
-
-Offering the names already in use **at the moment of entry** means the second
-spelling never arrives. The picker (`GET /merchants/keys`) appears on the entry
-form, on every transaction row, and on every import preview row, ranked by use
-rather than alphabetically because most names are used once.
-
-Free typing is still allowed — a shop nobody has visited has to be nameable —
-and what is typed is snapped to an existing spelling by two **exact** rules,
-never a similarity score:
-
-1. Same name, different case: `harris teeter` is `Harris Teeter`.
-2. An existing name that is a whole-word **prefix** of the guess, longest
-   first. `UBER EATS 4471` is `Uber Eats`, not `Uber`.
-
-Rule 2 also covers several descriptor forms the normalizer alone misses, since
-it never sees a real bank export until one is imported: `SPOTIFY USA 8774471`,
-`HARRIS TEETER 0412` (no `#`, and four digits is under the 8-character id
-floor) and `LYFT *RIDE THU 3PM`, which otherwise minted a merchant per ride.
-
-**What this gives up**, honestly: there is no longer any way to merge two names
-after the fact. The old schema kept a pattern per descriptor, so hand-merges
-taught it that `Netlix` and `Harris Teater` were typos of real shops. Those
-corrections are gone, and a typo now has to be fixed in the picker on the row.
-That is the trade — and it is a good one here, because every one of those typos
-came from a hand-typed workbook cell that no bank will ever send again.
-
-### The normalizer
-
-`normalize_merchant` collapses a descriptor to a stable key, and it is only ever
-a **guess** that pre-fills an editable field. It strips processor prefixes
-(`TST*`, `SQ *`), phone numbers, store numbers, trailing state codes, known city
-names and opaque bank references.
-
-It strips an appended id by looking for **a long run containing a digit**,
-because that is what separates an identifier from a word. Matching on length
-alone ate the merchant instead: descriptors arrive in capitals, so
-`DUKEENERGY BILL PAY 910175813041` became `bill pay`, one typo away from
-`BILT CARD HOUSING` — and the power bill and the rent were duly treated as one
-merchant.
+Deliberately. It was a property of the individual transaction, which was right,
+but maintaining it meant maintaining a list of standing commitments, and that
+list is what most of the deleted schema was. If it comes back it comes back as
+a flag on a row with a rule behind it, not as a table of effective-dated
+amounts.
 
 ### Money is a string on the wire
 
-Every money field crosses the API as a JSON **string**, never a number.
-JavaScript has no decimal type, so a JSON number is a float the moment it is
-parsed. The browser formats what it is handed and never sums anything — every
-total on screen was computed in Postgres.
+Every amount crosses the API as a string and stays one in the browser.
+JavaScript has no decimal type: a JSON number becomes a float the moment it is
+parsed, and a budget three cents off has no explanation available to whoever is
+reading it. Sums happen in Postgres or in Python with `Decimal`. Nothing in the
+frontend adds money up.
+
+The single exception is the budget bar's width, which is a percentage for CSS.
+The exact figures sit beside it in their own columns, so a rounded width can
+never be mistaken for an amount.
+
+### Net worth over time
+
+Balances are one row per account per day, so the series is a `group by`. The
+workbook stored them wide — a new *column* per snapshot date — which is why two
+years of it produced eight readings.
+
+Liabilities are stored **negative**, decided once at the point of writing, so
+net worth is a plain sum and no query has to remember the sign rule. Plaid
+reports $207.45 owed as `+207.45`; the flip happens on the way in.
+
+Every point carries how many accounts reported that day. Without it, a day when
+two of eleven accounts were read looks exactly like a day net worth collapsed.
+Partial days are held out of the line and counted underneath instead.
+
+### Holdings are priced by the institution
+
+This used to be 1,500 lines. A Fidelity CSV was parsed for positions, public
+quotes were fetched to revalue them, and for the largest holding in the
+portfolio — `31564E540`, a collective investment trust sold only inside
+employer plans, with no ticker and no public quote that will ever exist — the
+code borrowed a similar fund's daily movement and scaled the last statement
+value by it. Four separate pricing bases had to be displayed side by side,
+because they were four different kinds of claim.
+
+Fidelity can be linked through Plaid as of 2026-09-18, so the institution
+reports its own prices and none of that is needed. `cost_basis` stays nullable
+and a null stays a null — zero would report an entire position as gain.
+
+### The merchant is chosen at entry, not merged afterwards
+
+A merchant is a string on the transaction. There is no merchant table, no merge
+queue and no similarity scoring, and the reason is structural: resolving a
+merchant from the descriptor *on write* means a second spelling can only be
+discovered once it is already in the data, so something has to fold duplicates
+back afterwards. Choosing from the names already in use means the second
+spelling never arrives.
+
+`snap_to_existing` has exactly two rules, both exact:
+
+1. Same name, different case — `harris teeter` joins `Harris Teeter`.
+2. An existing name that is a whole-word **prefix** of the guess, longest
+   wins — so `UBER EATS 4471` resolves to `Uber Eats` and not to `Uber`.
+
+Rule 2 exists because the original schema kept a pattern per descriptor, and a
+hand-merge had taught it that `NETFLIX.COM` was Netflix. Dropping the patterns
+lost that, and the guess regressed to `Netflix Com`.
+
+Any future proposal to add fuzzy matching, a merge screen or a similarity score
+is re-creating what was deliberately removed. The fix for a bad guess is the
+picker on the row.
+
+### The normalizer
+
+`normalize_merchant` strips an appended id only when the run **contains a
+digit**. Descriptors arrive in capitals, so matching on length alone ate
+merchant names instead: `DUKEENERGY`, `POTBELLY`, `CHARLOTTE OBSERVER`. With
+that rule missing, `DUKEENERGY BILL PAY 910175813041` collapsed to `bill pay` —
+close enough to `BILT CARD HOUSING` that the power bill and the rent were
+offered as the same merchant.
 
 ### Signing in
 
-The app holds three years of financial history and, since linking, long-lived
-read tokens to real bank accounts. It had no authentication at all before that,
-which was defensible on loopback and is not once those tokens exist.
+Password + TOTP, or a passkey. Unchanged by the rebuild: it is the one
+subsystem with no coupling to the schema that was replaced.
 
-**First run claims the app.** Visit it and you get a setup screen: a name, a
-password — with a **Show** toggle, because a password typed once and never
-displayed is a typo you find out about later — then a QR code for any
-authenticator app and ten recovery codes.
+The guard is a dependency on the **`/api` router itself**, not per-route, so
+the default is closed — a router added later is protected by virtue of being
+mounted, and every exception is written down in `auth.PUBLIC_PATHS` where it
+can be read. The per-route alternative fails silently: a handler that forgets
+the dependency is simply open, and nothing about it looks wrong.
 
-The minimum is **eight characters**, not the twelve it started at. The
-password is one of two factors, Argon2id-hashed, behind a lockout, on an app
-that answers on loopback. Twelve bought very little and cost a password that
-could not be reproduced — which is how the first one was lost.
-Enrolment is two steps on purpose — the account is not usable until a code
-generated from that secret comes back, because a mistyped scan would otherwise
-lock the only person there will ever be out of their own history.
+Before any user exists the API is open, so first launch can reach setup.
+`/auth/setup` refuses once a user is confirmed, which closes it for good.
 
-Setup is reachable only while no confirmed user exists, and refuses afterwards.
-That is the whole window in which the API is open.
+A passkey is **MFA on its own** — `user_verification=REQUIRED` is what makes
+that true — so signing in with one asks for nothing else. `webauthn_rp_id` is
+configuration: a passkey is bound to it, so moving to a real hostname
+invalidates every registered passkey, and password + TOTP is the fallback that
+makes that survivable.
 
-**Both factors fail together.** A wrong password and a wrong code return the
-same message, because saying which one was right tells an attacker holding one
-of them that it works. Eight failures lock the account for fifteen minutes.
-
-**What is stored, and how.** The password is Argon2id. The TOTP secret is
-Fernet-encrypted with the same key as the Plaid tokens — a secret in the clear
-would make the second factor decorative against exactly the attacker it exists
-to stop, one who has read the database. Recovery codes are hashed like
-passwords, because a recovery code *is* a password, and each works once.
-
-**The guard hangs off the `/api` router**, not off each route, so the default is
-closed: a router added later is protected by virtue of being mounted, and every
-exception is written down in `PUBLIC_PATHS` where it can be read. The per-route
-alternative fails silently — a handler that forgets the dependency is simply
-open, and nothing about it looks wrong. Session expiry is checked server-side as
-well as on the cookie, since a cookie's own max-age is a hint an attacker
-replaying a stolen one is free to ignore.
-
-#### Passkeys: Touch ID instead of a code
-
-Once you are in, **Settings → Signing in** registers this device. After that,
-signing in is one gesture and the six-digit code becomes the thing you never
-use.
-
-A passkey is multi-factor **on its own**: the private key never leaves the
-machine (what you have) and the authenticator will not use it without a
-fingerprint or the device password (what you are, or know). That is why signing
-in with one asks for nothing else — a password prompt in front of it would be
-theatre, not a third factor. `userVerification` is `required`, which is what
-makes that true rather than assumed.
-
-Registering is behind the login; signing in is not. Adding a passkey sets a
-credential, so it has to sit behind the login it will go on to replace.
-
-The relying-party id is `localhost`, and a passkey is bound to it. Serving the
-app from a real hostname invalidates every passkey already registered, which is
-why `WEBAUTHN_RP_ID` is configuration rather than a constant — the password and
-code keep working, and the passkeys get registered again.
-
-Nothing secret is stored. The public key verifies signatures and cannot produce
-them, so unlike the TOTP secret that table is not worth encrypting. The one
-attack the protocol can detect is a cloned authenticator — a signature counter
-that has not advanced past what was last seen — and that is refused.
-
-**Why not email or SMS.** SMS needs a paid provider and is the weakest factor
-there is; email needs SMTP credentials and is usually the reset path for
-everything else, which makes it close to circular. Both add a delivery failure
-mode: no signal, no internet, or a provider having a bad day, and you cannot
-open your own budget on your own laptop. For an app that runs on one machine,
-an external service in the login path is a lot of machinery for a downgrade.
-That calculus changes the day this has more than one user or needs recovery on
-a device you do not have.
-
-#### No authenticator yet
-
-There is a gap between setting the login up and having an authenticator that
-actually works, and being locked out of your own budget in the middle of it is
-the worst moment for it to happen:
-
-```sh
-cd backend && uv run python scripts/show_code.py             # the current code
-cd backend && uv run python scripts/show_code.py --setup-key # and the secret
-```
-
-Honest about what it costs: anyone who can run it already holds the database
-and the encryption key, so it hands them the second factor too. It is no weaker
-than `reset_auth.py` beside it, which can delete the login outright — both need
-shell access to the machine, which is a higher bar than the login asks for.
-
-**The point is to stop needing it.** Register a passkey, or paste the setup key
-into an authenticator, and never run it again.
-
-#### Locked out
-
-Recovery codes first. If those are gone too:
-
-```sh
-cd backend && uv run python scripts/reset_auth.py          # says what it would do
-cd backend && uv run python scripts/reset_auth.py --apply  # does it
-```
-
-It clears the login and nothing else — every transaction, account and linked
-bank stays exactly where it is, and the next visit runs setup again. It needs
-shell access to the machine holding the database, which is a higher bar than
-the login itself asks for, and that is what makes it safe to have.
+Locked out: `cd backend && uv run python scripts/reset_auth.py --apply`. Dry
+run by default, deletes the user only, touches no financial data.
 
 ### Linked banks
 
-A **Refresh** button instead of a trip to five bank websites. Link an
-institution once through Plaid, and every refresh pulls what has posted since
-the last one.
+Link an institution once through Plaid; every refresh pulls what has posted
+since the last one.
 
-The same rule as the CSV import governs it: **preview first, commit second**. A
-bank feed guesses a merchant and a category exactly as a CSV does, and a guess
-that writes itself is a guess nobody checks.
-
-Set up with `PLAID_CLIENT_ID`, `PLAID_SECRET` and `PLAID_TOKEN_KEY` in `.env` —
-see `.env.example`. Without them the Linked screen says so and every other
-screen carries on unchanged.
+**Preview first, commit second.** A bank feed guesses a merchant and a category
+exactly as an import does, and a guess that writes itself is a guess nobody
+checks.
 
 #### The cursor is what protects the data
 
-Plaid hands back changes since a cursor. The cursor advances **only on commit**,
-never on a preview, so closing the screen without acting re-offers the same
-rows next time rather than stepping past them for good. A row you *untick* is a
+Plaid hands back changes since a cursor. **The cursor advances only on commit**,
+never on a preview, so closing the screen without acting re-offers the same rows
+next time rather than stepping past them for good. A row you *untick* is a
 decision that it does not belong, and the cursor passes it too — `Re-offer
 everything` clears the cursor when that was a mistake, and rows already
 committed are filtered out by their transaction id, so only the genuinely
 missing ones come back.
 
+If a sync offers **zero** reviewable rows the cursor advances immediately.
+Otherwise a rewind that re-offers nothing repeats forever.
+
 #### A charge is not immutable, so a content hash is the wrong key
 
-This is where a bank feed differs from a CSV. A CSV is a snapshot; a feed is a
-record the bank keeps editing. A pending coffee posts two days later with a
-different date, often a different amount, and usually a rewritten descriptor —
-and a hash over content sees a brand-new transaction where there is one charge.
+A CSV is a snapshot; a feed is a record the bank keeps editing. A pending coffee
+posts two days later with a different date, often a different amount, and
+usually a rewritten descriptor — and a hash over content sees a brand-new
+transaction where there is one charge. A linked row is keyed by **Plaid's
+transaction id**.
 
-So a linked row is keyed by **Plaid's transaction id**, in `source_ref`. That
-column already existed for workbook provenance (the cell a figure came from),
-which is why its unique index is partial: the column is a key on one side of
-`source` and a note on the other.
+Revisions and withdrawals are applied **silently**: the bank settling its own
+record is not a suggestion, and holding it behind a prompt leaves the ledger
+knowingly wrong until someone clicks. A revision updates only the fields the
+bank owns — date, amount, descriptor — so it cannot discard a category or
+merchant corrected by hand.
 
-Revisions and withdrawals are applied **silently**. They are the bank settling
-its own record, not a suggestion, and holding them behind a prompt would leave
-the ledger knowingly wrong until someone clicked. The screen reports the counts.
+**Pending charges are never offered.** They get withdrawn and re-sent when they
+post; waiting costs a day and saves reviewing the same coffee twice.
 
-**Pending charges are not offered at all.** They get withdrawn and re-sent when
-they post; waiting costs a day and saves reviewing the same coffee twice.
+#### Products are fixed when an item is created
 
-#### Two things it does not solve
+An item keeps the product set it was created with. Adding `investments` to a
+bank linked for transactions means running Link again in update mode with fresh
+consent — so the Linked screen has two buttons, and a brokerage linked with the
+wrong one returns balances and no holdings, which reads as an empty portfolio
+rather than as a mislink.
 
-**Fidelity cannot be linked.** It shares data only through Akoya, which has no
-individual developer access. Fidelity stays on balance snapshots and the CSV
-screen — which is the reason that screen stays.
+Access tokens are **Fernet-encrypted** (`PLAID_TOKEN_KEY`). A Plaid access
+token is a long-lived read key to a real bank account, which is a different
+class of secret from anything else here, and this database gets dumped like
+ordinary data. Changing that key orphans every linked bank.
 
-**Bilt moved.** The Wells Fargo card was retired in February 2026 and Bilt Card
-2.0 is issued by Cardless, so the historical `BILT CARD HOUSING` rows and
-anything linked today sit on either side of that change.
+**The tokens are the irreplaceable asset**, not the code. Production items are
+finite per account, so recovering from a dropped table means re-linking every
+bank and spending that many more. `scripts/extract_plaid_items.py` and
+`scripts/restore_plaid_items.py` exist for exactly that, and were what made the
+2026-09-18 rebuild safe.
 
-#### What it does not touch
-
-Linked accounts are created fresh. The lumped `Credit Cards` account and the
-1,291 workbook rows filed against it are left exactly as they are — the split
-is simply the day an institution was linked. Each linked institution also gets
-a **start date**, defaulting to the day after the newest transaction on file:
-Plaid returns up to 24 months, the workbook already holds all of them, and
-without the floor a first refresh is a thousand rows of near-duplicates against
-history typed by hand.
-
-Access tokens are Fernet-encrypted before they are stored. A Plaid access token
-is a long-lived read key to a real bank account, which is a different class of
-secret from anything else here, and this database gets dumped like ordinary
-data.
-
-### Importing a bank export
-
-Still here, and still the answer for anything no aggregator reaches.
-
-Preview first, commit second; nothing is written until the preview comes back
-and you confirm it. Columns are detected across the usual header spellings,
-amounts parse from `$1,234.56` / `(45.00)` / `-45`, and there is a toggle for
-banks that export purchases as negative.
-
-The merchant is guessed against the three years of history already imported, so
-most rows arrive with the right category already filled in — and the guess sits
-in an editable picker, because a wrong one has to be fixable here. Nothing
-downstream will fix it.
-
-A merchant does not *have* a category, it has a **history** of categories.
-Rhino Market & Deli is Food and Drinks on a sandwich run and Groceries on a
-shop, and both are right. So the preview suggests the most-used one and offers
-every other category that merchant has genuinely been filed under as a
-one-click chip, each showing how often.
-
-There is no stored default to drift from that history, and nowhere left to put
-one. The column that held it recorded whichever transaction created the
-merchant, never followed a merge, and ended up contradicting the merchant's own
-history for twelve of them.
-
-#### Which account it came from
-
-Name the account the export belongs to and every row it creates carries it.
-It also goes into the row's hash, so the same charge appearing on a card export
-and a checking export stays two rows instead of one silently swallowing the
-other. The selector lists open accounts only — a settled account cannot take
-new charges, and asking to import to one is refused rather than accepted and
-filed somewhere odd.
-
-#### Two ways a row can already be on file
-
-Re-dropping the same file is a no-op: CSV rows carry a content hash, and rows
-already present come back ticked off as duplicates. **Hand-entered rows are
-never hashed and never deduplicated** — two identical charges at the same bar
-on one night are usually two real rounds.
-
-That last point is also true *inside* one export, and a hash over content alone
-cannot express it. Two $3.50 coffees on one day hashed identically, and the
-second one collided with the first against a unique index — the response was a
-500 and the entire import was lost, not just the row. Repeats are now numbered
-in the order they appear, so both survive, and a re-drop of the same file still
-skips both because the same file numbers them the same way again.
-
-The hash only ever catches an exact re-drop. It cannot catch the case that
-actually bites: a bank export covering months the workbook already holds. Those
-descriptions were typed by hand — `Netflix`, `Breakfast`, `Alex Dinner` — and
-never hash the same as `NETFLIX.COM 866-579-7172 CA`. So the preview also flags
-**near duplicates**: anything already on file for the same amount within three
-days, shown with the row it matched.
-
-Flagged rows stay ticked. A near match is a question, not a verdict, and
-genuine repeat purchases look exactly like this — quietly discarding real
-spending is the worse failure. When an export really does overlap a period you
-already have, one button unticks all of them at once.
-
-The imported workbook history was hashed after the fact by
-`scripts/backfill_import_hashes.py`, so exact matches against it work too. It
-is a dry run by default, like every script under `scripts/`.
-
-## Importing the Excel history
-
-**The database is the source of truth.** The workbooks are the three years of
-history it was built from, and corrections now land as migrations rather than
-as re-imports. The importer below is kept because it documents where every
-figure came from, not because it is the way to change anything.
+### Seeding
 
 ```sh
-cd backend
-uv run alembic upgrade head
-uv run python scripts/import_workbook.py --reset ~/Desktop/Budgets/Budget\ 20*.xlsx
+cd backend && uv run python scripts/seed_categories.py
 ```
 
-`--reset` wipes every table first, so the import can be re-run as the merchant
-rules are tuned. Close the workbooks in Excel first — a `~$` lock file means
-you'd import a stale snapshot.
-
-The importer guesses nothing silently. It reconciles two ways and prints an
-anomaly report:
-
-1. **Every row lands** — each sheet's column-D sum must equal what was imported
-2. **The right column was read** — each sheet's own rollup `Total` is compared too
-
-A difference in (2) is not necessarily an import bug. Those rollups are `SUMIF`
-over a hardcoded list of category names, so any category missing from that list
-is invisible to the total — the workbook silently under-reports and the import
-is the one telling the truth. Two confirmed cases:
-
-| Sheet | Under-reports by | Cause |
-|---|---|---|
-| `2024 May Spending` | $28.94 | A charge typed `' Subscription'`, not `'Subscriptions'` |
-| `2026 Monthly Fixed Costs` | $89.00 | Inner Peaks is category `Health`, absent from the rollup list |
-
-The second makes `Monthly Overview`'s disposable income optimistic by exactly
-$89/month. Both are correct in the database: the misspelling is aliased to
-Subscriptions, and the gym is a fixed cost inside the $2,032.90 monthly total.
-
-Two further defects live only in the workbook and are not carried across. Its
-`July Budget` sheet reads `Paycheck!F2*2` for "Taxes" and `Paycheck!F4*2` for
-"Automatic Savings" — the insurance total and the tax total respectively. The
-app derives both from `paycheck_lines` and is unaffected.
-
-### Committed vs flexible is a property of the transaction
-
-Not of the category. `Self Care` holds an $89/month gym membership *and* 77
-one-off purchases; every committed-looking category in the history has
-discretionary rows in it. So `categories.kind` does not encode commitment — it
-only distinguishes `SPENDING` from `SAVINGS` (moved, not spent) and `OTHER`.
-
-Commitment comes from `transactions.is_recurring` and from the `fixed_costs`
-list. `is_recurring` is under-recorded in the source workbooks — rent is
-flagged on only 3 of 19 rows — because the 'Automatic?' column was filled in by
-hand and often not at all. `scripts/backfill_recurring.py` closes the gap by
-marking anything charged by a merchant a standing commitment names:
-
-```sh
-uv run python scripts/backfill_recurring.py            # report only
-uv run python scripts/backfill_recurring.py --apply    # write it
-```
-
-It is a dry run by default, because inference over a thousand rows changes how
-every month's committed figure reads and should be looked at first. It follows
-the **explicit merchant link** where a commitment has one, so it is worth
-re-running after linking a commitment on the Settings screen — before the
-links existed it found nothing for rent, phone or the paper, which are the
-commitments the split most depends on.
-
-### Rent includes bundled utilities
-
-Internet and water are billed inside the rent charge, so `Rent 1474.68 +
-Bundled-Utility 78.69 = 1553.37` — the Rent sheet total, and the amount that
-arrives as a single `BILT CARD HOUSING` transaction. The importer files bundled
-utilities under **Rent**, not Utilities; what each line is stays in its
-`description`. Filing them under Utilities would understate the rent commitment
-and inflate utilities by the same amount, matching neither the Rent sheet nor
-how the money actually leaves the account.
+Idempotent. An existing name is left exactly as it is, so running it twice
+cannot renumber or re-kind a category that has since been edited.
 
 ## Migrations
 
