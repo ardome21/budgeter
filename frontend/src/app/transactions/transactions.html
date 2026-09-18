@@ -1,0 +1,120 @@
+<h1>Transactions</h1>
+
+<div class="filters card">
+  <label>
+    <span>Search</span>
+    <input
+      type="search"
+      [value]="search()"
+      (input)="search.set($any($event.target).value)"
+      (keyup.enter)="filter()"
+      placeholder="Descriptor, merchant or note"
+    />
+  </label>
+
+  <label>
+    <span>Category</span>
+    <select
+      [value]="categoryId() ?? ''"
+      (change)="categoryId.set($any($event.target).value ? +$any($event.target).value : null); filter()"
+    >
+      <option value="">All</option>
+      @for (c of categories(); track c.id) {
+        <option [value]="c.id">{{ c.name }}</option>
+      }
+    </select>
+  </label>
+
+  <label>
+    <span>Account</span>
+    <select
+      [value]="accountId() ?? ''"
+      (change)="accountId.set($any($event.target).value ? +$any($event.target).value : null); filter()"
+    >
+      <option value="">All</option>
+      @for (a of accounts(); track a.id) {
+        <option [value]="a.id">{{ a.institution }} — {{ a.name }}</option>
+      }
+    </select>
+  </label>
+
+  <button type="button" (click)="filter()">Apply</button>
+</div>
+
+@if (loading()) {
+  <p class="dim">Loading…</p>
+} @else if (!rows().length) {
+  <p class="dim">Nothing matches that.</p>
+} @else {
+  <div class="card scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Description</th>
+          <th>Merchant</th>
+          <th>Category</th>
+          <th class="num">Amount</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (row of rows(); track row.id) {
+          <tr [class.saving]="saving() === row.id">
+            <td class="dim nowrap">{{ day(row.occurred_on) }}</td>
+            <!-- What the bank sent, verbatim. It is the evidence behind every
+                 other cell on the row, so it is never overwritten by a guess. -->
+            <td class="descriptor" [title]="row.description">
+              {{ row.description }}
+              <span class="account dim">{{ row.account_name }}</span>
+            </td>
+            <td>
+              <app-merchant-field
+                [value]="row.merchant"
+                (committed)="rename(row, $event)"
+              />
+            </td>
+            <td>
+              <select
+                [value]="row.category_id"
+                (change)="refile(row, $any($event.target).value)"
+                aria-label="Category"
+              >
+                @for (c of categories(); track c.id) {
+                  <option [value]="c.id">{{ c.name }}</option>
+                }
+              </select>
+            </td>
+            <td class="num" [class.credit]="isCredit(row)">{{ display(row) }}</td>
+            <td>
+              <input
+                type="text"
+                class="note"
+                [value]="row.notes ?? ''"
+                (blur)="annotate(row, $any($event.target).value)"
+                placeholder="—"
+                aria-label="Note"
+              />
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <div class="pager">
+    <button type="button" (click)="page(-1)" [disabled]="offset() === 0">
+      Previous
+    </button>
+    <span class="dim">
+      {{ offset() + 1 }}–{{ offset() + rows().length }} of {{ total() }}
+    </span>
+    <button
+      type="button"
+      (click)="page(1)"
+      [disabled]="offset() + rows().length >= total()"
+    >
+      Next
+    </button>
+  </div>
+}

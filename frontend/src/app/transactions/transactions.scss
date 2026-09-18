@@ -1,0 +1,77 @@
+h1 {
+  margin: 0 0 1rem;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.filters {
+  display: flex;
+  gap: 0.9rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+
+  input,
+  select {
+    min-width: 11rem;
+  }
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+/* The descriptor is the longest thing on the row and the least often read in
+   full, so it takes the squeeze rather than pushing the editable cells off. */
+.descriptor {
+  max-width: 24ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+
+  .account {
+    display: block;
+    font-size: 11.5px;
+  }
+}
+
+/* Money coming back — a refund, a payment received. Shown in the accent rather
+   than the error colour: it is not a problem, it is the other direction. */
+.credit {
+  color: var(--accent);
+}
+
+.note {
+  width: 100%;
+  min-width: 8rem;
+  border-color: transparent;
+  background: transparent;
+
+  &:hover,
+  &:focus {
+    border-color: var(--border);
+    background: var(--surface);
+  }
+}
+
+tr.saving {
+  opacity: 0.55;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+  font-size: 13px;
+}

@@ -1,0 +1,54 @@
+h1 {
+  margin: 0 0 1rem;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 1.8rem 0 0.5rem;
+}
+
+.budget-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+}
+
+.amount {
+  width: 7rem;
+  text-align: right;
+  font-family: var(--mono);
+}
+
+.add {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.small {
+  font-size: 13px;
+  max-width: 70ch;
+  line-height: 1.6;
+}
+
+button.quiet {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}

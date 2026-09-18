@@ -1,25 +1,8 @@
-import { DatePipe } from '@angular/common';
-import { RouterLink } from '@angular/router';
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { Api } from '../api';
-import { MerchantField } from '../merchant-field/merchant-field';
-import {
-  Category,
-  PlaidStatus,
-  SyncCommitResult,
-  SyncResult,
-  SyncRow,
-  formatMoney,
-} from '../models';
-
-/** A synced row plus the choices made about it on screen. */
-interface ReviewRow extends SyncRow {
-  categoryId: number | null;
-  include: boolean;
-  recurring: boolean;
-}
+import { LinkedItem, Preview, PreviewRow } from '../models';
 
 /** Plaid Link, injected into the page by the script tag in index.html. */
 declare const Plaid: {
@@ -30,68 +13,61 @@ declare const Plaid: {
   }): { open(): void };
 };
 
+interface Reviewable extends PreviewRow {
+  include: boolean;
+}
+
 /**
- * Linked banks: refresh instead of exporting a CSV.
+ * Linked banks: refresh instead of visiting five websites.
  *
- * Same rule as the Import screen — preview first, commit second. A bank feed
- * guesses a merchant and a category exactly as a CSV does, and a guess that
- * writes itself is a guess nobody checks.
+ * Preview first, commit second. A bank feed guesses a merchant and a category
+ * exactly as an import does, and a guess that writes itself is a guess nobody
+ * checks. The cursor moves only on commit, so closing this screen without
+ * acting re-offers the same rows next time rather than stepping past them.
  *
- * What the bank *revises* is not shown for review, only counted. A pending
- * charge that posts at a different amount is the bank settling its own record,
- * and holding that behind a prompt would leave the ledger knowingly wrong until
- * someone clicked.
+ * What the bank *revises* is not offered for review, only counted. A pending
+ * charge that posts at a different amount is the institution settling its own
+ * record — holding that behind a prompt leaves the ledger knowingly wrong
+ * until somebody clicks.
  */
 @Component({
   selector: 'app-linked',
-  imports: [DatePipe, FormsModule, MerchantField, RouterLink],
+  imports: [FormsModule],
   templateUrl: './linked.html',
   styleUrl: './linked.scss',
 })
 export class Linked {
   private api = inject(Api);
 
-  status = signal<PlaidStatus | null>(null);
-  categories = signal<Category[]>([]);
-  sync = signal<SyncResult | null>(null);
-  review = signal<ReviewRow[]>([]);
-  result = signal<SyncCommitResult | null>(null);
+  items = signal<LinkedItem[]>([]);
+  rows = signal<Reviewable[]>([]);
+  active = signal<LinkedItem | null>(null);
+  result = signal<Preview | null>(null);
   busy = signal(false);
   linking = signal(false);
   error = signal<string | null>(null);
 
-  readonly fmt = formatMoney;
-
-  includedCount = computed(() => this.review().filter((r) => r.include).length);
-  needsCategory = computed(
-    () => this.review().filter((r) => r.include && !r.categoryId).length,
-  );
-  flaggedCount = computed(
-    () =>
-      this.review().filter((r) => r.include && r.near_duplicates.length).length,
-  );
-  canCommit = computed(
-    () => this.includedCount() > 0 && this.needsCategory() === 0,
-  );
-  hasItems = computed(() => (this.status()?.items.length ?? 0) > 0);
-
   constructor() {
-    this.api.categories().subscribe((c) => this.categories.set(c));
     this.load();
   }
 
-  private load(): void {
-    this.api.plaidStatus().subscribe({
-      next: (s) => this.status.set(s),
+  load(): void {
+    this.api.linkedItems().subscribe({
+      next: (items) => this.items.set(items),
       error: (e) => this.error.set(this.describe(e)),
     });
   }
 
-  // --- Linking -------------------------------------------------------------
-
-  /** Open Plaid Link. `itemId` re-authenticates an existing bank instead of
-   *  adding a second copy of it. */
-  link(itemId: number | null = null): void {
+  /**
+   * Open Plaid Link.
+   *
+   * `products` is the decision that cannot be revisited afterwards. An item is
+   * created with a set of products and keeps it: adding investments to a bank
+   * linked for transactions means running Link again with fresh consent, and a
+   * brokerage linked without it returns balances and no holdings — which looks
+   * like an empty portfolio rather than a mislink.
+   */
+  link(products: string[], itemId: number | null = null): void {
     if (typeof Plaid === 'undefined') {
       this.error.set(
         'Plaid Link did not load. Check the network — it is fetched from cdn.plaid.com.',
@@ -100,12 +76,12 @@ export class Linked {
     }
     this.linking.set(true);
     this.error.set(null);
-    this.api.linkToken(itemId).subscribe({
+    this.api.linkToken(products, itemId ?? undefined).subscribe({
       next: ({ link_token }) => {
         Plaid.create({
           token: link_token,
           onSuccess: (publicToken) => {
-            this.api.exchangePublicToken(publicToken).subscribe({
+            this.api.exchange(publicToken, products).subscribe({
               next: () => {
                 this.linking.set(false);
                 this.load();
@@ -126,47 +102,17 @@ export class Linked {
     });
   }
 
-  unlink(id: number, name: string): void {
-    if (
-      !confirm(
-        `Stop syncing ${name}?\n\nIts accounts and every transaction already ` +
-          `imported stay exactly where they are — only the connection goes.`,
-      )
-    )
-      return;
-    this.api.unlinkItem(id).subscribe({
-      next: () => this.load(),
-      error: (e) => this.error.set(this.describe(e)),
-    });
-  }
-
-  rewind(id: number): void {
-    this.api.rewindItem(id).subscribe({
-      next: () => this.load(),
-      error: (e) => this.error.set(this.describe(e)),
-    });
-  }
-
-  // --- Refresh -------------------------------------------------------------
-
-  refresh(): void {
+  refresh(item: LinkedItem): void {
     this.busy.set(true);
     this.error.set(null);
+    this.active.set(item);
     this.result.set(null);
-    this.api.syncLinked().subscribe({
-      next: (s) => {
-        this.sync.set(s);
-        this.review.set(
-          s.rows.map((r) => ({
-            ...r,
-            categoryId: r.suggested_category_id,
-            recurring: r.is_recurring,
-            // Ticked by default, near-duplicates included. A near match is a
-            // question, not a verdict, and quietly dropping real spending is
-            // the worse failure.
-            include: true,
-          })),
-        );
+    this.api.preview(item.id).subscribe({
+      next: (preview) => {
+        this.result.set(preview);
+        // Everything arrives ticked. Dropping real spending silently is worse
+        // than a row you can see and untick.
+        this.rows.set(preview.rows.map((r) => ({ ...r, include: true })));
         this.busy.set(false);
         this.load();
       },
@@ -175,73 +121,19 @@ export class Linked {
         this.busy.set(false);
       },
     });
-  }
-
-  setMerchant(row: ReviewRow, value: string | null): void {
-    this.review.update((rows) =>
-      rows.map((r) => (r.key === row.key ? { ...r, merchant_key: value } : r)),
-    );
-  }
-
-  setCategory(row: ReviewRow, value: string | number): void {
-    this.review.update((rows) =>
-      rows.map((r) =>
-        r.key === row.key ? { ...r, categoryId: Number(value) } : r,
-      ),
-    );
-  }
-
-  /** Committed or flexible. Suggested from the fixed-cost list, correctable
-   *  here — the gym is a commitment that lives in a discretionary category. */
-  toggleRecurring(row: ReviewRow): void {
-    this.review.update((rows) =>
-      rows.map((r) => (r.key === row.key ? { ...r, recurring: !r.recurring } : r)),
-    );
-  }
-
-  toggle(row: ReviewRow): void {
-    this.review.update((rows) =>
-      rows.map((r) => (r.key === row.key ? { ...r, include: !r.include } : r)),
-    );
-  }
-
-  fillBlanks(value: string): void {
-    if (!value) return;
-    this.review.update((rows) =>
-      rows.map((r) => (r.categoryId ? r : { ...r, categoryId: Number(value) })),
-    );
-  }
-
-  untickFlagged(): void {
-    this.review.update((rows) =>
-      rows.map((r) => (r.near_duplicates.length ? { ...r, include: false } : r)),
-    );
   }
 
   commit(): void {
-    const rows = this.review()
-      .filter((r) => r.include && r.categoryId)
-      .map((r) => ({
-        key: r.key,
-        account_id: r.account_id,
-        occurred_on: r.occurred_on,
-        raw_description: r.raw_description,
-        amount: r.amount,
-        category_id: r.categoryId,
-        is_recurring: r.recurring,
-        // Sent even when unchanged, so what was reviewed is what lands rather
-        // than the backend guessing a second time.
-        merchant_key: r.merchant_key ?? '',
-      }));
-    if (!rows.length) return;
-
+    const item = this.active();
+    if (!item) return;
     this.busy.set(true);
-    this.error.set(null);
-    this.api.commitLinked(rows).subscribe({
+    const accept = this.rows()
+      .filter((r) => r.include)
+      .map((r) => r.transaction_id);
+    this.api.commit(item.id, accept).subscribe({
       next: (res) => {
         this.result.set(res);
-        this.sync.set(null);
-        this.review.set([]);
+        this.rows.set([]);
         this.busy.set(false);
         this.load();
       },
@@ -252,17 +144,55 @@ export class Linked {
     });
   }
 
-  discard(): void {
-    this.sync.set(null);
-    this.review.set([]);
-    this.error.set(null);
+  rewind(item: LinkedItem): void {
+    if (
+      !confirm(
+        `Re-offer every transaction ${item.institution_name} still has? ` +
+          'Rows already committed are filtered out, so only missing ones come back.',
+      )
+    ) {
+      return;
+    }
+    this.api.rewind(item.id).subscribe({ next: () => this.refresh(item) });
   }
 
-  private describe(e: unknown): string {
-    const err = e as { status?: number; error?: { detail?: unknown } };
-    if (err?.status === 0)
-      return 'Cannot reach the API. Is the backend running?';
-    const detail = err?.error?.detail;
-    return typeof detail === 'string' ? detail : 'Something went wrong.';
+  unlink(item: LinkedItem): void {
+    if (
+      !confirm(
+        `Stop syncing ${item.institution_name}? Its accounts and their history stay.`,
+      )
+    ) {
+      return;
+    }
+    this.api.unlink(item.id).subscribe({ next: () => this.load() });
+  }
+
+  toggleAll(include: boolean): void {
+    this.rows.update((rows) => rows.map((r) => ({ ...r, include })));
+  }
+
+  selected(): number {
+    return this.rows().filter((r) => r.include).length;
+  }
+
+  hasInvestments(item: LinkedItem): boolean {
+    return item.products.includes('investments');
+  }
+
+  day(iso: string): string {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+    });
+  }
+
+  when(iso: string | null): string {
+    return iso ? new Date(iso).toLocaleString() : 'never';
+  }
+
+  private describe(err: unknown): string {
+    const detail = (err as { error?: { detail?: string } })?.error?.detail;
+    return detail ?? 'Something went wrong talking to the bank.';
   }
 }

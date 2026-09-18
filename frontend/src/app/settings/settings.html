@@ -1,0 +1,92 @@
+<h1>Settings</h1>
+
+@if (error()) {
+  <p class="banner error">{{ error() }}</p>
+}
+
+<h2>Budgets</h2>
+<div class="budget-head">
+  <label>
+    <span>Month</span>
+    <input
+      type="month"
+      [value]="month()"
+      (change)="changeMonth($any($event.target).value)"
+    />
+  </label>
+  <button type="button" class="quiet" (click)="copyForward()">
+    Copy last month
+  </button>
+  <button type="button" (click)="save()">Save</button>
+  @if (saved()) { <span class="dim">Saved.</span> }
+</div>
+
+<div class="card scroll-x">
+  <table>
+    <thead>
+      <tr>
+        <th>Category</th>
+        <th>Kind</th>
+        <th class="num">Target</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (c of categories(); track c.id) {
+        <tr>
+          <td>{{ c.name }}</td>
+          <td class="dim">{{ c.kind.toLowerCase() }}</td>
+          <td class="num">
+            @if (c.kind === 'SPENDING') {
+              <input
+                type="text"
+                inputmode="decimal"
+                class="amount"
+                [value]="amountFor(c.id)"
+                (input)="setAmount(c.id, $any($event.target).value)"
+                placeholder="—"
+                [attr.aria-label]="'Budget for ' + c.name"
+              />
+            } @else {
+              <!-- A target only means something for money that leaves. -->
+              <span class="dim">—</span>
+            }
+          </td>
+          <td>
+            <button type="button" class="quiet" (click)="removeCategory(c)">
+              Delete
+            </button>
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
+</div>
+
+<h2>Add a category</h2>
+<div class="add card">
+  <input
+    type="text"
+    [value]="newName()"
+    (input)="newName.set($any($event.target).value)"
+    placeholder="Name"
+    aria-label="Category name"
+  />
+  <select
+    [value]="newKind()"
+    (change)="newKind.set($any($event.target).value)"
+    aria-label="Kind"
+  >
+    @for (k of kinds; track k) {
+      <option [value]="k">{{ k.toLowerCase() }}</option>
+    }
+  </select>
+  <button type="button" (click)="addCategory()">Add</button>
+</div>
+
+<p class="dim small">
+  <strong>Spending</strong> is money that left for good. <strong>Transfer</strong>
+  is money moved between your own accounts — a card payment, cash into savings —
+  and is counted in no spending total. <strong>Savings</strong> is a transfer
+  worth seeing separately, because you still have it.
+</p>

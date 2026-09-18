@@ -1,0 +1,150 @@
+<h1>Net worth</h1>
+
+@if (loading()) {
+  <p class="dim">Loading…</p>
+} @else if (data(); as d) {
+  @if (d.latest; as latest) {
+    <div class="totals">
+      <div class="card total">
+        <span class="label">Net</span>
+        <span class="figure num">{{ latest.net }}</span>
+        <span class="sub dim">as of {{ day(latest.as_of) }}</span>
+      </div>
+      <div class="card total">
+        <span class="label">Assets</span>
+        <span class="figure num">{{ latest.assets }}</span>
+      </div>
+      <div class="card total">
+        <span class="label">Owed</span>
+        <span class="figure num over">{{ latest.liabilities }}</span>
+      </div>
+    </div>
+
+    @if (latest.accounts_reporting < d.account_count) {
+      <!-- Said plainly rather than shown as a dip. A partial reading and a real
+           fall are the same shape on a chart, and only one of them is news. -->
+      <p class="banner">
+        Only {{ latest.accounts_reporting }} of {{ d.account_count }} accounts
+        reported on {{ day(latest.as_of) }}. This figure is incomplete — refresh
+        the remaining banks to bring it up to date.
+      </p>
+    }
+  }
+
+  @if (path()) {
+    <div class="card chart">
+      <svg
+        [attr.viewBox]="'0 0 ' + width + ' ' + height"
+        [attr.height]="height"
+        preserveAspectRatio="none"
+        role="img"
+        aria-label="Net worth over time"
+      >
+        <path [attr.d]="path()" fill="none" />
+      </svg>
+      <p class="dim small">{{ span() }}</p>
+    </div>
+  } @else {
+    <p class="dim">
+      Not enough complete readings yet to draw a line. One more refresh on a
+      different day will do it.
+    </p>
+  }
+
+  @if (partialCount()) {
+    <p class="dim small">
+      {{ partialCount() }} partial readings are held out of the line — days when
+      some accounts had not been refreshed.
+    </p>
+  }
+}
+
+<h2>Accounts</h2>
+<div class="card scroll-x">
+  <table>
+    <thead>
+      <tr>
+        <th>Account</th>
+        <th>Institution</th>
+        <th class="num">Balance</th>
+        <th>Last read</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (a of assets(); track a.id) {
+        <tr>
+          <td>
+            {{ a.name }}
+            @if (a.is_retirement) { <span class="tag">retirement</span> }
+          </td>
+          <td class="dim">{{ a.institution }}</td>
+          <td class="num">{{ a.balance ?? '—' }}</td>
+          <td class="dim" [class.over]="isStale(a)">
+            {{ a.balance_as_of ? day(a.balance_as_of) : 'never' }}
+          </td>
+        </tr>
+      }
+      @for (a of liabilities(); track a.id) {
+        <tr>
+          <td>{{ a.name }}</td>
+          <td class="dim">{{ a.institution }}</td>
+          <td class="num over">{{ a.balance ?? '—' }}</td>
+          <td class="dim" [class.over]="isStale(a)">
+            {{ a.balance_as_of ? day(a.balance_as_of) : 'never' }}
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
+</div>
+
+@if (portfolio(); as p) {
+  @if (p.holdings.length) {
+    <h2>Holdings</h2>
+    <p class="dim small">
+      Priced by the institution that holds them, as of {{ day(p.as_of!) }}.
+      Nothing here is estimated.
+    </p>
+    <div class="card scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th>Security</th>
+            <th>Account</th>
+            <th class="num">Units</th>
+            <th class="num">Price</th>
+            <th class="num">Value</th>
+            <th class="num">Paid in</th>
+            <th class="num">Gain</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (h of p.holdings; track h.security_id + '-' + h.account_id) {
+            <tr>
+              <td>
+                {{ h.ticker ?? h.name }}
+                @if (h.is_cash_equivalent) { <span class="tag">cash</span> }
+              </td>
+              <td class="dim">{{ h.account_name }}</td>
+              <td class="num">{{ h.quantity }}</td>
+              <td class="num dim">{{ h.price ?? '—' }}</td>
+              <td class="num">{{ h.value }}</td>
+              <!-- Not reported is not zero. Zero would claim the whole position
+                   as gain, which is the kind of wrong that looks like news. -->
+              <td class="num dim">{{ h.cost_basis ?? 'not reported' }}</td>
+              <td class="num">{{ h.gain ?? '—' }}</td>
+            </tr>
+          }
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4">Total</td>
+            <td class="num">{{ p.total_value }}</td>
+            <td class="num dim">{{ p.total_cost_basis ?? 'incomplete' }}</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  }
+}

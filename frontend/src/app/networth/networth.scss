@@ -1,0 +1,89 @@
+h1 {
+  margin: 0 0 1rem;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 1.8rem 0 0.2rem;
+}
+
+.small {
+  font-size: 13px;
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.total {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+
+  .label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+
+  .figure {
+    font-size: 22px;
+    text-align: left;
+  }
+
+  .sub {
+    font-size: 12.5px;
+  }
+}
+
+.chart {
+  margin: 1rem 0;
+
+  svg {
+    display: block;
+    width: 100%;
+    /* The line is scaled non-uniformly to fill the width, so the stroke has to
+       opt out of that scaling or it thins and thickens with the viewport. */
+    vector-effect: non-scaling-stroke;
+
+    path {
+      stroke: var(--accent);
+      stroke-width: 2;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+      vector-effect: non-scaling-stroke;
+    }
+  }
+
+  p {
+    margin: 0.5rem 0 0;
+  }
+}
+
+.banner {
+  margin-bottom: 1rem;
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+tfoot td {
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}

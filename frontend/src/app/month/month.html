@@ -1,0 +1,129 @@
+<div class="head">
+  <h1>{{ selected() ? label(selected()!) : 'Month' }}</h1>
+
+  @if (months().length) {
+    <select
+      [value]="selected()"
+      (change)="select($any($event.target).value)"
+      aria-label="Month"
+    >
+      @for (m of months(); track m) {
+        <option [value]="m">{{ label(m) }}</option>
+      }
+    </select>
+  }
+</div>
+
+@if (error()) {
+  <p class="banner error">{{ error() }}</p>
+}
+
+@if (loading()) {
+  <p class="dim">Loading…</p>
+} @else if (summary(); as s) {
+  <div class="totals">
+    <div class="card total">
+      <span class="label">Spent</span>
+      <span class="figure num">{{ s.spent }}</span>
+      @if (s.budgeted !== '0.00') {
+        <span class="sub dim">of {{ s.budgeted }} budgeted</span>
+      }
+    </div>
+    <div class="card total">
+      <span class="label">Money in</span>
+      <span class="figure num">{{ s.income }}</span>
+    </div>
+    <div class="card total">
+      <span class="label">Saved</span>
+      <span class="figure num">{{ s.saved }}</span>
+    </div>
+    <div class="card total">
+      <span class="label">Moved</span>
+      <span class="figure num">{{ s.transferred }}</span>
+      <!-- Said out loud, because a number excluded from every other total on
+           the page needs to explain why it is here at all. -->
+      <span class="sub dim">between your own accounts</span>
+    </div>
+  </div>
+
+  @if (spending().length) {
+    <div class="card scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th class="num">Spent</th>
+            <th class="num">Budget</th>
+            <th class="num">Left</th>
+            <th class="bar-col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of spending(); track row.category_id) {
+            <tr>
+              <td>
+                <a [routerLink]="['/transactions']"
+                   [queryParams]="{ month: selected(), category: row.category_id }">
+                  {{ row.category_name }}
+                </a>
+              </td>
+              <td class="num">{{ row.spent }}</td>
+              <td class="num dim">{{ row.budget ?? '—' }}</td>
+              <td class="num" [class.over]="isOver(row)">
+                <!-- Null is not zero. No target set is a different statement
+                     from nothing left, and an em dash says so. -->
+                {{ row.remaining ?? '—' }}
+              </td>
+              <td class="bar-col">
+                @if (row.budget) {
+                  <span class="bar" [class.over]="isOver(row)">
+                    <span class="fill" [style.width.%]="barWidth(row)"></span>
+                  </span>
+                }
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  } @else {
+    <p class="dim">No spending recorded this month.</p>
+  }
+
+  @if (other().length) {
+    <h2>Not spending</h2>
+    <p class="dim small">
+      Counted in the figures above, and in none of the category totals.
+    </p>
+    <div class="card scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>What it is</th>
+            <th class="num">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of other(); track row.category_id) {
+            <tr>
+              <td>{{ row.category_name }}</td>
+              <td class="dim">
+                @switch (row.kind) {
+                  @case ('INCOME') { money in }
+                  @case ('SAVINGS') { saved }
+                  @case ('TRANSFER') { moved }
+                }
+              </td>
+              <td class="num">{{ row.spent }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+
+  <p class="dim small count">
+    {{ s.transaction_count }} transactions this month.
+  </p>
+}

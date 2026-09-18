@@ -40,29 +40,16 @@ export const routes: Routes = [
     loadComponent: () => import('./linked/linked').then((m) => m.Linked),
   },
   {
-    path: 'import',
-    title: 'Import · budgeter',
-    canActivate: [authGuard],
-    loadComponent: () => import('./import/import').then((m) => m.Import),
-  },
-  {
     path: 'settings',
     title: 'Settings · budgeter',
     canActivate: [authGuard],
     loadComponent: () => import('./settings/settings').then((m) => m.Settings),
   },
   {
-    path: 'accounts',
-    title: 'Accounts · budgeter',
+    path: 'net-worth',
+    title: 'Net worth · budgeter',
     canActivate: [authGuard],
-    loadComponent: () => import('./accounts/accounts').then((m) => m.Accounts),
-  },
-  {
-    path: 'investments',
-    title: 'Investments · budgeter',
-    canActivate: [authGuard],
-    loadComponent: () =>
-      import('./investments/investments').then((m) => m.Investments),
+    loadComponent: () => import('./networth/networth').then((m) => m.Networth),
   },
   { path: '**', redirectTo: 'month' },
 ];

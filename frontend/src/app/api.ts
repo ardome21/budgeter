@@ -1,342 +1,166 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 
 import {
-  Category,
-  CommitResult,
-  MerchantKey,
-  MonthSummary,
-  NewTransaction,
-  Overview,
-  Period,
-  Preview,
   AccountRow,
-  Allocations,
-  FixedCost,
+  Budget,
+  Category,
   LinkedItem,
-  LiveNetWorth,
+  MonthSummary,
   NetWorth,
-  PaycheckLine,
-  PlaidStatus,
   Portfolio,
-  PositionsCommitResult,
-  PositionsPreview,
-  Reconciliation,
-  SecurityRow,
-  SyncCommitResult,
-  SyncResult,
+  Preview,
   Transaction,
+  TransactionPage,
 } from './models';
 
 /**
  * The one place that knows about HTTP.
  *
  * Requests go to the relative path /api, which the dev server proxies to the
- * backend, so the browser only ever sees a single origin.
+ * backend, so the browser only ever sees a single origin and no CORS
+ * preflight stands between a click and the data.
  */
 @Injectable({ providedIn: 'root' })
 export class Api {
   private http = inject(HttpClient);
 
-  categories(): Observable<Category[]> {
-    return this.http.get<Category[]>('/api/categories');
+  // --- the month ------------------------------------------------------------
+
+  months(): Observable<string[]> {
+    return this.http.get<string[]>('/api/months');
   }
 
-  periods(): Observable<Period[]> {
-    return this.http.get<Period[]>('/api/periods');
+  month(year: number, month: number): Observable<MonthSummary> {
+    return this.http.get<MonthSummary>(`/api/month/${year}/${month}`);
   }
 
-  summary(year: number, month: number): Observable<MonthSummary> {
-    return this.http.get<MonthSummary>(`/api/periods/${year}/${month}/summary`);
+  // --- net worth ------------------------------------------------------------
+
+  netWorth(days = 365): Observable<NetWorth> {
+    return this.http.get<NetWorth>('/api/net-worth', {
+      params: new HttpParams().set('days', days),
+    });
   }
 
-  overview(): Observable<Overview> {
-    return this.http.get<Overview>('/api/overview');
+  portfolio(): Observable<Portfolio> {
+    return this.http.get<Portfolio>('/api/portfolio');
   }
 
-  transactions(params: {
-    year?: number;
-    month?: number;
+  accounts(includeClosed = false): Observable<AccountRow[]> {
+    return this.http.get<AccountRow[]>('/api/accounts', {
+      params: new HttpParams().set('include_closed', includeClosed),
+    });
+  }
+
+  updateAccount(
+    id: number,
+    patch: { is_retirement?: boolean; closed_on?: string | null },
+  ): Observable<AccountRow> {
+    return this.http.patch<AccountRow>(`/api/accounts/${id}`, patch);
+  }
+
+  // --- the ledger -----------------------------------------------------------
+
+  transactions(filter: {
+    month?: string;
     category_id?: number;
-    q?: string;
+    account_id?: number;
+    search?: string;
     limit?: number;
-  }): Observable<Transaction[]> {
-    const query = Object.entries(params)
-      .filter(([, v]) => v !== undefined && v !== null && v !== '')
-      .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
-      .join('&');
-    return this.http.get<Transaction[]>(
-      `/api/transactions${query ? '?' + query : ''}`,
-    );
-  }
-
-  createTransaction(body: NewTransaction): Observable<Transaction> {
-    return this.http.post<Transaction>('/api/transactions', body);
+    offset?: number;
+  }): Observable<TransactionPage> {
+    let params = new HttpParams();
+    for (const [key, value] of Object.entries(filter)) {
+      if (value !== undefined && value !== null && value !== '') {
+        params = params.set(key, value);
+      }
+    }
+    return this.http.get<TransactionPage>('/api/transactions', { params });
   }
 
   updateTransaction(
     id: number,
-    body: Partial<NewTransaction>,
+    patch: { category_id?: number; merchant?: string; notes?: string },
   ): Observable<Transaction> {
-    return this.http.patch<Transaction>(`/api/transactions/${id}`, body);
+    return this.http.patch<Transaction>(`/api/transactions/${id}`, patch);
   }
 
-  deleteTransaction(id: number): Observable<void> {
-    return this.http.delete<void>(`/api/transactions/${id}`);
+  merchants(): Observable<string[]> {
+    return this.http.get<string[]>('/api/merchants');
   }
 
-  previewCsv(
-    text: string,
-    flipSign: boolean,
-    accountId: number | null,
-  ): Observable<Preview> {
-    const form = new FormData();
-    form.append('text', text);
-    return this.http.post<Preview>(
-      '/api/imports/preview',
-      this.previewForm(form, flipSign, accountId),
-    );
+  // --- categories and budgets ----------------------------------------------
+
+  categories(): Observable<Category[]> {
+    return this.http.get<Category[]>('/api/categories');
   }
 
-  previewCsvFile(
-    file: File,
-    flipSign: boolean,
-    accountId: number | null,
-  ): Observable<Preview> {
-    const form = new FormData();
-    form.append('file', file);
-    return this.http.post<Preview>(
-      '/api/imports/preview',
-      this.previewForm(form, flipSign, accountId),
-    );
+  createCategory(body: Partial<Category>): Observable<Category> {
+    return this.http.post<Category>('/api/categories', body);
   }
 
-  /** The account has to reach the preview, not just the commit: it goes into
-   *  each row's hash, so leaving it off would hash every row twice over. */
-  private previewForm(
-    form: FormData,
-    flipSign: boolean,
-    accountId: number | null,
-  ): FormData {
-    form.append('flip_sign', String(flipSign));
-    if (accountId !== null) form.append('account_id', String(accountId));
-    return form;
+  updateCategory(id: number, body: Partial<Category>): Observable<Category> {
+    return this.http.patch<Category>(`/api/categories/${id}`, body);
   }
 
-  commitImport(
-    rows: unknown[],
-    accountId: number | null,
-  ): Observable<CommitResult> {
-    return this.http.post<CommitResult>('/api/imports/commit', {
-      rows,
-      account_id: accountId,
-    });
+  deleteCategory(id: number): Observable<void> {
+    return this.http.delete<void>(`/api/categories/${id}`);
   }
 
-  allocations(year: number, month: number): Observable<Allocations> {
-    return this.http.get<Allocations>(
-      `/api/periods/${year}/${month}/allocations`,
-    );
+  budgets(year: number, month: number): Observable<Budget[]> {
+    return this.http.get<Budget[]>(`/api/budgets/${year}/${month}`);
   }
 
-  setAllocations(
+  setBudgets(
     year: number,
     month: number,
-    allocations: { category_id: number; amount: string }[],
-  ): Observable<Allocations> {
-    return this.http.put<Allocations>(
-      `/api/periods/${year}/${month}/allocations`,
-      { allocations },
-    );
+    rows: Budget[],
+  ): Observable<Budget[]> {
+    return this.http.put<Budget[]>(`/api/budgets/${year}/${month}`, rows);
   }
 
-  copyAllocations(
-    year: number,
-    month: number,
-    fromYear: number,
-    fromMonth: number,
-  ): Observable<Allocations> {
-    return this.http.post<Allocations>(
-      `/api/periods/${year}/${month}/allocations/copy?from_year=${fromYear}&from_month=${fromMonth}`,
-      {},
-    );
+  copyBudgets(year: number, month: number): Observable<Budget[]> {
+    return this.http.post<Budget[]>(`/api/budgets/${year}/${month}/copy`, {});
   }
 
-  fixedCosts(includeEnded = false): Observable<FixedCost[]> {
-    return this.http.get<FixedCost[]>(
-      `/api/fixed-costs?include_ended=${includeEnded}`,
-    );
+  // --- linked banks ---------------------------------------------------------
+
+  linkedItems(): Observable<LinkedItem[]> {
+    return this.http.get<LinkedItem[]>('/api/linked/items');
   }
 
-  updateFixedCost(
-    id: number,
-    body: Partial<{
-      description: string;
-      amount: string;
-      category_id: number;
-      merchant_key: string | null;
-    }>,
-  ): Observable<FixedCost> {
-    return this.http.patch<FixedCost>(`/api/fixed-costs/${id}`, body);
-  }
-
-  endFixedCost(id: number): Observable<void> {
-    return this.http.delete<void>(`/api/fixed-costs/${id}`);
-  }
-
-  paycheck(): Observable<PaycheckLine[]> {
-    return this.http.get<PaycheckLine[]>('/api/paycheck');
-  }
-
-  updatePaycheckLine(
-    id: number,
-    body: Partial<{ description: string; amount: string }>,
-  ): Observable<PaycheckLine> {
-    return this.http.patch<PaycheckLine>(`/api/paycheck/${id}`, body);
-  }
-
-  reconcile(year: number, month: number): Observable<Reconciliation> {
-    return this.http.get<Reconciliation>(
-      `/api/periods/${year}/${month}/reconcile`,
-    );
-  }
-
-  accounts(): Observable<AccountRow[]> {
-    return this.http.get<AccountRow[]>('/api/accounts');
-  }
-
-  /** Settle an account: history stays, but it stops reading as current. */
-  closeAccount(id: number, closedOn: string | null): Observable<AccountRow> {
-    return this.http.patch<AccountRow>(`/api/accounts/${id}`, {
-      closed_on: closedOn,
+  linkToken(products: string[], itemId?: number): Observable<{ link_token: string }> {
+    return this.http.post<{ link_token: string }>('/api/linked/link-token', {
+      products,
+      item_id: itemId ?? null,
     });
   }
 
-  netWorth(): Observable<NetWorth> {
-    return this.http.get<NetWorth>('/api/accounts/net-worth');
-  }
-
-  /**
-   * Net worth with securities repriced, beside the figure that was measured.
-   *
-   * Writes nothing. The repricing happens on the request and is gone when it
-   * returns, which is what keeps the snapshot history a record of readings.
-   */
-  liveNetWorth(): Observable<LiveNetWorth> {
-    return this.http.get<LiveNetWorth>('/api/accounts/net-worth/live');
-  }
-
-  /** PUT: a snapshot is identified by its date, so a second reading on the
-   *  same day is a correction rather than an additional holding. */
-  recordBalance(
-    accountId: number,
-    asOf: string,
-    balance: string,
-  ): Observable<unknown> {
-    return this.http.put(`/api/accounts/${accountId}/balances`, {
-      as_of: asOf,
-      balance,
-    });
-  }
-
-  /**
-   * Merchant names already in use, most-used first.
-   *
-   * All that is left of the merchant screens. Offering what exists at the
-   * moment of entry is what stops a second spelling getting in — which is the
-   * job the merge queue used to do afterwards, badly.
-   */
-  merchantKeys(q = '', limit = 20): Observable<MerchantKey[]> {
-    const params = new URLSearchParams({ limit: String(limit) });
-    if (q) params.set('q', q);
-    return this.http.get<MerchantKey[]>(`/api/merchants/keys?${params}`);
-  }
-
-  // --- Linked accounts -----------------------------------------------------
-
-  plaidStatus(): Observable<PlaidStatus> {
-    return this.http.get<PlaidStatus>('/api/plaid/status');
-  }
-
-  /** Authorises one run of Plaid Link. Pass an item to re-authenticate it
-   *  rather than adding the same bank a second time. */
-  linkToken(itemId: number | null = null): Observable<{ link_token: string }> {
-    return this.http.post<{ link_token: string }>('/api/plaid/link-token', {
-      item_id: itemId,
-    });
-  }
-
-  exchangePublicToken(publicToken: string): Observable<LinkedItem> {
-    return this.http.post<LinkedItem>('/api/plaid/exchange', {
+  exchange(publicToken: string, products: string[]): Observable<LinkedItem> {
+    return this.http.post<LinkedItem>('/api/linked/exchange', {
       public_token: publicToken,
+      products,
     });
   }
 
-  /** Pull every linked bank. Writes nothing: the cursor only moves on commit,
-   *  so closing this without acting re-offers the same rows next time. */
-  syncLinked(): Observable<SyncResult> {
-    return this.http.post<SyncResult>('/api/plaid/sync', {});
+  preview(itemId: number): Observable<Preview> {
+    return this.http.post<Preview>(`/api/linked/items/${itemId}/preview`, {});
   }
 
-  commitLinked(rows: unknown[]): Observable<SyncCommitResult> {
-    return this.http.post<SyncCommitResult>('/api/plaid/commit', { rows });
+  commit(itemId: number, accept: string[]): Observable<Preview> {
+    return this.http.post<Preview>('/api/linked/commit', {
+      item_id: itemId,
+      accept,
+    });
   }
 
-  unlinkItem(id: number): Observable<unknown> {
-    return this.http.delete(`/api/plaid/items/${id}`);
+  rewind(itemId: number): Observable<void> {
+    return this.http.post<void>(`/api/linked/items/${itemId}/rewind`, {});
   }
 
-  /** Offer everything since the start date again — for a row unticked by
-   *  mistake, which committing otherwise steps past for good. */
-  rewindItem(id: number): Observable<LinkedItem> {
-    return this.http.post<LinkedItem>(`/api/plaid/items/${id}/rewind`, {});
-  }
-
-  // --- Investments ---------------------------------------------------------
-
-  /** Read a brokerage positions export without writing anything. */
-  previewPositions(
-    file: File,
-    institution: string,
-  ): Observable<PositionsPreview> {
-    const form = new FormData();
-    form.append('file', file);
-    form.append('institution', institution);
-    return this.http.post<PositionsPreview>('/api/holdings/preview', form);
-  }
-
-  commitPositions(body: {
-    as_of: string;
-    institution: string;
-    record_balances: boolean;
-    accounts: unknown[];
-  }): Observable<PositionsCommitResult> {
-    return this.http.post<PositionsCommitResult>('/api/holdings/commit', body);
-  }
-
-  /** Every position, valued now. `refresh=false` values from the cache alone. */
-  portfolio(refresh = true): Observable<Portfolio> {
-    return this.http.get<Portfolio>(`/api/holdings?refresh=${refresh}`);
-  }
-
-  securities(): Observable<SecurityRow[]> {
-    return this.http.get<SecurityRow[]>('/api/holdings/securities');
-  }
-
-  /**
-   * Point a security at the symbol that stands in for it.
-   *
-   * Checked against the provider before it saves, so a typo comes back as an
-   * error rather than as a holding that quietly stops being priced.
-   */
-  setQuoteSymbol(
-    symbol: string,
-    quoteSymbol: string | null,
-  ): Observable<SecurityRow> {
-    return this.http.patch<SecurityRow>(
-      `/api/holdings/securities/${encodeURIComponent(symbol)}`,
-      { quote_symbol: quoteSymbol ?? '' },
-    );
+  unlink(itemId: number): Observable<void> {
+    return this.http.delete<void>(`/api/linked/items/${itemId}`);
   }
 }
