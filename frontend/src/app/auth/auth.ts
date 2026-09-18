@@ -33,6 +33,7 @@ export class Auth {
   /** False before anyone has claimed the app: setup, not login. */
   configured = computed(() => this.status()?.configured === true);
   username = computed(() => this.status()?.username ?? null);
+  totpRequired = computed(() => this.status()?.totp_required === true);
 
   refresh(): Observable<AuthStatus> {
     return this.http

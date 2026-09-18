@@ -210,8 +210,22 @@ offered as the same merchant.
 
 ### Signing in
 
-Password + TOTP, or a passkey. Unchanged by the rebuild: it is the one
-subsystem with no coupling to the schema that was replaced.
+Password, or a passkey. A six-digit code is **off by default** and is one line
+of config away (`REQUIRE_TOTP=true`).
+
+That default is a judgement about this deployment, not about second factors.
+The app is bound to loopback and has exactly one user; the attacker a TOTP code
+defends against — someone holding the password but not the phone — has to
+already be typing on the machine that holds the database, where they can read
+it directly and skip the login entirely. What the code reliably did instead was
+stand between the owner and their own budget, twice, and the end of that road
+is a login that gets disabled altogether.
+
+**A passkey is the better answer and is unaffected by this.** Touch ID is one
+gesture, is multi-factor on its own (`user_verification=REQUIRED` is what makes
+that true), and is less friction than typing a password. The Plaid security
+questionnaire was answered on the basis that MFA exists, so if the code stays
+off, a passkey should be registered.
 
 The guard is a dependency on the **`/api` router itself**, not per-route, so
 the default is closed — a router added later is protected by virtue of being

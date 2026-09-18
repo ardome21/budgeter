@@ -39,6 +39,25 @@ class Settings(BaseSettings):
     # break-glass script, which needs the machine itself.
     max_failed_logins: int = 8
 
+    # Whether a second factor is demanded at sign-in.
+    #
+    # Off by default, and that is a judgement about *this* deployment rather
+    # than about second factors. The app is bound to loopback, has exactly one
+    # user, and the attacker a TOTP code defends against — someone who has the
+    # password but not the phone — has to already be typing on this machine, at
+    # which point they can read the database directly and skip the login
+    # altogether. What the code reliably did instead was stand between the
+    # owner and their own budget, which is the failure mode that actually
+    # happened, twice, and it ends with logins being disabled entirely.
+    #
+    # A passkey remains the better answer and is unaffected by this: Touch ID
+    # is one gesture, is multi-factor on its own, and is *less* friction than
+    # typing a password. Turn this back on with REQUIRE_TOTP=true in .env if
+    # this app ever leaves loopback or gains a second user — and note the
+    # Plaid security questionnaire was answered on the basis that MFA exists,
+    # so a passkey should be registered if this stays off.
+    require_totp: bool = False
+
     # Passkeys. The relying-party id must be a registrable suffix of whatever
     # origin the browser is on — for http://localhost:4200 that is exactly
     # "localhost". A passkey is bound to this value, so changing it invalidates

@@ -15,9 +15,26 @@ import pyotp
 import pytest
 from sqlalchemy import select
 
+from backend.config import settings
 from backend.models import AppUser, Passkey
 
 PASSWORD = "a-long-enough-password"
+
+@pytest.fixture(autouse=True)
+def _mfa_on(monkeypatch):
+    """Run this module with the second factor switched on.
+
+    `require_totp` defaults to **off**: this app is one user on loopback, the
+    attacker a code defends against has to already be typing on the machine
+    that holds the database, and in practice the code stood between the owner
+    and their own budget rather than between anyone and the data.
+
+    The behaviour is not gone, though — it is configuration, and everything
+    below is what it has to still do when it is turned on.
+    """
+    monkeypatch.setattr(settings, "require_totp", True)
+
+
 
 
 @pytest.fixture

@@ -164,6 +164,9 @@ export interface AuthStatus {
   /** Whether to offer the Touch ID button. Readable while signed out, because
    *  the login screen has to decide before anyone has proved anything. */
   has_passkeys: boolean;
+  /** Whether a second factor is in force. Configuration, not a property of
+   *  the user — so the code field is absent rather than optional. */
+  totp_required: boolean;
 }
 
 export interface SetupResult {

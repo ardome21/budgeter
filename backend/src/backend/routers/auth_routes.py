@@ -39,6 +39,7 @@ from ..auth import (
     verify_password,
     verify_totp,
 )
+from ..config import settings
 from ..db import get_session
 from ..models import AppUser, Passkey
 
@@ -55,6 +56,9 @@ class StatusOut(BaseModel):
     # by necessity — the login screen has to decide before anyone has proved
     # anything, and "a passkey exists here" is not worth protecting.
     has_passkeys: bool = False
+    # Whether the login screen should show a code field at all, and whether
+    # setup has a second step. Configuration, not a property of the user.
+    totp_required: bool = False
 
 
 class SetupIn(BaseModel):
@@ -83,8 +87,11 @@ class ConfirmIn(BaseModel):
 class LoginIn(BaseModel):
     username: str
     password: str
-    # A TOTP code, or one of the recovery codes.
-    code: str
+    # A TOTP code, or one of the recovery codes. Optional: with
+    # `require_totp` off the password stands alone, and a code sent anyway is
+    # still checked rather than ignored — a client that offers the field
+    # should not find it silently doing nothing.
+    code: str = ""
 
 
 class LoginOut(BaseModel):
@@ -108,12 +115,18 @@ def _qr_svg(uri: str) -> str:
 def status(request: Request, session: Session = Depends(get_session)):
     user = get_user(session)
     if user is None or not user.totp_confirmed:
-        return StatusOut(configured=False, authenticated=False, username=None)
+        return StatusOut(
+            configured=False,
+            authenticated=False,
+            username=None,
+            totp_required=settings.require_totp,
+        )
     current = session_user(request, session)
     return StatusOut(
         configured=True,
         authenticated=current is not None,
         username=current.username if current else None,
+        totp_required=settings.require_totp,
         has_passkeys=bool(
             session.scalar(
                 select(Passkey.id).where(Passkey.user_id == user.id).limit(1)
@@ -123,7 +136,9 @@ def status(request: Request, session: Session = Depends(get_session)):
 
 
 @router.post("/setup", response_model=SetupOut)
-def setup(payload: SetupIn, session: Session = Depends(get_session)):
+def setup(
+    payload: SetupIn, request: Request, session: Session = Depends(get_session)
+):
     """Claim the app. Allowed only while no confirmed user exists."""
     existing = get_user(session)
     if existing is not None and existing.totp_confirmed:
@@ -140,23 +155,39 @@ def setup(payload: SetupIn, session: Session = Depends(get_session)):
     user = AppUser(
         username=payload.username.strip(),
         password_hash=hash_password(payload.password),
+        # Generated and stored even when no code will be asked for, so turning
+        # `require_totp` on later is a config change rather than a re-enrolment.
+        # `scripts/show_code.py --setup-key` prints it when that day comes.
         totp_secret=encrypt_secret(secret),
-        totp_confirmed=False,
+        # Confirmed on the spot when there is nothing to confirm. The two-step
+        # enrolment exists to prove an authenticator was really scanned; with
+        # no authenticator in the picture it only leaves the account in a state
+        # that cannot log in, which is exactly how this app locked its owner out.
+        totp_confirmed=not settings.require_totp,
         failed_logins=0,
         created_at=datetime.now(UTC),
     )
     session.add(user)
     session.flush()
 
-    codes = new_recovery_codes()
-    hash_recovery_codes(session, user, codes)
+    # Recovery codes are a way *past* a second factor. With none in force they
+    # are ten more secrets to store and a ceremony to sit through for nothing.
+    codes = new_recovery_codes() if settings.require_totp else []
+    if codes:
+        hash_recovery_codes(session, user, codes)
+
+    if not settings.require_totp:
+        # Nothing left to prove, so the session starts here rather than after a
+        # confirm step that would only ask for a code nobody can produce.
+        start_session(request, user)
+
     session.commit()
 
     uri = provisioning_uri(secret, user.username)
     return SetupOut(
         username=user.username,
-        otpauth_uri=uri,
-        qr_svg=_qr_svg(uri),
+        otpauth_uri=uri if settings.require_totp else "",
+        qr_svg=_qr_svg(uri) if settings.require_totp else "",
         recovery_codes=codes,
     )
 
@@ -194,9 +225,15 @@ def login(payload: LoginIn, request: Request, session: Session = Depends(get_ses
     # Password and second factor are checked together and fail together. Saying
     # which one was wrong tells an attacker holding one of them that it works.
     password_ok = verify_password(user.password_hash, payload.password)
-    code_ok = verify_totp(user.totp_secret, payload.code) or consume_recovery_code(
-        session, user, payload.code
-    )
+
+    if settings.require_totp or payload.code:
+        code_ok = verify_totp(user.totp_secret, payload.code) or consume_recovery_code(
+            session, user, payload.code
+        )
+    else:
+        # No second factor configured and none offered. The password is the
+        # whole login, and it is still Argon2id behind a lockout.
+        code_ok = True
 
     if not (password_ok and code_ok):
         record_failure(session, user)

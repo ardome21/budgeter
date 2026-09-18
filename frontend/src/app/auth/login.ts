@@ -50,17 +50,19 @@ import { platformAuthenticatorAvailable } from './webauthn';
             (valueChange)="password.set($event)"
           />
 
-          <label for="c">Six-digit code</label>
-          <input
-            id="c"
-            name="code"
-            inputmode="text"
-            autocomplete="one-time-code"
-            placeholder="123456, or a recovery code"
-            [ngModel]="code()"
-            (ngModelChange)="code.set($event)"
-            required
-          />
+          @if (auth.totpRequired()) {
+            <label for="c">Six-digit code</label>
+            <input
+              id="c"
+              name="code"
+              inputmode="text"
+              autocomplete="one-time-code"
+              placeholder="123456, or a recovery code"
+              [ngModel]="code()"
+              (ngModelChange)="code.set($event)"
+              required
+            />
+          }
 
           <button class="primary" type="submit" [disabled]="busy()">
             {{ busy() ? 'Checking…' : 'Sign in' }}
@@ -68,7 +70,7 @@ import { platformAuthenticatorAvailable } from './webauthn';
         </form>
 
         <p class="dim small foot">
-          Lost the authenticator and the recovery codes? Run
+          Locked out? Run
           <code>uv run python scripts/reset_auth.py --apply</code> in the
           backend directory. It clears the login and touches no data.
         </p>
@@ -78,7 +80,7 @@ import { platformAuthenticatorAvailable } from './webauthn';
   styleUrl: './gate.scss',
 })
 export class Login {
-  private auth = inject(Auth);
+  protected auth = inject(Auth);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
 
@@ -125,7 +127,11 @@ export class Login {
   }
 
   submit(): void {
-    if (!this.username() || !this.password() || !this.code()) {
+    if (
+      !this.username() ||
+      !this.password() ||
+      (this.auth.totpRequired() && !this.code())
+    ) {
       this.error.set('All three are needed.');
       return;
     }

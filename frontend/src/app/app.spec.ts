@@ -32,6 +32,7 @@ describe('App', () => {
       authenticated: true,
       username: 'ardome',
       has_passkeys: false,
+      totp_required: false,
     });
 
     const fixture = TestBed.createComponent(App);
@@ -54,6 +55,7 @@ describe('App', () => {
       authenticated: false,
       username: null,
       has_passkeys: false,
+      totp_required: false,
     });
 
     const fixture = TestBed.createComponent(App);
