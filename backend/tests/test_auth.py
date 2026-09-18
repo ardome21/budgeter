@@ -234,9 +234,12 @@ def test_the_api_is_closed_once_a_user_exists(client, wipe_users):
     client.post("/api/auth/setup/confirm", json={"code": totp_for(secret_from(body))})
     client.post("/api/auth/logout")
 
+    # Three different routers, because the guard is a dependency on the /api
+    # router itself rather than on each route: the point being tested is that a
+    # router is protected by virtue of being mounted, not by remembering to ask.
     assert client.get("/api/categories").status_code == 401
-    assert client.get("/api/overview").status_code == 401
-    assert client.post("/api/plaid/sync").status_code == 401
+    assert client.get("/api/month/2026/3").status_code == 401
+    assert client.get("/api/linked/items").status_code == 401
 
 
 def test_signing_in_reopens_the_api(client, wipe_users):

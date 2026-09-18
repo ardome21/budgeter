@@ -1,300 +1,266 @@
-"""Derived views.
+"""Everything the app reports, derived on read.
 
-Everything the spreadsheet computed in cells lives here as a query instead.
-Nothing in this module is stored, so nothing in it can go stale — which is the
-failure the workbook kept hitting: a rollup whose SUMIF list stopped matching
-the categories actually in use, silently under-reporting for months.
+Nothing in here is stored. The workbook this app replaced kept its rollups as
+cells, computed by SUMIF over a hardcoded list of category names, and any
+category missing from that list silently vanished from the total — two real
+cases, one understating a month by $28.94 and one making disposable income
+optimistic by exactly $89.00. A total that is a query cannot drift from the
+rows it totals.
 """
 
-from calendar import monthrange
+from __future__ import annotations
+
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import case, func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from .models import (
-    BudgetAllocation,
-    BudgetPeriod,
+    Account,
+    Balance,
+    Budget,
     Category,
     CategoryKind,
-    FixedCost,
-    PaycheckLine,
-    PaycheckLineKind,
+    Holding,
+    Security,
     Transaction,
-)
-from .schemas import (
-    BiggestPurchase,
-    CategoryLine,
-    CommitmentSplit,
-    FixedCostGroup,
-    MonthDays,
-    MonthSummary,
-    OverviewOut,
-    PeriodOut,
 )
 
 ZERO = Decimal("0.00")
 
-# The Paycheck sheet is per-paycheck; the Monthly Overview sheet is monthly.
-# 8855.92 / 4427.96 is exactly 2, so pay is semi-monthly. Kept as a named
-# constant rather than a bare 2 so it is obvious what to change if that ever
-# stops being true.
-PAYCHECKS_PER_MONTH = 2
+
+def month_bounds(month: date) -> tuple[date, date]:
+    """First of the month, and first of the next. Half-open, so a transaction
+    on the last day at any hour belongs to exactly one month."""
+    start = month.replace(day=1)
+    end = date(start.year + 1, 1, 1) if start.month == 12 else start.replace(month=start.month + 1)
+    return start, end
 
 
-def _spending_only(column):
-    """`column` where the row's category is spending, zero everywhere else.
+def spending_only(stmt: Select) -> Select:
+    """The rule behind every figure that claims you spent something.
 
-    Every "you spent this" figure needs this. A transfer to your own card and a
-    paycheck landing are both transaction rows now that a checking account is
-    linked, and neither is money spent — the card payment in particular settles
-    purchases that are already on file one by one, so counting it too counts
-    them twice. Requires `Category` to be joined.
+    This exists as a function, used everywhere, because when it was written out
+    by hand at each call site it ended up correct in three places and absent in
+    two. A $207.45 credit card payment was excluded from "spent this month" and
+    from the committed/flexible split, and then showed up as the second largest
+    purchase of the month and in the period list's total — because those two
+    totals were written before TRANSFER existed and never learned about it.
+
+    A card payment is not spending. It is last month's spending moving between
+    two accounts you own.
     """
-    return case((Category.kind == CategoryKind.SPENDING, column), else_=0)
+    return stmt.where(Category.kind == CategoryKind.SPENDING)
 
 
-def _q(value: Decimal | None) -> Decimal:
-    return (value or ZERO).quantize(Decimal("0.01"))
+def month_summary(db: Session, month: date) -> dict:
+    start, end = month_bounds(month)
+
+    in_month = (
+        select(Transaction, Category)
+        .join(Category, Transaction.category_id == Category.id)
+        .where(Transaction.occurred_on >= start, Transaction.occurred_on < end)
+    )
+
+    # One pass, bucketed by kind. Summed conditionally rather than filtered,
+    # so the transaction count stays honest: a month is still listed at its
+    # true number of rows when part of it is transfers.
+    totals = {kind: ZERO for kind in CategoryKind}
+    count = 0
+    for txn, category in db.execute(in_month).all():
+        totals[category.kind] += txn.amount
+        count += 1
+
+    per_category = _category_spend(db, start, end)
+    budgeted = sum((row["budget"] or ZERO for row in per_category), ZERO)
+
+    return {
+        "month": start,
+        "spent": totals[CategoryKind.SPENDING],
+        # Income arrives negative in Plaid's convention (money entering the
+        # account). Flipped once, here, so every caller sees a positive number
+        # for money coming in.
+        "income": -totals[CategoryKind.INCOME],
+        "saved": totals[CategoryKind.SAVINGS],
+        "transferred": totals[CategoryKind.TRANSFER],
+        "budgeted": budgeted,
+        "categories": per_category,
+        "transaction_count": count,
+    }
 
 
-def list_periods(session: Session) -> list[PeriodOut]:
-    # The count is every row on file; the total is spending only. A credit-card
-    # payment is a row worth listing and worth opening, and it is not a month's
-    # outgoings — the purchases it settles are already on file individually.
-    # Summed conditionally rather than filtered, so a month is still listed at
-    # its true row count when part of it is transfers.
-    rows = session.execute(
+def _category_spend(db: Session, start: date, end: date) -> list[dict]:
+    """Every category, with what it cost and what it was meant to cost.
+
+    Left join from categories, not from transactions: a category with a budget
+    and no spending is exactly the row worth seeing, and an inner join hides it.
+    """
+    spend = (
         select(
-            BudgetPeriod.year,
-            BudgetPeriod.month,
-            func.count(Transaction.id),
-            func.coalesce(func.sum(_spending_only(Transaction.amount)), 0),
+            Transaction.category_id,
+            func.coalesce(func.sum(Transaction.amount), ZERO).label("spent"),
         )
-        .join(Transaction, Transaction.period_id == BudgetPeriod.id, isouter=True)
-        .join(Category, Category.id == Transaction.category_id, isouter=True)
-        .group_by(BudgetPeriod.year, BudgetPeriod.month)
-        .order_by(BudgetPeriod.year.desc(), BudgetPeriod.month.desc())
-    ).all()
-    return [
-        PeriodOut(year=y, month=m, transaction_count=n, total=_q(total))
-        for y, m, n, total in rows
+        .where(Transaction.occurred_on >= start, Transaction.occurred_on < end)
+        .group_by(Transaction.category_id)
+        .subquery()
+    )
+    budgets = (
+        select(Budget.category_id, Budget.amount)
+        .where(Budget.month == start)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            Category,
+            func.coalesce(spend.c.spent, ZERO),
+            budgets.c.amount,
+        )
+        .outerjoin(spend, spend.c.category_id == Category.id)
+        .outerjoin(budgets, budgets.c.category_id == Category.id)
+        .order_by(Category.sort_order, Category.name)
+    )
+
+    rows = []
+    for category, spent, budget in db.execute(stmt).all():
+        if spent == ZERO and budget is None:
+            # A category nobody used and nobody budgeted is noise on a screen
+            # that is trying to say where the money went.
+            continue
+        rows.append(
+            {
+                "category_id": category.id,
+                "category_name": category.name,
+                "kind": category.kind,
+                "spent": spent,
+                "budget": budget,
+                "remaining": None if budget is None else budget - spent,
+            }
+        )
+    return rows
+
+
+def net_worth(db: Session, limit: int = 365) -> dict:
+    """The balance series, one point per day anything reported.
+
+    Liabilities are already negative in the table, so `net` is a plain sum.
+    Assets and liabilities are split back out here for display only.
+
+    `accounts_reporting` rides along on every point because it is the one thing
+    that makes the series readable: a day when two of eleven accounts were read
+    is not a day net worth collapsed, and without the count that dip is
+    indistinguishable from a real one.
+    """
+    stmt = (
+        select(
+            Balance.as_of,
+            func.sum(func.greatest(Balance.amount, 0)).label("assets"),
+            func.sum(func.least(Balance.amount, 0)).label("liabilities"),
+            func.sum(Balance.amount).label("net"),
+            func.count(Balance.account_id).label("reporting"),
+        )
+        .group_by(Balance.as_of)
+        .order_by(Balance.as_of.desc())
+        .limit(limit)
+    )
+
+    points = [
+        {
+            "as_of": row.as_of,
+            "assets": row.assets or ZERO,
+            "liabilities": row.liabilities or ZERO,
+            "net": row.net or ZERO,
+            "accounts_reporting": row.reporting,
+        }
+        for row in db.execute(stmt).all()
     ]
+    points.reverse()
 
-
-def _days(year: int, month: int, today: date) -> MonthDays:
-    in_month = monthrange(year, month)[1]
-    if (year, month) < (today.year, today.month):
-        elapsed = in_month
-    elif (year, month) == (today.year, today.month):
-        elapsed = today.day
-    else:
-        elapsed = 0
-    return MonthDays(in_month=in_month, elapsed=elapsed, remaining=in_month - elapsed)
-
-
-def month_summary(
-    session: Session, year: int, month: int, today: date | None = None
-) -> MonthSummary | None:
-    today = today or date.today()
-    period = session.scalar(
-        select(BudgetPeriod).where(
-            BudgetPeriod.year == year, BudgetPeriod.month == month
-        )
+    account_count = db.scalar(
+        select(func.count(Account.id)).where(Account.closed_on.is_(None))
     )
-    if period is None:
-        return None
+    return {
+        "points": points,
+        "latest": points[-1] if points else None,
+        "account_count": account_count or 0,
+    }
 
-    spent_by_cat = dict(
-        session.execute(
-            select(Transaction.category_id, func.sum(Transaction.amount))
-            .where(Transaction.period_id == period.id)
-            .group_by(Transaction.category_id)
-        ).all()
-    )
-    allocated_by_cat = dict(
-        session.execute(
-            select(BudgetAllocation.category_id, BudgetAllocation.amount).where(
-                BudgetAllocation.period_id == period.id
-            )
-        ).all()
+
+def portfolio(db: Session) -> dict:
+    """Holdings as of the most recent snapshot that has any.
+
+    Restricted to one date rather than taking the newest row per security: a
+    position sold last month would otherwise carry its final value forward
+    forever and keep counting toward the total.
+    """
+    as_of = db.scalar(select(func.max(Holding.as_of)))
+    if as_of is None:
+        return {
+            "as_of": None,
+            "total_value": ZERO,
+            "total_cost_basis": None,
+            "holdings": [],
+        }
+
+    stmt = (
+        select(Holding, Security, Account)
+        .join(Security, Holding.security_id == Security.id)
+        .join(Account, Holding.account_id == Account.id)
+        .where(Holding.as_of == as_of)
+        .order_by(Holding.value.desc())
     )
 
-    categories = session.scalars(
-        select(Category).order_by(Category.sort_order, Category.name)
-    ).all()
+    holdings = []
+    total_value = ZERO
+    total_basis: Decimal | None = ZERO
+    for holding, security, account in db.execute(stmt).all():
+        total_value += holding.value
+        if holding.cost_basis is None:
+            # One unreported basis makes the portfolio total meaningless, so it
+            # is reported as unknown rather than as a number that silently
+            # excludes a position.
+            total_basis = None
+        elif total_basis is not None:
+            total_basis += holding.cost_basis
 
-    # Only SPENDING kinds count as spent. A transfer to your own card and a
-    # paycheck landing both have category totals worth seeing on the screen,
-    # and neither belongs in "you spent this much".
-    spending_ids = {c.id for c in categories if c.kind == CategoryKind.SPENDING}
-    spent_total = _q(
-        sum((v for k, v in spent_by_cat.items() if k in spending_ids), ZERO)
-    )
-    allocated_total = _q(sum(allocated_by_cat.values(), ZERO))
-
-    lines: list[CategoryLine] = []
-    for cat in categories:
-        spent = _q(spent_by_cat.get(cat.id))
-        allocated = _q(allocated_by_cat.get(cat.id))
-        if spent == 0 and allocated == 0:
-            continue  # a category with no budget and no spending is not news
-        lines.append(
-            CategoryLine(
-                category_id=cat.id,
-                category=cat.name,
-                kind=cat.kind,
-                allocated=allocated,
-                spent=spent,
-                remaining=_q(allocated - spent),
-                pct_used=float(spent / allocated) if allocated else None,
-                # A share of spending only means anything for a category that
-                # is spending. The denominator excludes transfers and income,
-                # so leaving those to divide by it would report a card payment
-                # as some percentage of the month's outgoings — or over 100%.
-                share_of_spend=(
-                    float(spent / spent_total)
-                    if spent_total and cat.kind == CategoryKind.SPENDING
-                    else 0.0
+        holdings.append(
+            {
+                "security_id": security.id,
+                "name": security.name,
+                "ticker": security.ticker,
+                "kind": security.kind,
+                "is_cash_equivalent": security.is_cash_equivalent,
+                "account_id": account.id,
+                "account_name": account.name,
+                "quantity": holding.quantity,
+                "price": holding.price,
+                "value": holding.value,
+                "cost_basis": holding.cost_basis,
+                "gain": (
+                    None if holding.cost_basis is None
+                    else holding.value - holding.cost_basis
                 ),
-            )
+            }
         )
 
-    # Committed vs flexible comes from the transaction, not the category — the
-    # gym is a fixed monthly cost that lives in Self Care.
-    #
-    # Restricted to SPENDING kinds. It used to sum every row in the period,
-    # which was correct while every row was spending: the workbook only ever
-    # recorded outflows. Linking a checking account ended that — a credit-card
-    # payment and a paycheck are both rows here now, and neither is spending.
-    committed, flexible = session.execute(
-        select(
-            func.coalesce(
-                func.sum(case((Transaction.is_recurring, Transaction.amount), else_=0)),
-                0,
-            ),
-            func.coalesce(
-                func.sum(
-                    case((~Transaction.is_recurring, Transaction.amount), else_=0)
-                ),
-                0,
-            ),
-        )
-        .join(Category, Category.id == Transaction.category_id)
-        .where(
-            Transaction.period_id == period.id,
-            Category.kind == CategoryKind.SPENDING,
-        )
-    ).one()
-    saved = session.scalar(
-        select(func.coalesce(func.sum(Transaction.amount), 0))
-        .join(Category, Category.id == Transaction.category_id)
-        .where(
-            Transaction.period_id == period.id, Category.kind == CategoryKind.SAVINGS
-        )
+    return {
+        "as_of": as_of,
+        "total_value": total_value,
+        "total_cost_basis": total_basis,
+        "holdings": holdings,
+    }
+
+
+def months_with_data(db: Session) -> list[date]:
+    """Every month that has a transaction, newest first."""
+    # Built once and reused for the select, the group and the order. Written
+    # out twice, Postgres sees two separately-parameterised expressions and
+    # refuses to match the ORDER BY against the GROUP BY.
+    first_of_month = func.date_trunc("month", Transaction.occurred_on)
+    stmt = (
+        select(first_of_month.label("m"))
+        .group_by(first_of_month)
+        .order_by(first_of_month.desc())
     )
-
-    # Spending only, for the same reason the totals are. A card payment is
-    # large by nature — it is a month of purchases in one row — so left in it
-    # outranks almost every real purchase and describes none of them. August
-    # 2026 had DISCOVER E-PAYMENT 1249 sitting second, above the power bill.
-    biggest = [
-        BiggestPurchase(description=d, amount=_q(a), occurred_on=o)
-        for d, a, o in session.execute(
-            select(
-                Transaction.raw_description, Transaction.amount, Transaction.occurred_on
-            )
-            .join(Category, Category.id == Transaction.category_id)
-            .where(
-                Transaction.period_id == period.id,
-                Transaction.amount > 0,
-                Category.kind == CategoryKind.SPENDING,
-            )
-            .order_by(Transaction.amount.desc())
-            .limit(5)
-        ).all()
-    ]
-
-    txn_count, undated = session.execute(
-        select(
-            func.count(Transaction.id),
-            func.count(Transaction.id).filter(Transaction.occurred_on.is_(None)),
-        ).where(Transaction.period_id == period.id)
-    ).one()
-
-    days = _days(year, month, today)
-    return MonthSummary(
-        year=year,
-        month=month,
-        categories=lines,
-        allocated_total=allocated_total,
-        spent_total=spent_total,
-        remaining_total=_q(allocated_total - spent_total),
-        commitment=CommitmentSplit(
-            committed=_q(committed), flexible=_q(flexible), saved=_q(saved)
-        ),
-        biggest=biggest,
-        days=days,
-        spent_per_day=_q(spent_total / days.elapsed) if days.elapsed else None,
-        safe_per_day=(
-            _q((allocated_total - spent_total) / days.remaining)
-            if days.remaining and allocated_total
-            else None
-        ),
-        transaction_count=txn_count,
-        undated_count=undated,
-    )
-
-
-def overview(session: Session) -> OverviewOut:
-    """Monthly Overview, rebuilt from the paycheck and fixed-cost tables."""
-    by_kind = dict(
-        session.execute(
-            select(PaycheckLine.kind, func.sum(PaycheckLine.amount)).group_by(
-                PaycheckLine.kind
-            )
-        ).all()
-    )
-    per_cheque_gross = _q(by_kind.get(PaycheckLineKind.INCOME))
-    insurance = _q(by_kind.get(PaycheckLineKind.INSURANCE))
-    savings = _q(by_kind.get(PaycheckLineKind.SAVINGS))
-    tax = _q(by_kind.get(PaycheckLineKind.TAX))
-
-    n = PAYCHECKS_PER_MONTH
-    gross_monthly = _q(per_cheque_gross * n)
-    post_tax = _q((per_cheque_gross - insurance) * n)
-    take_home = _q((per_cheque_gross - insurance - savings - tax) * n)
-
-    groups = [
-        FixedCostGroup(category=name, amount=_q(amount), lines=lines)
-        for name, amount, lines in session.execute(
-            select(
-                Category.name,
-                func.sum(FixedCost.amount),
-                func.array_agg(FixedCost.description),
-            )
-            .join(Category, Category.id == FixedCost.category_id)
-            # Top-level rows only. A component is part of its parent's amount —
-            # the rent breakdown's thirteen lines sum to the rent charge — so
-            # summing both counts that money twice. This query predates
-            # components and did exactly that, reporting fixed costs of 3586.27
-            # against a real 2032.90 and understating disposable income by the
-            # whole rent charge.
-            .where(FixedCost.effective_to.is_(None), FixedCost.parent_id.is_(None))
-            .group_by(Category.name)
-            .order_by(func.sum(FixedCost.amount).desc())
-        ).all()
-    ]
-    fixed_total = _q(sum((g.amount for g in groups), ZERO))
-
-    return OverviewOut(
-        gross_monthly=gross_monthly,
-        post_tax=post_tax,
-        take_home=take_home,
-        fixed_costs=fixed_total,
-        disposable=_q(take_home - fixed_total),
-        auto_saved=_q(savings * n),
-        paychecks_per_month=n,
-        fixed_by_category=groups,
-    )
+    return [row.m.date() for row in db.execute(stmt).all()]

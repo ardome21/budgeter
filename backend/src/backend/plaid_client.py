@@ -7,7 +7,8 @@ account.
 """
 
 import json
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from functools import lru_cache
@@ -123,6 +124,39 @@ class SyncDiff:
     cursor: str
 
 
+@dataclass
+class HeldSecurity:
+    """Something that can be held, as the brokerage identifies it."""
+
+    security_id: str
+    name: str
+    ticker: str | None
+    cusip: str | None
+    type: str
+    is_cash_equivalent: bool = False
+
+
+@dataclass
+class HeldPosition:
+    """One position, priced by the institution that holds it."""
+
+    plaid_account_id: str
+    security_id: str
+    quantity: Decimal
+    price: Decimal | None
+    value: Decimal
+    cost_basis: Decimal | None
+    # The date the institution priced it. Absent on some providers, in which
+    # case the caller dates the snapshot itself — see routers/plaid_link.py.
+    as_of: date | None = None
+
+
+@dataclass
+class HoldingsSnapshot:
+    securities: list[HeldSecurity] = field(default_factory=list)
+    holdings: list[HeldPosition] = field(default_factory=list)
+
+
 @lru_cache(maxsize=1)
 def _cipher() -> Fernet:
     return Fernet(settings.plaid_token_key.get_secret_value().encode())
@@ -202,11 +236,23 @@ def _reauth_code(exc: ApiException) -> str | None:
     return None
 
 
-def create_link_token(*, user_id: str, access_token: str | None = None) -> str:
+def create_link_token(
+    *,
+    user_id: str,
+    access_token: str | None = None,
+    products: Sequence[str] = ("transactions",),
+) -> str:
     """A short-lived token that authorises one run of Plaid Link in the browser.
 
     Passing `access_token` puts Link into update mode, which re-authenticates an
     existing item instead of creating a second one for the same bank.
+
+    `products` is the decision that cannot be revisited. An item is created with
+    a set of products and keeps it: adding `investments` to a bank that was
+    linked for transactions means running Link again, in update mode, with
+    fresh consent from the user. A brokerage linked without `investments`
+    returns accounts and balances and no holdings at all, which looks like an
+    empty portfolio rather than a mislink.
     """
     request = LinkTokenCreateRequest(
         client_name="budgeter",
@@ -218,7 +264,7 @@ def create_link_token(*, user_id: str, access_token: str | None = None) -> str:
             if access_token
             # `products` is rejected outright in update mode, where the item
             # already has the products it was created with.
-            else {"products": [Products("transactions")]}
+            else {"products": [Products(p) for p in products]}
         ),
     )
     return _api().link_token_create(request).link_token
@@ -341,6 +387,83 @@ def _convert(txn) -> LinkedTransaction:
         pending=bool(txn.pending),
         category=category,
     )
+
+
+def get_holdings(access_token: str) -> HoldingsSnapshot:
+    """What the brokerage says is held, priced by the brokerage.
+
+    This call is the reason the investments code shrank by about fifteen
+    hundred lines. The previous version parsed a downloaded CSV, then fetched
+    public quotes to revalue it, and for the largest position in the portfolio
+    — a collective investment trust sold only inside employer plans, with no
+    ticker and no public quote that will ever exist — it borrowed a similar
+    fund's daily movement and scaled the last statement value by it. Four
+    different pricing bases had to be reported side by side, because they were
+    four different kinds of claim.
+
+    The institution knows its own prices. Nothing here is inferred.
+    """
+    from plaid.model.investments_holdings_get_request import (
+        InvestmentsHoldingsGetRequest,
+    )
+
+    try:
+        response = _api().investments_holdings_get(
+            InvestmentsHoldingsGetRequest(access_token=access_token)
+        )
+    except ApiException as exc:
+        if _reauth_code(exc):
+            raise PlaidReauthRequired(str(exc)) from exc
+        raise
+
+    securities = {
+        s.security_id: HeldSecurity(
+            security_id=s.security_id,
+            name=str(getattr(s, "name", None) or "Unnamed"),
+            ticker=getattr(s, "ticker_symbol", None),
+            cusip=getattr(s, "cusip", None),
+            type=str(getattr(s, "type", None) or "other"),
+            # Plaid flags sweep and money-market positions itself. Worth
+            # keeping: they are cash wearing a ticker, and counting them as
+            # investments overstates how much of a portfolio is at risk.
+            is_cash_equivalent=bool(getattr(s, "is_cash_equivalent", False)),
+        )
+        for s in response.securities
+    }
+
+    holdings = []
+    for h in response.holdings:
+        quantity = Decimal(str(h.quantity))
+        value = _money(getattr(h, "institution_value", None))
+        if value is None:
+            # Every provider returns institution_value in practice, but a
+            # holding with a quantity and no value would otherwise land as a
+            # zero and quietly shrink net worth.
+            continue
+        holdings.append(
+            HeldPosition(
+                plaid_account_id=h.account_id,
+                security_id=h.security_id,
+                quantity=quantity,
+                price=_price(getattr(h, "institution_price", None)),
+                value=value,
+                # Nullable by contract — not every institution reports it, and
+                # a missing basis has to read as "not reported". Defaulting it
+                # to zero would report an entire position as gain.
+                cost_basis=_money(getattr(h, "cost_basis", None)),
+                as_of=getattr(h, "institution_price_as_of", None),
+            )
+        )
+
+    return HoldingsSnapshot(securities=list(securities.values()), holdings=holdings)
+
+
+def _price(value) -> Decimal | None:
+    """Four decimals, not two. Rounding a quote before multiplying it by 163
+    shares moves the answer by real dollars."""
+    if value is None:
+        return None
+    return Decimal(str(value)).quantize(Decimal("0.0001"))
 
 
 def remove_item(access_token: str) -> None:

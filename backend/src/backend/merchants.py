@@ -75,3 +75,49 @@ def suggest_key(raw: str) -> str | None:
     """
     key = normalize_merchant(raw)
     return display_name(key) if key else None
+
+
+def snap_to_existing(session, name: str) -> str:
+    """The spelling already in use for this name, or the name unchanged.
+
+    Two rules, both exact — no similarity scoring, because a wrong merge is
+    what choosing the merchant at entry exists to make impossible.
+
+    1. Same name, different case: 'harris teeter' is 'Harris Teeter'.
+    2. An existing name that is a whole-word *prefix* of the guess. The
+       original schema kept a pattern per descriptor, so a hand-merge taught it
+       that NETFLIX.COM was Netflix; dropping those patterns lost it, and the
+       guess regressed to 'Netflix Com'. The longest matching prefix wins, so
+       'Uber Eats Delivery' resolves to 'Uber Eats' and not to 'Uber'.
+
+    Still only a default on an editable field. Rule 2 is a guess, and the
+    reason it is allowed to be one is that it lands in a picker the user can
+    correct before the row is written.
+    """
+    from sqlalchemy import func, select
+
+    from .models import Transaction
+
+    exact = session.scalar(
+        select(Transaction.merchant).where(
+            func.lower(Transaction.merchant) == name.lower()
+        )
+    )
+    if exact:
+        return exact
+
+    prefix = session.scalar(
+        select(Transaction.merchant)
+        .where(Transaction.merchant.is_not(None))
+        .where(func.lower(name).startswith(func.lower(Transaction.merchant) + " "))
+        .order_by(func.length(Transaction.merchant).desc())
+        .limit(1)
+    )
+    return prefix or name
+
+
+def resolve(session, description: str, given: str | None = None) -> str | None:
+    """The merchant to pre-fill: what was given, or a guess, snapped to a name
+    already in use."""
+    name = (given or "").strip() or suggest_key(description)
+    return snap_to_existing(session, name) if name else None

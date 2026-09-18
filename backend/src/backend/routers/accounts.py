@@ -1,264 +1,69 @@
-"""Accounts and net worth.
-
-The workbook stored balances wide — a new column per snapshot date, which is
-why there were only eight in two years. As rows, snapshots are unbounded and
-net worth over time is one query.
-"""
-
-from decimal import Decimal
+"""Accounts and their latest balance."""
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .. import valuation
 from ..db import get_session
-from ..models import Account, AccountBalance
-from ..schemas import (
-    AccountIn,
-    AccountOut,
-    AccountPatch,
-    BalanceIn,
-    BalanceOut,
-    LiveNetWorthOut,
-    NetWorthOut,
-    NetWorthPoint,
-)
+from ..models import Account, Balance
+from ..schemas import AccountOut, AccountPatch
 
-router = APIRouter(prefix="/accounts", tags=["accounts"])
+router = APIRouter(tags=["accounts"])
 
 
-def _latest_snapshot_date(session: Session):
-    return session.scalar(select(func.max(AccountBalance.as_of)))
+@router.get("/accounts", response_model=list[AccountOut])
+def list_accounts(
+    include_closed: bool = False, db: Session = Depends(get_session)
+) -> list[AccountOut]:
+    """Every account, each carrying its most recent reading.
 
-
-def _to_out(session: Session, account: Account, newest=None) -> AccountOut:
-    newest = newest if newest is not None else _latest_snapshot_date(session)
-    rows = session.execute(
-        select(AccountBalance.as_of, AccountBalance.balance)
-        .where(AccountBalance.account_id == account.id)
-        .order_by(AccountBalance.as_of.desc())
-        .limit(2)
-    ).all()
-    latest = rows[0] if rows else None
-    previous = rows[1] if len(rows) > 1 else None
-    behind = (newest - latest[0]).days if latest and newest else None
-    return AccountOut(
-        id=account.id,
-        institution=account.institution,
-        name=account.name,
-        is_retirement=account.is_retirement,
-        closed_on=account.closed_on,
-        latest_balance=latest[1] if latest else None,
-        latest_as_of=latest[0] if latest else None,
-        is_stale=bool(behind),
-        days_behind=behind,
-        change=(latest[1] - previous[1]) if latest and previous else None,
-        snapshot_count=session.scalar(
-            select(func.count(AccountBalance.id)).where(
-                AccountBalance.account_id == account.id
-            )
-        )
-        or 0,
+    The balance comes from a correlated subquery on the newest `as_of` for that
+    account, not from the newest row overall. Accounts are read on different
+    days — a brokerage posts overnight, a card posts immediately — and taking
+    the global maximum would leave every account that did not report today
+    showing nothing at all.
+    """
+    newest = (
+        select(func.max(Balance.as_of))
+        .where(Balance.account_id == Account.id)
+        .correlate(Account)
+        .scalar_subquery()
     )
 
-
-@router.get("", response_model=list[AccountOut])
-def list_accounts(session: Session = Depends(get_session)):
-    """Every account with its latest balance and the move since the one before."""
-    accounts = session.scalars(
-        select(Account).order_by(
-            Account.is_retirement.desc(), Account.institution, Account.name
+    stmt = (
+        select(Account, Balance.amount, Balance.as_of)
+        .outerjoin(
+            Balance,
+            (Balance.account_id == Account.id) & (Balance.as_of == newest),
         )
-    ).all()
-    newest = _latest_snapshot_date(session)
-    return [_to_out(session, a, newest) for a in accounts]
-
-
-@router.post("", response_model=AccountOut, status_code=201)
-def create_account(payload: AccountIn, session: Session = Depends(get_session)):
-    clash = session.scalar(
-        select(Account).where(
-            Account.institution == payload.institution.strip(),
-            Account.name == payload.name.strip(),
-        )
+        .order_by(Account.institution, Account.name)
     )
-    if clash is not None:
-        raise HTTPException(
-            409, f"{payload.institution} / {payload.name} already exists"
+    if not include_closed:
+        stmt = stmt.where(Account.closed_on.is_(None))
+
+    return [
+        AccountOut.model_validate(account).model_copy(
+            update={"balance": amount, "balance_as_of": as_of}
         )
-    account = Account(
-        institution=payload.institution.strip(),
-        name=payload.name.strip(),
-        is_retirement=payload.is_retirement,
-    )
-    session.add(account)
-    session.commit()
-    return _to_out(session, account)
+        for account, amount, as_of in db.execute(stmt).all()
+    ]
 
 
-@router.patch("/{account_id}", response_model=AccountOut)
+@router.patch("/accounts/{account_id}", response_model=AccountOut)
 def update_account(
-    account_id: int, payload: AccountPatch, session: Session = Depends(get_session)
-):
-    account = session.get(Account, account_id)
+    account_id: int, body: AccountPatch, db: Session = Depends(get_session)
+) -> Account:
+    """The two things about an account that Plaid cannot tell you.
+
+    Whether it is retirement money — yours, but not reachable — and whether it
+    is closed. Everything else here is the institution's to report.
+    """
+    account = db.get(Account, account_id)
     if account is None:
-        raise HTTPException(404, "account not found")
+        raise HTTPException(404, "no such account")
 
-    data = dict(payload.model_dump(exclude_unset=True).items())
-    for key in ("institution", "name"):
-        if key in data:
-            data[key] = data[key].strip()
-    merged = {
-        "institution": data.get("institution", account.institution),
-        "name": data.get("name", account.name),
-    }
-    clash = session.scalar(
-        select(Account).where(
-            Account.institution == merged["institution"],
-            Account.name == merged["name"],
-            Account.id != account_id,
-        )
-    )
-    if clash is not None:
-        raise HTTPException(
-            409, f"{merged['institution']} / {merged['name']} already exists"
-        )
-
-    for key, value in data.items():
-        setattr(account, key, value)
-    session.commit()
-    return _to_out(session, account)
-
-
-@router.delete("/{account_id}", status_code=204)
-def delete_account(account_id: int, session: Session = Depends(get_session)):
-    """Removes the account and its snapshots. Net worth history goes with it."""
-    account = session.get(Account, account_id)
-    if account is None:
-        raise HTTPException(404, "account not found")
-    session.delete(account)
-    session.commit()
-
-
-@router.get("/{account_id}/balances", response_model=list[BalanceOut])
-def list_balances(account_id: int, session: Session = Depends(get_session)):
-    if session.get(Account, account_id) is None:
-        raise HTTPException(404, "account not found")
-    return session.scalars(
-        select(AccountBalance)
-        .where(AccountBalance.account_id == account_id)
-        .order_by(AccountBalance.as_of.desc())
-    ).all()
-
-
-@router.put("/{account_id}/balances", response_model=BalanceOut)
-def record_balance(
-    account_id: int, payload: BalanceIn, session: Session = Depends(get_session)
-):
-    """Record a balance for a date, replacing any existing one.
-
-    PUT rather than POST because a snapshot is identified by its date: taking
-    two readings of the same account on the same day means the second is a
-    correction, not a second holding.
-    """
-    if session.get(Account, account_id) is None:
-        raise HTTPException(404, "account not found")
-
-    amount = payload.balance.quantize(Decimal("0.01"))
-    existing = session.scalar(
-        select(AccountBalance).where(
-            AccountBalance.account_id == account_id,
-            AccountBalance.as_of == payload.as_of,
-        )
-    )
-    if existing is not None:
-        existing.balance = amount
-        session.commit()
-        return existing
-
-    snapshot = AccountBalance(
-        account_id=account_id, as_of=payload.as_of, balance=amount
-    )
-    session.add(snapshot)
-    session.commit()
-    return snapshot
-
-
-@router.delete("/balances/{balance_id}", status_code=204)
-def delete_balance(balance_id: int, session: Session = Depends(get_session)):
-    snapshot = session.get(AccountBalance, balance_id)
-    if snapshot is None:
-        raise HTTPException(404, "snapshot not found")
-    session.delete(snapshot)
-    session.commit()
-
-
-@router.get("/net-worth", response_model=NetWorthOut)
-def net_worth(session: Session = Depends(get_session)):
-    """Net worth on every date anything was recorded.
-
-    Liabilities count. The workbook's own Total row omitted the student loan
-    and the credit card balance, which flattered March 2024 by $6,000 and
-    October by $309.89.
-    """
-    rows = session.execute(
-        select(
-            AccountBalance.as_of,
-            func.sum(AccountBalance.balance),
-            func.coalesce(
-                func.sum(AccountBalance.balance).filter(Account.is_retirement), 0
-            ),
-            func.coalesce(
-                func.sum(AccountBalance.balance).filter(~Account.is_retirement), 0
-            ),
-            func.count(AccountBalance.id),
-        )
-        .join(Account, Account.id == AccountBalance.account_id)
-        .group_by(AccountBalance.as_of)
-        .order_by(AccountBalance.as_of)
-    ).all()
-
-    return NetWorthOut(
-        points=[
-            NetWorthPoint(
-                as_of=as_of,
-                net_worth=total,
-                retirement=retirement,
-                liquid=liquid,
-                accounts_reported=count,
-            )
-            for as_of, total, retirement, liquid, count in rows
-        ],
-        accounts_tracked=session.scalar(select(func.count(Account.id))) or 0,
-    )
-
-
-@router.get("/net-worth/live", response_model=LiveNetWorthOut)
-def net_worth_live(refresh: bool = True, session: Session = Depends(get_session)):
-    """Net worth with securities repriced, beside the figure that was measured.
-
-    Both numbers, always, plus the date the measured one was taken. An estimate
-    on its own invites being read as fact; an estimate next to what it is an
-    estimate *of*, with the date it was last exact, does not.
-
-    Nothing here is written. The repricing happens on this request and is gone
-    when it returns, which is what keeps `account_balances` a record of
-    readings rather than a mix of readings and arithmetic.
-    """
-    live = valuation.live_net_worth(session, refresh=refresh)
-    return LiveNetWorthOut(
-        measured_on=live.measured_on,
-        measured=live.measured,
-        measured_retirement=live.measured_retirement,
-        measured_liquid=live.measured_liquid,
-        estimated=live.estimated,
-        estimated_retirement=live.estimated_retirement,
-        estimated_liquid=live.estimated_liquid,
-        change=live.change,
-        is_estimated=live.is_estimated,
-        priced_at=live.priced_at.isoformat() if live.priced_at else None,
-        marked_accounts=live.marked_accounts,
-        carried_accounts=live.carried_accounts,
-        warnings=live.warnings,
-    )
+    fields = body.model_dump(exclude_unset=True)
+    for name, value in fields.items():
+        setattr(account, name, value)
+    db.commit()
+    return account

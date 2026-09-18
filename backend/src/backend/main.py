@@ -10,10 +10,7 @@ from .db import get_session
 from .routers import (
     accounts,
     auth_routes,
-    config,
-    holdings,
-    imports,
-    merchants,
+    categories,
     passkeys,
     plaid_link,
     transactions,
@@ -91,11 +88,8 @@ api.include_router(auth_routes.router)
 api.include_router(passkeys.router)
 api.include_router(views.router)
 api.include_router(accounts.router)
-api.include_router(config.router)
+api.include_router(categories.router)
 api.include_router(transactions.router)
-api.include_router(merchants.router)
-api.include_router(imports.router)
-api.include_router(holdings.router)
 api.include_router(plaid_link.router)
 
 app.include_router(api)

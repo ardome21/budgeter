@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from backend.db import SessionLocal
