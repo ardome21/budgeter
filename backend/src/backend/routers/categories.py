@@ -7,7 +7,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
-from ..models import Budget, Category, Transaction
+from ..models import Budget, Category, PlaidCategoryMap, Transaction
 from ..queries import budget_plan
 from ..schemas import (
     BudgetIn,
@@ -97,6 +97,12 @@ def delete_category(category_id: int, db: Session = Depends(get_session)) -> Non
         )
 
     db.execute(delete(Budget).where(Budget.category_id == category_id))
+    # Plaid labels mapped here stop being mapped, and rows carrying them fall
+    # to Uncategorised. Left in place, the map's foreign key refused the
+    # delete with a bare 500: Loan Payments, with no rows, could not go.
+    db.execute(
+        delete(PlaidCategoryMap).where(PlaidCategoryMap.category_id == category_id)
+    )
     db.delete(category)
     db.commit()
 

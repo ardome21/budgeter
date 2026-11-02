@@ -377,3 +377,20 @@ def test_categories_say_how_many_rows_they_hold(
     rows = {c["id"]: c for c in client.get("/api/categories").json()}
 
     assert rows[spending_category.id]["transaction_count"] >= 1
+
+
+def test_a_category_the_plaid_map_points_at_can_still_be_deleted(
+    client: TestClient, session: Session
+):
+    """Loan Payments had no rows and could not be deleted: the map's foreign
+    key refused it with a bare 500."""
+    loans = Category(name="Old Loans", kind=CategoryKind.SPENDING)
+    session.add(loans)
+    session.flush()
+    session.add(PlaidCategoryMap(plaid_category="TEST_LOANS", category_id=loans.id))
+    session.flush()
+
+    assert client.delete(f"/api/categories/{loans.id}").status_code == 204
+    assert session.scalar(
+        select(PlaidCategoryMap).where(PlaidCategoryMap.plaid_category == "TEST_LOANS")
+    ) is None
