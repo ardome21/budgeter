@@ -119,10 +119,6 @@ button.quiet {
   }
 }
 
-.scope {
-  margin: 0 0 1rem;
-}
-
 .accounts {
   td:first-child {
     width: 1.5rem;
@@ -140,5 +136,28 @@ button.quiet {
   /* Out of the selection, but still listed so it can be ticked back in. */
   tr.unpicked td:not(:first-child) {
     opacity: 0.45;
+  }
+}
+
+/* A segmented control, top right of the chart card. */
+.ranges {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.15rem;
+  margin-bottom: 0.6rem;
+
+  button {
+    background: none;
+    border: none;
+    border-radius: 6px;
+    padding: 0.2rem 0.55rem;
+    font-size: 12.5px;
+    color: var(--text-dim);
+
+    &.on {
+      background: var(--surface-2);
+      color: var(--text);
+      font-weight: 600;
+    }
   }
 }

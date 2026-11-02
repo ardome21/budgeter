@@ -1,7 +1,39 @@
-import { Component, computed, input, signal } from '@angular/core';
+import { Component, computed, input, output, signal } from '@angular/core';
 
 import { AccountGroup, NetWorthPoint } from '../models';
 import { UsdPipe } from '../usd';
+
+/** A group as the legend shows it: its name, and how much of it is selected. */
+export interface LegendGroup {
+  key: AccountGroup;
+  label: string;
+  state: 'on' | 'some' | 'off';
+}
+
+interface Band {
+  group: AccountGroup;
+  path: string;
+  /** Debt: drawn hatched, as a slice taken off the top of the assets. */
+  owed: boolean;
+}
+
+/**
+ * Assets bottom to top, so the everyday accounts sit on the baseline. Then
+ * the debts, cut downward from the top of the assets, card debt first.
+ * Each group keeps its colour (chart.scss) whatever else is selected.
+ */
+const STACK: AccountGroup[] = [
+  'checking',
+  'savings',
+  'retirement',
+  'investment',
+  'other',
+  'credit',
+  'loan',
+];
+
+/** Beyond this many days the per-day markers would merge into a smear. */
+const MARKERS_UP_TO = 62;
 
 interface Tick {
   label: string;
@@ -11,6 +43,13 @@ interface Tick {
 
 /**
  * Net worth over time, and what any one day is made of.
+ *
+ * Under the line, the day is split into one band per group: assets stacked up
+ * from zero, and debts as a hatched slice cut off the top of them. The line
+ * runs along the bottom of that slice, because that is what net worth is.
+ * Stacking debt below zero instead put −$50K on the axis to make room for
+ * $1.1K, and the debt itself disappeared into a 2px sliver. The legend beneath is also the filter:
+ * clicking a group takes it in or out, hovering one lifts its band.
  *
  * Inline SVG for the gridlines and the line, scaled to fill the width; the
  * text, the hover dot and the tooltip are HTML laid over it by percentage, so
@@ -29,21 +68,62 @@ interface Tick {
 })
 export class NetWorthChart {
   points = input.required<NetWorthPoint[]>();
-  /** Display names and order for the groups, from the page's filter chips. */
-  groupLabels = input.required<{ key: AccountGroup; label: string }[]>();
+  /** Every group that has accounts, in the page's order, with its selection. */
+  groups = input.required<LegendGroup[]>();
+  /** A legend chip was clicked. */
+  toggle = output<AccountGroup>();
 
   readonly width = 1000;
-  readonly height = 240;
+  readonly height = 300;
 
   /** Index of the day under the crosshair, or null when nothing is hovered. */
   hover = signal<number | null>(null);
+  /** The group being pointed at, in the plot or the legend; the rest recede. */
+  lit = signal<AccountGroup | null>(null);
 
   private values = computed(() => this.points().map((p) => Number(p.net)));
 
-  /** Four or five round steps covering the data, so ticks read $170K, $175K. */
+  /**
+   * Each group's band edges, per day, in the units of the axis. Everything
+   * positive stacks up from zero; everything negative is then cut down from
+   * the top of that, so the last edge lands on net. Done by sign, not by
+   * group, so a card in credit after a refund adds rather than subtracts.
+   * Debts are listed first so a pointer over the slice finds the debt, not
+   * the asset underneath it.
+   */
+  private stacks = computed(() =>
+    this.points().map((p) => {
+      const values = STACK.map((group) => {
+        const total = p.groups.find((g) => g.group === group)?.total;
+        return { group, v: total === undefined ? 0 : Number(total) };
+      });
+      const edges = new Map<AccountGroup, [number, number]>();
+      let top = 0;
+      const assets: [AccountGroup, [number, number]][] = [];
+      for (const { group, v } of values) {
+        if (v < 0) continue;
+        assets.push([group, [top, top + v]]);
+        top += v;
+      }
+      const peak = top;
+      for (const { group, v } of values) {
+        if (v >= 0) continue;
+        edges.set(group, [top + v, top]);
+        top += v;
+      }
+      for (const [group, edge] of assets) edges.set(group, edge);
+      return { peak, floor: Math.min(0, top), edges };
+    }),
+  );
+
+  /** Five to seven round steps covering the stack and the line. */
   private domain = computed(() => {
-    const values = this.values();
-    const ticks = niceTicks(Math.min(...values), Math.max(...values));
+    const stacks = this.stacks();
+    const ticks = niceTicks(
+      Math.min(0, ...stacks.map((s) => s.floor)),
+      Math.max(0, ...stacks.map((s) => s.peak)),
+      6,
+    );
     return { ticks, low: ticks[0], high: ticks[ticks.length - 1] };
   });
 
@@ -57,43 +137,109 @@ export class NetWorthChart {
     return 100 - ((value - low) / (high - low || 1)) * 100;
   }
 
+  private px(i: number): string {
+    return ((this.x(i) / 100) * this.width).toFixed(1);
+  }
+
+  private py(value: number): string {
+    return ((this.y(value) / 100) * this.height).toFixed(1);
+  }
+
   path = computed(() =>
     this.values()
-      .map((v, i) => {
-        const px = (this.x(i) / 100) * this.width;
-        const py = (this.y(v) / 100) * this.height;
-        return `${i === 0 ? 'M' : 'L'}${px.toFixed(1)},${py.toFixed(1)}`;
-      })
+      .map((v, i) => `${i === 0 ? 'M' : 'L'}${this.px(i)},${this.py(v)}`)
       .join(' '),
   );
+
+  /** One closed shape per group present in the series: along its top edge, back along its bottom. */
+  bands = computed<Band[]>(() => {
+    const stacks = this.stacks();
+    const present = new Set(this.points().flatMap((p) => p.groups.map((g) => g.group)));
+    return STACK.filter((g) => present.has(g)).map((group) => {
+      const top = stacks.map((s, i) => `${this.px(i)},${this.py(s.edges.get(group)![1])}`);
+      const bottom = stacks
+        .map((s, i) => `${this.px(i)},${this.py(s.edges.get(group)![0])}`)
+        .reverse();
+      return {
+        group,
+        path: `M${top.join(' L')} L${bottom.join(' L')} Z`,
+        owed: group === 'credit' || group === 'loan',
+      };
+    });
+  });
+
+  /** One dot per day when there are few enough to tell apart. */
+  markers = computed(() => {
+    const values = this.values();
+    if (values.length > MARKERS_UP_TO) return [];
+    return values.map((v, i) => ({ left: this.x(i), top: this.y(v) }));
+  });
+
+  /** Where the zero line falls, when debts put it inside the plot. */
+  zero = computed(() => {
+    const { low, high } = this.domain();
+    return low < 0 && high > 0 ? (this.y(0) / 100) * this.height : null;
+  });
+
+  /** The day the legend speaks for: the hovered one, else the latest. */
+  private shown = computed(() => {
+    const points = this.points();
+    return points[this.hover() ?? points.length - 1];
+  });
+
+  /** Legend chips, each with its group's total on the shown day. */
+  legend = computed(() => {
+    const point = this.shown();
+    return this.groups().map((g) => ({
+      ...g,
+      total: point?.groups.find((d) => d.group === g.key)?.total ?? null,
+    }));
+  });
 
   yTicks = computed<Tick[]>(() =>
     this.domain().ticks.map((v) => ({ label: compact(v), at: this.y(v) })),
   );
 
-  /** One tick per month, on the first day of it the series contains. */
+  /**
+   * Labelled ticks along the bottom, each with a vertical gridline: weekly
+   * (on Mondays) across a short range, monthly across a long one. Over a
+   * medium range the weeks still get faint unlabelled lines, so a day can be
+   * placed without counting.
+   */
   xTicks = computed<Tick[]>(() => {
+    const points = this.points();
+    const weekly = points.length <= 45;
     const ticks: Tick[] = [];
     let month = '';
-    this.points().forEach((p, i) => {
+    points.forEach((p, i) => {
+      if (weekly) {
+        if (local(p.as_of).getDay() === 1) ticks.push({ label: short(p.as_of), at: this.x(i) });
+        return;
+      }
       const key = p.as_of.slice(0, 7);
       if (key === month) return;
       month = key;
       if (i === 0 && p.as_of.slice(8) !== '01') return; // a part-month label crowds the next
-      const [y, m] = key.split('-').map(Number);
       ticks.push({
-        label: new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short' }),
+        label: local(p.as_of).toLocaleDateString(undefined, { month: 'short' }),
         at: this.x(i),
       });
     });
     return ticks;
   });
 
+  /** Unlabelled weekly lines between the month ticks, up to about half a year. */
+  weekLines = computed<number[]>(() => {
+    const points = this.points();
+    if (points.length <= 45 || points.length > 200) return [];
+    return points.flatMap((p, i) => (local(p.as_of).getDay() === 1 ? [this.x(i)] : []));
+  });
+
   current = computed(() => {
     const i = this.hover();
     if (i === null) return null;
     const point = this.points()[i];
-    const labels = this.groupLabels();
+    const labels = this.groups();
     const groups = [...point.groups].sort(
       (a, b) =>
         labels.findIndex((l) => l.key === a.group) - labels.findIndex((l) => l.key === b.group),
@@ -114,7 +260,22 @@ export class NetWorthChart {
   move(event: PointerEvent): void {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     const fraction = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-    this.hover.set(Math.round(fraction * (this.points().length - 1)));
+    const i = Math.round(fraction * (this.points().length - 1));
+    this.hover.set(i);
+    this.lit.set(this.bandAt(i, ((event.clientY - rect.top) / rect.height) * 100));
+  }
+
+  leave(): void {
+    this.hover.set(null);
+    this.lit.set(null);
+  }
+
+  /** The group whose band covers height `at` (percent from the top) on day `i`. */
+  private bandAt(i: number, at: number): AccountGroup | null {
+    for (const [group, [low, high]] of this.stacks()[i].edges) {
+      if (high > low && at <= this.y(low) && at >= this.y(high)) return group;
+    }
+    return null;
   }
 
   key(event: KeyboardEvent): void {
@@ -136,14 +297,24 @@ export class NetWorthChart {
   }
 
   day(iso: string): string {
-    const [y, m, d] = iso.split('-').map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    return local(iso).toLocaleDateString(undefined, {
       weekday: 'short',
       month: 'short',
       day: 'numeric',
       year: 'numeric',
     });
   }
+}
+
+/** A calendar date, parsed as local: `new Date(iso)` reads it as UTC and lands on the day before. */
+function local(iso: string): Date {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** Oct 5. */
+function short(iso: string): string {
+  return local(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 /** Round steps (1, 2, 2.5 or 5 × a power of ten) covering [min, max]. */

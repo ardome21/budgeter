@@ -1,31 +1,30 @@
 <h1>Net worth</h1>
 
-@if (groups().length) {
-  <!-- Groups to combine; the checkboxes in the Accounts table cut finer. A
-       chip half-filled means some of its accounts are in the selection. -->
+<ng-template #allNone>
+  <button type="button" class="quiet" (click)="all()" [disabled]="everything()">All</button>
+  <button type="button" class="quiet" (click)="none()" [disabled]="!selected().size">None</button>
+</ng-template>
+
+@if (groups().length && !drawn()) {
+  <!-- With a chart on screen these chips are its legend, under it. Without
+       one — nothing selected, or too few days — they stay up here, so there
+       is always a way back in. -->
   <div class="filters" role="group" aria-label="Accounts shown">
-    @for (g of groups(); track g.key) {
-      @let state = groupState(g.accounts);
+    @for (g of legend(); track g.key) {
       <button
         type="button"
         class="chip"
-        [class.on]="state === 'on'"
-        [class.some]="state === 'some'"
-        [attr.aria-pressed]="state === 'on' ? 'true' : state === 'some' ? 'mixed' : 'false'"
-        (click)="toggleGroup(g.accounts)"
+        [class.on]="g.state === 'on'"
+        [class.some]="g.state === 'some'"
+        [attr.aria-pressed]="g.state === 'on' ? 'true' : g.state === 'some' ? 'mixed' : 'false'"
+        (click)="toggleGroup(g.key)"
       >
         {{ g.label }}
       </button>
     }
     <span class="spacer"></span>
-    <button type="button" class="quiet" (click)="all()" [disabled]="everything()">All</button>
-    <button type="button" class="quiet" (click)="none()" [disabled]="!selected().size">None</button>
+    <ng-container *ngTemplateOutlet="allNone" />
   </div>
-  @if (!everything() && selected().size) {
-    <p class="dim small scope">
-      Showing {{ selected().size }} of {{ accounts().length }} accounts.
-    </p>
-  }
 }
 
 @if (!selected().size && accounts().length) {
@@ -67,8 +66,27 @@
 
   @if (complete().length >= 2) {
     <div class="card chart">
-      <app-networth-chart [points]="complete()" [groupLabels]="groupOrder" />
-      <p class="dim small">{{ span() }}</p>
+      <div class="ranges" role="group" aria-label="Date range">
+        @for (r of ranges; track r.key) {
+          <button
+            type="button"
+            [class.on]="range() === r.key"
+            [attr.aria-pressed]="range() === r.key"
+            (click)="pickRange(r.key)"
+          >
+            {{ r.label }}
+          </button>
+        }
+      </div>
+      <app-networth-chart [points]="complete()" [groups]="legend()" (toggle)="toggleGroup($event)">
+        <ng-container *ngTemplateOutlet="allNone" />
+      </app-networth-chart>
+      <p class="dim small">
+        {{ span() }}
+        @if (!everything()) {
+          · showing {{ selected().size }} of {{ accounts().length }} accounts
+        }
+      </p>
       @if (estimated(); as n) {
         <!-- The banks only report today's balance. Earlier days are rebuilt:
              cash and cards from their transactions, investments drawn straight
@@ -82,8 +100,12 @@
     </div>
   } @else {
     <p class="dim">
-      Not enough complete readings yet to draw a line. One more refresh on a
-      different day will do it.
+      Not enough complete readings in this range to draw a line.
+      @if (range() !== 'all') {
+        <button type="button" class="quiet" (click)="pickRange('all')">Show all</button>
+      } @else {
+        One more refresh on a different day will do it.
+      }
     </p>
   }
 

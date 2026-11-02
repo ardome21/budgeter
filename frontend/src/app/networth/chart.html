@@ -11,9 +11,9 @@
     role="img"
     aria-label="Net worth over time. Arrow keys move between days."
     (pointermove)="move($event)"
-    (pointerleave)="hover.set(null)"
+    (pointerleave)="leave()"
     (focus)="focus()"
-    (blur)="hover.set(null)"
+    (blur)="leave()"
     (keydown)="key($event)"
   >
     <svg
@@ -21,11 +21,44 @@
       preserveAspectRatio="none"
       aria-hidden="true"
     >
+      <defs>
+        <!-- Debt is hatched in its own colour: a slice taken away, not a layer added. -->
+        @for (g of ['credit', 'loan']; track g) {
+          <pattern [attr.id]="'owed-' + g" [class]="'g-' + g" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
+            <rect class="hatch-bg" width="6" height="6" />
+            <line class="hatch" x1="0" y1="0" x2="0" y2="6" />
+          </pattern>
+        }
+      </defs>
       @for (t of yTicks(); track t.label) {
         <line class="grid" x1="0" [attr.x2]="width" [attr.y1]="(t.at / 100) * height" [attr.y2]="(t.at / 100) * height" />
       }
+      @for (at of weekLines(); track at) {
+        <line class="grid week" [attr.x1]="(at / 100) * width" [attr.x2]="(at / 100) * width" y1="0" [attr.y2]="height" />
+      }
+      @for (t of xTicks(); track t.at) {
+        <line class="grid" [attr.x1]="(t.at / 100) * width" [attr.x2]="(t.at / 100) * width" y1="0" [attr.y2]="height" />
+      }
+      @for (b of bands(); track b.group) {
+        <path
+          class="band"
+          [class]="'g-' + b.group"
+          [class.lit]="lit() === b.group"
+          [class.faded]="lit() !== null && lit() !== b.group"
+          [class.owed]="b.owed"
+          [style.fill]="b.owed ? 'url(#owed-' + b.group + ')' : null"
+          [attr.d]="b.path"
+        />
+      }
+      @if (zero(); as z) {
+        <line class="zero" x1="0" [attr.x2]="width" [attr.y1]="z" [attr.y2]="z" />
+      }
       <path class="line" [attr.d]="path()" />
     </svg>
+
+    @for (m of markers(); track $index) {
+      <div class="marker" [style.left.%]="m.left" [style.top.%]="m.top"></div>
+    }
 
     @if (current(); as c) {
       <div class="crosshair" [style.left.%]="c.left"></div>
@@ -45,9 +78,9 @@
         </div>
 
         @for (g of c.groups; track g.group) {
-          <div class="group">
+          <div class="group" [class.lit]="lit() === g.group">
             <div class="row head">
-              <span>{{ g.label }}</span>
+              <span><i class="swatch" [class]="'g-' + g.group"></i>{{ g.label }}</span>
               <span class="num">{{ g.total | usd }}</span>
             </div>
             @for (a of g.accounts; track a.account_id) {
@@ -69,5 +102,34 @@
     @for (t of xTicks(); track t.at) {
       <span [style.left.%]="t.at">{{ t.label }}</span>
     }
+  </div>
+
+  <!-- The legend is the filter. Each chip names its colour, carries the
+       group's figure for the day in view, and takes the group in or out. A
+       dashed chip means some of the group's accounts are in, not all. -->
+  <div class="legend" role="group" aria-label="Groups shown">
+    @for (g of legend(); track g.key) {
+      <button
+        type="button"
+        class="chip"
+        [class.on]="g.state === 'on'"
+        [class.some]="g.state === 'some'"
+        [class.lit]="lit() === g.key"
+        [attr.aria-pressed]="g.state === 'on' ? 'true' : g.state === 'some' ? 'mixed' : 'false'"
+        (click)="toggle.emit(g.key)"
+        (pointerenter)="lit.set(g.key)"
+        (pointerleave)="lit.set(null)"
+        (focus)="lit.set(g.key)"
+        (blur)="lit.set(null)"
+      >
+        <i class="swatch" [class]="'g-' + g.key"></i>
+        <span>{{ g.label }}</span>
+        @if (g.total !== null && g.state !== 'off') {
+          <span class="num dim">{{ g.total | usd }}</span>
+        }
+      </button>
+    }
+    <span class="spacer"></span>
+    <ng-content />
   </div>
 </div>

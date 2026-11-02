@@ -1,9 +1,43 @@
+/* One colour per group, fixed, so a filter never repaints what survives it.
+   Ordered as they stack (loan at the bottom, other at the top) and checked
+   with the dataviz validator in both modes: adjacent bands clear ΔE 8 under
+   colour-blindness. Three light steps sit under 3:1 on the surface, which is
+   why every chip in the legend also carries its figure as text. */
+:host {
+  --g-loan: #6250d6;
+  --g-credit: #e34948;
+  --g-checking: #2a78d6;
+  --g-savings: #eb6834;
+  --g-retirement: #1baf7a;
+  --g-investment: #eda100;
+  --g-other: #e87ba4;
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :host {
+    --g-loan: #9085e9;
+    --g-credit: #e66767;
+    --g-checking: #3987e5;
+    --g-savings: #d95926;
+    --g-retirement: #199e70;
+    --g-investment: #c98500;
+    --g-other: #d55181;
+  }
+}
+
+@each $g in loan, credit, checking, savings, retirement, investment, other {
+  .g-#{$g} {
+    --c: var(--g-#{$g});
+  }
+}
+
 /* The y labels sit in a gutter to the left; the x labels in a row beneath.
    Both are HTML positioned by percentage, so they stay crisp at any width. */
 .frame {
   display: grid;
   grid-template-columns: 3.6rem 1fr;
-  grid-template-rows: 240px 1.6rem;
+  grid-template-rows: 300px 1.6rem auto;
 }
 
 .y-axis {
@@ -52,11 +86,75 @@
   }
 }
 
-/* Recessive: one step off the surface, hairline, solid. */
+/* Translucent, so the gridlines show through, with a surface hairline
+   between neighbours. The pointed-at band fills in; the rest step back. */
+.band {
+  fill: var(--c);
+  fill-opacity: 0.32;
+  stroke: var(--surface);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  transition: fill-opacity 120ms ease;
+
+  &.lit {
+    fill-opacity: 0.6;
+  }
+
+  &.faded {
+    fill-opacity: 0.1;
+  }
+
+  /* The fill is the hatch pattern; opacity steps the same way. */
+  &.owed {
+    fill-opacity: 0.85;
+
+    &.lit {
+      fill-opacity: 1;
+    }
+
+    &.faded {
+      fill-opacity: 0.3;
+    }
+  }
+}
+
+.hatch-bg {
+  fill: var(--surface);
+}
+
+.hatch {
+  stroke: var(--c);
+  stroke-width: 3;
+}
+
+/* Every day, when there are few enough to count. Small, on the line. */
+.marker {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  margin: -2.5px 0 0 -2.5px;
+  border-radius: 50%;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+
+.zero {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  opacity: 0.6;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Recessive: one step off the surface, hairline, solid. Weeks fainter still. */
 .grid {
   stroke: var(--border);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
+
+  &.week {
+    opacity: 0.5;
+  }
 }
 
 .line {
@@ -133,6 +231,13 @@
     border-top: 1px solid var(--border);
     padding-top: 0.3rem;
     margin-top: 0.3rem;
+
+    &.lit {
+      margin-inline: -0.4rem;
+      padding-inline: 0.4rem;
+      border-radius: 6px;
+      background: var(--surface-2);
+    }
   }
 
   .row {
@@ -152,6 +257,10 @@
     white-space: nowrap;
   }
 
+  .head .swatch {
+    margin-right: 0.4rem;
+  }
+
   .est {
     margin-left: 0.25rem;
     font-size: 10.5px;
@@ -167,5 +276,68 @@
     font-size: 10.5px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+  }
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--c);
+  vertical-align: -1px;
+}
+
+/* Right under the months: the key to the colours, and the filter. */
+.legend {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding-top: 0.6rem;
+
+  .spacer {
+    flex: 1;
+  }
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--surface);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.25rem 0.75rem 0.25rem 0.6rem;
+  font-size: 13px;
+
+  .num {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  &.on {
+    border-color: var(--text-dim);
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* Some of the group, not all. */
+  &.some {
+    border-style: dashed;
+    border-color: var(--text-dim);
+    color: var(--text);
+  }
+
+  /* Out of the selection: an empty swatch, so it reads as off, not missing. */
+  &:not(.on):not(.some) .swatch {
+    background: none;
+    box-shadow: inset 0 0 0 1.5px var(--c);
+  }
+
+  &.lit {
+    background: var(--surface-2);
   }
 }

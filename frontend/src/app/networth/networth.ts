@@ -1,17 +1,18 @@
 import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 
 import { Api } from '../api';
 import { AccountGroup, AccountRow, NetWorth, NetWorthPoint, Portfolio } from '../models';
 import { UsdPipe } from '../usd';
 import { Sync } from '../sync';
-import { NetWorthChart } from './chart';
+import { LegendGroup, NetWorthChart } from './chart';
 
 /**
  * What you own, what you owe, and how that has moved.
  *
  * The chart is its own component (`chart.ts`): hover any day to see what it
- * is made of.
+ * is made of. Its legend doubles as the group filter.
  *
  * Every point carries how many accounts reported that day, because without it
  * a day when two of eleven accounts were read looks exactly like a day net
@@ -26,7 +27,7 @@ import { NetWorthChart } from './chart';
  */
 @Component({
   selector: 'app-networth',
-  imports: [NetWorthChart, UsdPipe],
+  imports: [NetWorthChart, NgTemplateOutlet, UsdPipe],
   templateUrl: './networth.html',
   styleUrl: './networth.scss',
 })
@@ -46,6 +47,18 @@ export class Networth {
     { key: 'investment', label: 'Other investments' },
     { key: 'other', label: 'Other' },
   ];
+
+  readonly ranges: { key: Range; label: string }[] = [
+    { key: '1m', label: '1M' },
+    { key: '3m', label: '3M' },
+    { key: '6m', label: '6M' },
+    { key: 'ytd', label: 'YTD' },
+    { key: '1y', label: '1Y' },
+    { key: 'all', label: 'All' },
+  ];
+
+  /** How far back the chart reaches. Everything is fetched; this only trims it. */
+  range = signal<Range>(restoreRange());
 
   /** Ids of the accounts being looked at. Every account, until narrowed. */
   selected = signal<ReadonlySet<number>>(new Set());
@@ -71,10 +84,16 @@ export class Networth {
     return points.reduce((most, p) => Math.max(most, p.accounts_reporting), 0);
   });
 
-  complete = computed(() => {
+  /** The days inside the chosen range, complete or not. */
+  private inRange = computed(() => {
     const points = this.data()?.points ?? [];
+    const from = rangeStart(this.range(), points.at(-1)?.as_of);
+    return from ? points.filter((p) => p.as_of >= from) : points;
+  });
+
+  complete = computed(() => {
     const best = this.best();
-    return points.filter((p) => p.accounts_reporting >= best);
+    return this.inRange().filter((p) => p.accounts_reporting >= best);
   });
 
   /** Accounts that have never reported a balance. Named on screen rather than
@@ -90,10 +109,7 @@ export class Networth {
    *  so an estimate is never read as a measurement. */
   estimated = computed(() => this.complete().filter((p) => p.estimated).length);
 
-  partialCount = computed(() => {
-    const d = this.data();
-    return d ? d.points.length - this.complete().length : 0;
-  });
+  partialCount = computed(() => this.inRange().length - this.complete().length);
 
   groups = computed(() =>
     this.groupOrder
@@ -102,6 +118,16 @@ export class Networth {
   );
 
   everything = computed(() => this.selected().size === this.accounts().length);
+
+  /** The group chips — the chart's legend, or the fallback row above. */
+  legend = computed<LegendGroup[]>(() =>
+    this.groups().map((g) => ({ key: g.key, label: g.label, state: this.groupState(g.accounts) })),
+  );
+
+  /** Whether the chart is on screen, and so carrying the chips beneath it. */
+  drawn = computed(
+    () => this.selected().size > 0 && !this.loading() && !!this.data() && this.complete().length >= 2,
+  );
 
   /** Whether a group's chip is on, off, or partly on. */
   groupState(accounts: AccountRow[]): 'on' | 'some' | 'off' {
@@ -127,7 +153,8 @@ export class Networth {
     });
   }
 
-  toggleGroup(accounts: AccountRow[]): void {
+  toggleGroup(key: AccountGroup): void {
+    const accounts = this.accounts().filter((a) => a.group === key);
     const next = new Set(this.selected());
     const on = this.groupState(accounts) === 'on';
     for (const a of accounts) {
@@ -142,6 +169,12 @@ export class Networth {
     if (next.has(id)) next.delete(id);
     else next.add(id);
     this.choose(next);
+  }
+
+  pickRange(range: Range): void {
+    this.range.set(range);
+    if (range === DEFAULT_RANGE) localStorage.removeItem(RANGE_KEY);
+    else localStorage.setItem(RANGE_KEY, range);
   }
 
   all(): void {
@@ -183,7 +216,7 @@ export class Networth {
       this.loading.set(false);
       return;
     }
-    this.api.netWorth(365, ids).subscribe({
+    this.api.netWorth(3650, ids).subscribe({
       next: (d) => {
         this.data.set(d);
         this.loading.set(false);
@@ -221,3 +254,30 @@ export class Networth {
 }
 
 const STORAGE_KEY = 'networth.accounts';
+const RANGE_KEY = 'networth.range';
+const DEFAULT_RANGE: Range = '1y';
+
+type Range = '1m' | '3m' | '6m' | 'ytd' | '1y' | 'all';
+
+function restoreRange(): Range {
+  const saved = localStorage.getItem(RANGE_KEY);
+  return ['1m', '3m', '6m', 'ytd', '1y', 'all'].includes(saved ?? '')
+    ? (saved as Range)
+    : DEFAULT_RANGE;
+}
+
+/**
+ * The first day a range includes, as an ISO date, counted back from the
+ * latest day there is rather than from today, so a week without a refresh
+ * does not shorten the chart. Null means from the beginning.
+ */
+export function rangeStart(range: Range, latest: string | undefined): string | null {
+  if (!latest || range === 'all') return null;
+  const [y, m, d] = latest.split('-').map(Number);
+  const start =
+    range === 'ytd' ? new Date(y, 0, 1)
+    : range === '1y' ? new Date(y - 1, m - 1, d + 1)
+    : new Date(y, m - 1 - { '1m': 1, '3m': 3, '6m': 6 }[range], d + 1);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`;
+}
