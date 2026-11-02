@@ -10,6 +10,45 @@
     font-size: 22px;
     font-weight: 600;
   }
+
+  .edit {
+    margin-left: auto;
+    font-size: 14px;
+    color: var(--text-dim);
+  }
+}
+
+/* The way in to setting a budget, shown where the lack of one shows. */
+.setup {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.2rem 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  text-decoration: none;
+  color: var(--text);
+
+  .setup-title {
+    font-weight: 600;
+  }
+
+  .dim {
+    grid-column: 1;
+    font-size: 13.5px;
+  }
+
+  .go {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  &:hover {
+    border-color: var(--accent-hover);
+  }
 }
 
 .totals {
@@ -131,4 +170,13 @@ a {
   /* Sits on the boundary rather than starting at it, so the line reads as a
      mark on the bar and not as a second fill. */
   transform: translateX(-1px);
+}
+
+/* Spending has outrun the money in. The figure says by how much. */
+.left-short {
+  border-color: var(--over);
+
+  .figure {
+    color: var(--over);
+  }
 }

@@ -2,7 +2,7 @@ import { Component, computed, effect, inject, signal, untracked } from '@angular
 import { RouterLink } from '@angular/router';
 
 import { Api } from '../api';
-import { CategorySpend, MonthSummary } from '../models';
+import { BudgetPlan, CategorySpend, MonthSummary } from '../models';
 import { UsdPipe } from '../usd';
 import { Sync } from '../sync';
 
@@ -28,6 +28,8 @@ export class Month {
   months = signal<string[]>([]);
   selected = signal<string | null>(null);
   summary = signal<MonthSummary | null>(null);
+  /** Fetched only when no budget applies, to offer last month as a start. */
+  plan = signal<BudgetPlan | null>(null);
   loading = signal(true);
   error = signal<string | null>(null);
 
@@ -70,6 +72,12 @@ export class Month {
       next: (summary) => {
         this.summary.set(summary);
         this.loading.set(false);
+        this.plan.set(null);
+        // The setup card is only offered for this month or a later one: a
+        // budget for a month already over judges nothing.
+        if (!summary.budget_from && month >= this.thisMonth()) {
+          this.api.budgetPlan(year, m).subscribe((p) => this.plan.set(p));
+        }
       },
       error: () => {
         this.error.set('Could not load that month.');
@@ -151,6 +159,22 @@ export class Month {
       month: 'long',
       year: 'numeric',
     });
+  }
+
+  /** How many categories last month's spending touched — the rows the setup fills. */
+  planCategories = computed(
+    () => this.plan()?.rows.filter((r) => r.from_last_month !== null).length ?? 0,
+  );
+
+  /** "November", with no year — the card says which month without repeating it. */
+  monthName(month: string): string {
+    const [year, m] = month.split('-').map(Number);
+    return new Date(year, m - 1, 1).toLocaleDateString(undefined, { month: 'long' });
+  }
+
+  /** "2026-11" for the Budget page's month parameter. */
+  budgetMonth(): string {
+    return (this.selected() ?? this.thisMonth()).slice(0, 7);
   }
 
   private thisMonth(): string {

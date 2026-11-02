@@ -142,16 +142,34 @@ class BudgetOut(Base):
     amount: Money
 
 
-class BudgetSuggestion(BaseModel):
+class BudgetPlanRow(BaseModel):
     category_id: int
     category_name: str
-    # The median of the last few complete months, not the mean — one flight
+    # In force now: this month's own, or carried forward. None is no target.
+    budget: Money | None
+    last_month: Money
+    # The median of the last three complete months, not the mean — one flight
     # should not set the Travel budget for the year.
-    amount: Money
-    # How many of those months this category appeared in. A category seen once
-    # in three is a different proposal from one seen every month, and the
-    # screen should be able to say so before you accept it.
-    months: int
+    typical: Money
+    # How many of those three months it appeared in. Seen once in three is a
+    # different proposal from seen every month.
+    months_seen: int
+    # Each figure rounded up to the next $10; None where nothing was spent.
+    from_last_month: Money | None
+    from_typical: Money | None
+
+
+class BudgetPlan(BaseModel):
+    month: date
+    # Which month set the budget in force; None when none has ever been set.
+    budget_from: date | None
+    last_month: date
+    last_month_spent: Money
+    last_month_income: Money
+    typical_spent: Money
+    rows: list[BudgetPlanRow]
+    # Income categories, positive, proposals rounded down rather than up.
+    income: list[BudgetPlanRow]
 
 
 # --- the month --------------------------------------------------------------
@@ -193,6 +211,16 @@ class MonthOut(BaseModel):
     # adding it to this month's total is a bug that took three commits to kill.
     transferred: Money
     budgeted: Money
+    # The income budget in force, positive. None when none is set.
+    income_expected: Money | None = None
+    # Money in less spending, as it stands.
+    left: Money
+    # Once the expected pay lands: max(received, expected) less spending.
+    left_expected: Money | None = None
+    # Expected pay less the spending budget: what the plan leaves.
+    left_planned: Money | None = None
+    # The month whose budget this is: this one, or the last one set before it.
+    budget_from: date | None = None
     categories: list[CategorySpend]
     transaction_count: int
 

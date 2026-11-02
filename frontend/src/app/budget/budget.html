@@ -1,0 +1,170 @@
+<div class="head">
+  <h1>Budget</h1>
+  <input
+    type="month"
+    [value]="month()"
+    (change)="changeMonth($any($event.target).value)"
+    aria-label="Month"
+  />
+</div>
+
+@if (error()) {
+  <p class="banner error">{{ error() }}</p>
+}
+
+@if (plan(); as p) {
+  <p class="status">
+    @if (!p.budget_from) {
+      No budget yet. These are {{ label(p.last_month, false) }}'s figures,
+      rounded up to the next $10 — change anything, then save.
+    } @else if (ownBudget()) {
+      {{ label(p.month) }}'s own budget. Later months use it until one is
+      given its own.
+    } @else {
+      Carried from {{ label(p.budget_from) }}. Saving here sets
+      {{ label(p.month, false) }}'s own, and later months follow it.
+    }
+  </p>
+
+  <!-- The answer first: what comes in, what the plan spends, what is left. -->
+  <div class="strip">
+    <div class="card tile">
+      <span class="label">Money in</span>
+      <span class="figure num">{{ (incomeTotal() ?? p.last_month_income) | usd }}</span>
+      <span class="sub dim">
+        @if (incomeAssumed()) {
+          {{ label(p.last_month, false) }}'s — set what you expect below
+        } @else {
+          expected
+        }
+      </span>
+    </div>
+    <div class="card tile">
+      <span class="label">Budgeted</span>
+      <span class="figure num">{{ total() | usd }}</span>
+      <span class="sub dim">{{ label(p.last_month, false) }}: {{ p.last_month_spent | usd }}</span>
+    </div>
+    <div class="card tile" [class.short]="short()" [class.spare]="!short()">
+      <span class="label">{{ short() ? 'Over by' : 'Left over' }}</span>
+      <span class="figure num">{{ (short() ? left()!.slice(1) : left()) | usd }}</span>
+      <span class="sub dim">
+        {{ short() ? 'this plan spends more than comes in' : 'not budgeted — yours to save' }}
+      </span>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <span class="dim small">Fill from</span>
+    <div class="segmented" role="group" aria-label="Fill every box from">
+      <button type="button" [class.on]="source() === 'last'" (click)="fillFrom('last')">
+        {{ label(p.last_month, false) }}
+      </button>
+      <button type="button" [class.on]="source() === 'typical'" (click)="fillFrom('typical')">
+        Typical month
+      </button>
+      @if (p.budget_from) {
+        <button type="button" [class.on]="source() === 'current'" (click)="fillFrom('current')">
+          Current budget
+        </button>
+      }
+    </div>
+  </div>
+
+  <ng-template #row let-row let-income="income">
+    <tr>
+      <td>{{ row.category_name }}</td>
+      <!-- Either figure is a button: click it to take it for this row. -->
+      <td class="num">
+        <button type="button" class="figure" (click)="use(row, 'last')"
+                [attr.aria-label]="'Use ' + label(p.last_month, false) + ' for ' + row.category_name">
+          {{ row.last_month | usd }}
+        </button>
+      </td>
+      <td class="num">
+        <button type="button" class="figure" (click)="use(row, 'typical')"
+                [attr.aria-label]="'Use typical for ' + row.category_name">
+          {{ row.typical | usd }}
+        </button>
+        @if (row.months_seen && row.months_seen < 3) {
+          <!-- One month of three is a holiday, not a habit. -->
+          <span class="why dim">in {{ row.months_seen }} of 3 months</span>
+        }
+      </td>
+      <td class="num">
+        <input
+          type="text"
+          inputmode="decimal"
+          class="amount"
+          [class.bad]="invalid().has(row.category_id)"
+          [value]="amountFor(row.category_id)"
+          (input)="setAmount(row.category_id, $any($event.target).value)"
+          placeholder="—"
+          [attr.aria-label]="(income ? 'Expected ' : 'Budget for ') + row.category_name"
+        />
+      </td>
+    </tr>
+  </ng-template>
+
+  @if (p.income.length) {
+    <h2>Money in</h2>
+    <p class="dim small">
+      Rounded down rather than up: a plan that counts on money that does not
+      arrive is spending it anyway.
+    </p>
+    <div class="card scroll-x">
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th class="num">{{ label(p.last_month, false) }}</th>
+            <th class="num">Typical</th>
+            <th class="num">Expected</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (r of p.income; track r.category_id) {
+            <ng-container *ngTemplateOutlet="row; context: { $implicit: r, income: true }" />
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+
+  <h2>Spending</h2>
+  <div class="card scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th class="num">{{ label(p.last_month, false) }}</th>
+          <th class="num">Typical</th>
+          <th class="num">Budget</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (r of p.rows; track r.category_id) {
+          <ng-container *ngTemplateOutlet="row; context: { $implicit: r }" />
+        }
+      </tbody>
+      <tfoot>
+        <tr>
+          <td>Total</td>
+          <td class="num">{{ p.last_month_spent | usd }}</td>
+          <td class="num">{{ p.typical_spent | usd }}</td>
+          <td class="num total">{{ total() | usd }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <div class="foot">
+    <span class="spacer"></span>
+    @if (saved()) { <span class="dim small">Saved.</span> }
+    <a class="quiet" [routerLink]="['/month']">Back to month</a>
+    <button type="button" (click)="save()" [disabled]="saving() || invalid().size > 0">
+      Save {{ label(p.month, false) }}'s budget
+    </button>
+  </div>
+} @else if (!error()) {
+  <p class="dim">Loading…</p>
+}

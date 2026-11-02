@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 
 from ..db import get_session
 from ..models import Budget, Category, Transaction
-from ..queries import suggest_budgets
+from ..queries import budget_plan
 from ..schemas import (
     BudgetIn,
     BudgetOut,
-    BudgetSuggestion,
+    BudgetPlan,
     CategoryIn,
     CategoryOut,
 )
@@ -87,11 +87,15 @@ def delete_category(category_id: int, db: Session = Depends(get_session)) -> Non
     db.commit()
 
 
-@router.get("/budgets/{year}/{month}", response_model=list[BudgetOut])
-def list_budgets(
-    year: int, month: int, db: Session = Depends(get_session)
-) -> list[Budget]:
-    return list(db.scalars(select(Budget).where(Budget.month == date(year, month, 1))))
+@router.get("/budgets/{year}/{month}/plan", response_model=BudgetPlan)
+def plan(year: int, month: int, db: Session = Depends(get_session)) -> dict:
+    """The budget in force for a month, set beside what last month cost and
+    what each category typically costs, with a proposal from each.
+
+    A proposal, not a save: the screen fills its boxes from this and nothing
+    is written until Save.
+    """
+    return budget_plan(db, date(year, month, 1))
 
 
 @router.put("/budgets/{year}/{month}", response_model=list[BudgetOut])
@@ -107,6 +111,10 @@ def set_budgets(
     screen does: the budget for a month is edited as one table and saved once.
     An amount of zero is a deliberate "nothing here"; to remove a target
     entirely, leave the category out.
+
+    The set then holds for every later month that has none of its own (see
+    `budget_source`). An empty list removes this month's own set, so the month
+    goes back to whatever was carried into it.
     """
     when = date(year, month, 1)
     db.execute(delete(Budget).where(Budget.month == when))
@@ -114,45 +122,3 @@ def set_budgets(
         db.add(Budget(category_id=row.category_id, month=when, amount=row.amount))
     db.commit()
     return list(db.scalars(select(Budget).where(Budget.month == when)))
-
-
-@router.post("/budgets/{year}/{month}/copy", response_model=list[BudgetOut])
-def copy_budgets(
-    year: int, month: int, db: Session = Depends(get_session)
-) -> list[Budget]:
-    """Copy the most recent earlier month's budgets into this one.
-
-    Budgets went unmaintained for a year in the previous version of this app,
-    and the reason was that each month started empty. Carrying the last set
-    forward makes keeping them current an edit rather than a re-entry.
-    """
-    when = date(year, month, 1)
-    source = db.scalar(
-        select(func.max(Budget.month)).where(Budget.month < when)
-    )
-    if source is None:
-        raise HTTPException(404, "no earlier month to copy from")
-
-    db.execute(delete(Budget).where(Budget.month == when))
-    for budget in db.scalars(select(Budget).where(Budget.month == source)):
-        db.add(
-            Budget(category_id=budget.category_id, month=when, amount=budget.amount)
-        )
-    db.commit()
-    return list(db.scalars(select(Budget).where(Budget.month == when)))
-
-
-@router.get(
-    "/budgets/{year}/{month}/suggest", response_model=list[BudgetSuggestion]
-)
-def suggest(
-    year: int, month: int, db: Session = Depends(get_session)
-) -> list[dict]:
-    """What the last three complete months say each category costs.
-
-    A proposal, not a save — the screen fills its boxes with this and nothing
-    is written until Save. `/copy` carries last month's *targets* forward;
-    this reads what actually happened, which is the one available answer when
-    no target has ever been set.
-    """
-    return suggest_budgets(db, date(year, month, 1))

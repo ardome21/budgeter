@@ -11,7 +11,7 @@ rows it totals.
 from __future__ import annotations
 
 from datetime import date
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -75,10 +75,33 @@ def _to_date(month: date, days_elapsed: int, days: int, budget: Decimal) -> Deci
     return (budget * days_elapsed / days).quantize(Decimal("0.01"))
 
 
+def previous_month(month: date) -> date:
+    start = month.replace(day=1)
+    if start.month == 1:
+        return date(start.year - 1, 12, 1)
+    return start.replace(month=start.month - 1)
+
+
+def budget_source(db: Session, month: date) -> date | None:
+    """The month whose budget is in force for `month`: its own, or else the
+    most recent one set before it.
+
+    A budget stays until it is changed. Every month used to start empty, and
+    budgets went unmaintained for a year in the version this replaced for that
+    reason alone — a set you have to re-enter monthly is a set nobody keeps.
+    A month's budget is one set, saved whole, so it rolls forward whole: a
+    category left out of the latest set has no budget, not an older one.
+    """
+    return db.scalar(
+        select(func.max(Budget.month)).where(Budget.month <= month.replace(day=1))
+    )
+
+
 def month_summary(db: Session, month: date, today: date | None = None) -> dict:
     start, end = month_bounds(month)
     days = days_in(start)
     days_elapsed = elapsed_in(start, today)
+    source = budget_source(db, start)
 
     in_month = (
         select(Transaction, Category)
@@ -95,7 +118,7 @@ def month_summary(db: Session, month: date, today: date | None = None) -> dict:
         totals[category.kind] += txn.amount
         count += 1
 
-    per_category = _category_spend(db, start, end, days_elapsed, days)
+    per_category = _category_spend(db, start, end, days_elapsed, days, source)
 
     # Spending categories only. Printed as "of X budgeted" beside a total that
     # is spending alone, so counting a savings target here made the two halves
@@ -117,6 +140,16 @@ def month_summary(db: Session, month: date, today: date | None = None) -> dict:
         ZERO,
     )
     spent = totals[CategoryKind.SPENDING]
+    income = -totals[CategoryKind.INCOME]
+
+    # What you expect to be paid, from the income budget in force. Stored
+    # positive, the way it is typed; None when no income has been budgeted.
+    expected = [
+        row["budget"]
+        for row in per_category
+        if row["kind"] == CategoryKind.INCOME and row["budget"] is not None
+    ]
+    income_expected = sum(expected, ZERO) if expected else None
 
     return {
         "month": start,
@@ -131,17 +164,40 @@ def month_summary(db: Session, month: date, today: date | None = None) -> dict:
         # Income arrives negative in Plaid's convention (money entering the
         # account). Flipped once, here, so every caller sees a positive number
         # for money coming in.
-        "income": -totals[CategoryKind.INCOME],
+        "income": income,
+        "income_expected": income_expected,
+        # Money in less spending, as it stands. Early in the month, before
+        # payday, this is negative and says nothing alarming.
+        "left": income - spent,
+        # What is still yours this month once the expected pay lands: the
+        # larger of expected and received, so a bonus counts and a late
+        # paycheck does not read as a shortfall.
+        "left_expected": (
+            None if income_expected is None
+            else max(income, income_expected) - spent
+        ),
+        # What the plan itself leaves: expected pay less the spending budget.
+        "left_planned": (
+            None if income_expected is None or not budgeted
+            else income_expected - budgeted
+        ),
         "saved": totals[CategoryKind.SAVINGS],
         "transferred": totals[CategoryKind.TRANSFER],
         "budgeted": budgeted,
+        # Which month's budget this is — this one's, or one carried forward.
+        "budget_from": source,
         "categories": per_category,
         "transaction_count": count,
     }
 
 
 def _category_spend(
-    db: Session, start: date, end: date, days_elapsed: int = 0, days: int = 0
+    db: Session,
+    start: date,
+    end: date,
+    days_elapsed: int = 0,
+    days: int = 0,
+    source: date | None = None,
 ) -> list[dict]:
     """Every category, with what it cost and what it was meant to cost.
 
@@ -159,7 +215,7 @@ def _category_spend(
     )
     budgets = (
         select(Budget.category_id, Budget.amount)
-        .where(Budget.month == start)
+        .where(Budget.month == source)
         .subquery()
     )
 
@@ -206,7 +262,12 @@ def _category_spend(
     return rows
 
 
-def suggest_budgets(db: Session, month: date, months_back: int = 3) -> list[dict]:
+def suggest_budgets(
+    db: Session,
+    month: date,
+    months_back: int = 3,
+    kind: CategoryKind = CategoryKind.SPENDING,
+) -> list[dict]:
     """A starting budget per category, from what you actually spent.
 
     Budgets went unmaintained for a year in the version this replaced, and
@@ -244,7 +305,7 @@ def suggest_budgets(db: Session, month: date, months_back: int = 3) -> list[dict
                 func.coalesce(func.sum(Transaction.amount), ZERO),
             )
             .join(Transaction, Transaction.category_id == Category.id)
-            .where(Category.kind == CategoryKind.SPENDING)
+            .where(Category.kind == kind)
             .where(Transaction.occurred_on >= start, Transaction.occurred_on < end)
             .group_by(Category.id, Category.name)
         )
@@ -268,6 +329,114 @@ def suggest_budgets(db: Session, month: date, months_back: int = 3) -> list[dict
         )
     rows.sort(key=lambda r: r["amount"], reverse=True)
     return rows
+
+
+def budget_plan(db: Session, month: date) -> dict:
+    """Everything the Budget screen needs to set a month in one sitting.
+
+    Every spending category, each with the budget in force now, what it cost
+    last month, and what it typically costs (the median of three, from
+    `suggest_budgets`). Both proposals are rounded **up** to the next $10: a
+    target reads as a decision rather than a receipt, and rounding down would
+    set a budget you had already broken last month. Nothing spent proposes
+    nothing — a blank, not a $0 target.
+
+    Income categories come back separately, as `income`, so the screen can set
+    the plan against what you expect to be paid and say what it leaves.
+    Nothing is written; the screen saves through `PUT /budgets`.
+    """
+    start = month.replace(day=1)
+    last = previous_month(start)
+    source = budget_source(db, start)
+
+    last_spend = {
+        row["category_id"]: row["spent"]
+        for row in _category_spend(db, *month_bounds(last))
+    }
+    typical = {row["category_id"]: row for row in suggest_budgets(db, start)}
+    budgets = {
+        b.category_id: b.amount
+        for b in db.scalars(select(Budget).where(Budget.month == source))
+    }
+
+    rows = []
+    for category in db.scalars(
+        select(Category)
+        .where(Category.kind == CategoryKind.SPENDING)
+        .order_by(Category.sort_order, Category.name)
+    ):
+        spent = last_spend.get(category.id, ZERO)
+        usual = typical.get(category.id)
+        rows.append(
+            {
+                "category_id": category.id,
+                "category_name": category.name,
+                "budget": budgets.get(category.id),
+                "last_month": spent,
+                "typical": usual["amount"] if usual else ZERO,
+                "months_seen": usual["months"] if usual else 0,
+                "from_last_month": _round(spent, ROUND_CEILING),
+                "from_typical": (
+                    _round(usual["amount"], ROUND_CEILING) if usual else None
+                ),
+            }
+        )
+    # Biggest first, by what last month cost: the rows worth deciding on lead.
+    rows.sort(key=lambda r: r["last_month"], reverse=True)
+
+    # Money in, on the same terms but the other way up: stored and shown
+    # positive, and rounded **down**, because an income plan you fall short of
+    # spends money that never arrived.
+    usual_income = {
+        row["category_id"]: row
+        for row in suggest_budgets(db, start, kind=CategoryKind.INCOME)
+    }
+    income_rows = []
+    for category in db.scalars(
+        select(Category)
+        .where(Category.kind == CategoryKind.INCOME)
+        .order_by(Category.sort_order, Category.name)
+    ):
+        received = -last_spend.get(category.id, ZERO)
+        usual = usual_income.get(category.id)
+        typical_in = -usual["amount"] if usual else ZERO
+        income_rows.append(
+            {
+                "category_id": category.id,
+                "category_name": category.name,
+                "budget": budgets.get(category.id),
+                "last_month": received,
+                "typical": typical_in,
+                "months_seen": usual["months"] if usual else 0,
+                "from_last_month": _round(received, ROUND_FLOOR),
+                "from_typical": _round(typical_in, ROUND_FLOOR),
+            }
+        )
+
+    summary = month_summary(db, last)
+    return {
+        "month": start,
+        "budget_from": source,
+        "last_month": last,
+        "last_month_spent": summary["spent"],
+        "last_month_income": summary["income"],
+        "typical_spent": sum((r["typical"] for r in rows), ZERO),
+        "rows": rows,
+        "income": income_rows,
+    }
+
+
+def _round(
+    amount: Decimal, rounding: str, step: Decimal = Decimal(10)
+) -> Decimal | None:
+    """To a multiple of $10, up for spending ($842.17 → $850.00) and down for
+    income ($4,957.23 → $4,950.00). Nothing (or a month of refunds) proposes
+    nothing."""
+    if amount <= 0:
+        return None
+    return ((amount / step).to_integral_value(rounding) * step).quantize(
+        Decimal("0.01")
+    )
 
 
 def _median(values: list[Decimal]) -> Decimal:

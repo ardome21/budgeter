@@ -5,7 +5,7 @@ import { Observable } from 'rxjs';
 import {
   AccountRow,
   Budget,
-  BudgetSuggestion,
+  BudgetPlan,
   Category,
   LinkedItem,
   MonthSummary,
@@ -127,8 +127,10 @@ export class Api {
     return this.http.delete<void>(`/api/categories/${id}`);
   }
 
-  budgets(year: number, month: number): Observable<Budget[]> {
-    return this.http.get<Budget[]>(`/api/budgets/${year}/${month}`);
+  /** The budget in force for a month, beside what last month and a typical
+   *  month cost, with a proposal from each. Writes nothing. */
+  budgetPlan(year: number, month: number): Observable<BudgetPlan> {
+    return this.http.get<BudgetPlan>(`/api/budgets/${year}/${month}/plan`);
   }
 
   setBudgets(
@@ -137,17 +139,6 @@ export class Api {
     rows: Budget[],
   ): Observable<Budget[]> {
     return this.http.put<Budget[]>(`/api/budgets/${year}/${month}`, rows);
-  }
-
-  copyBudgets(year: number, month: number): Observable<Budget[]> {
-    return this.http.post<Budget[]>(`/api/budgets/${year}/${month}/copy`, {});
-  }
-
-  /** What the last three complete months say each category actually costs. */
-  suggestBudgets(year: number, month: number): Observable<BudgetSuggestion[]> {
-    return this.http.get<BudgetSuggestion[]>(
-      `/api/budgets/${year}/${month}/suggest`,
-    );
   }
 
   // --- linked banks ---------------------------------------------------------

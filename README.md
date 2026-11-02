@@ -152,9 +152,11 @@ parsed, and a budget three cents off has no explanation available to whoever is
 reading it. Sums happen in Postgres or in Python with `Decimal`. Nothing in the
 frontend adds money up.
 
-The single exception is the budget bar's width, which is a percentage for CSS.
-The exact figures sit beside it in their own columns, so a rounded width can
-never be mistaken for an amount.
+Two exceptions. The budget bar's width is a percentage for CSS; the exact
+figures sit beside it in their own columns, so a rounded width can never be
+mistaken for an amount. And the Budget page totals the boxes as you type, which
+cannot wait on a request: `money.ts` reads each amount as whole cents into a
+`bigint` and writes the sum back as a decimal string. Integers, never a float.
 
 ### Net worth over time
 
@@ -258,15 +260,37 @@ Budgets went unmaintained for a year in the version this replaced, and sat at
 exactly zero in this one. Both times for the same reason: every month starts as
 seventeen empty boxes, and filling them from memory is a job nobody does twice.
 
-**Suggest from what I actually spent** proposes the **median** of the last three
-complete months per category. Median, not mean — three months of $100, $100 and
+So a budget is now **set once and kept**. A month with no budget of its own uses
+the most recent one set before it (`budget_source`), so the boxes are filled
+once and only touched to change something. A month's set rolls forward whole: a
+category left out of the latest set has no budget, not an older one.
+
+Setting it is offered on the Month page, where the lack of one shows, and done
+on the **Budget** page. Every spending category is listed beside what it cost
+**last month** and in a **typical month**, and the boxes start from last month,
+rounded **up** to the next $10. Up, because rounding down sets a budget you
+broke last month. Nothing spent proposes a blank, not a $0 target. Either figure
+can be clicked to take it for one row, or the whole column switched. The total
+is set against last month's money in.
+
+**Money in is planned too**, as a budget on the Income category, stored positive
+and proposed rounded **down**: a plan that counts on money that does not arrive
+spends it anyway. The page leads with the answer — money in, budgeted, and what
+that leaves — and the Month page carries a **Left** tile: spending taken from
+the larger of what has arrived and what is expected (`left_expected`), so the
+14th does not read as broke because payday is the 15th, beside what the plan
+itself leaves (`left_planned`). With no income budget it falls back to money in
+less spending as it stands, and says so.
+
+The typical month is the **median** of the last three complete months per
+category. Median, not mean — three months of $100, $100 and
 $700 is a habit of $100 and one holiday, and a mean proposes $300, a budget you
 would never meet and would stop trusting. Months the category did not appear in
 count as zeroes, so one December flight does not read as a monthly commitment.
 Complete months only: the one being budgeted is partway through, and including
 it would propose less than you have ever spent.
 
-Nothing is saved by suggesting. It fills the boxes; Save still decides.
+Nothing is saved by proposing. It fills the boxes; Save still decides.
 
 ### Mid-month, the question is pace
 

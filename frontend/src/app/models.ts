@@ -78,14 +78,33 @@ export interface Budget {
   amount: string;
 }
 
-export interface BudgetSuggestion {
+export interface BudgetPlanRow {
   category_id: number;
   category_name: string;
-  /** The median of the last few complete months, not the mean. */
-  amount: string;
-  /** How many of those months this category appeared in. Seen once in three is
-   *  a different proposal from seen every month. */
-  months: number;
+  /** In force now — this month's own, or carried forward. Null is no target. */
+  budget: string | null;
+  last_month: string;
+  /** The median of the last three complete months, not the mean. */
+  typical: string;
+  /** How many of those three months it appeared in. Seen once in three is a
+   *  different proposal from seen every month. */
+  months_seen: number;
+  /** Rounded up to the next $10 on the server. Null where nothing was spent. */
+  from_last_month: string | null;
+  from_typical: string | null;
+}
+
+export interface BudgetPlan {
+  month: string;
+  /** Which month set the budget in force; null when none ever has. */
+  budget_from: string | null;
+  last_month: string;
+  last_month_spent: string;
+  last_month_income: string;
+  typical_spent: string;
+  rows: BudgetPlanRow[];
+  /** Income categories, positive, with proposals rounded down rather than up. */
+  income: BudgetPlanRow[];
 }
 
 export interface CategorySpend {
@@ -120,6 +139,18 @@ export interface MonthSummary {
   saved: string;
   transferred: string;
   budgeted: string;
+  /** The income budget in force, positive. Null when none is set. */
+  income_expected: string | null;
+  /** Money in less spending, as it stands. */
+  left: string;
+  /** Once the expected pay lands: the larger of received and expected, less
+   *  spending. Null without an income budget. */
+  left_expected: string | null;
+  /** Expected pay less the spending budget: what the plan leaves. */
+  left_planned: string | null;
+  /** The month whose budget applies: this one, or the last one set before it.
+   *  Null when no budget has ever been set. */
+  budget_from: string | null;
   categories: CategorySpend[];
   transaction_count: number;
 }

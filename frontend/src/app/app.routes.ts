@@ -27,6 +27,12 @@ export const routes: Routes = [
     loadComponent: () => import('./month/month').then((m) => m.Month),
   },
   {
+    path: 'budget',
+    title: 'Budget · budgeter',
+    canActivate: [authGuard],
+    loadComponent: () => import('./budget/budget').then((m) => m.BudgetPage),
+  },
+  {
     path: 'transactions',
     title: 'Transactions · budgeter',
     canActivate: [authGuard],

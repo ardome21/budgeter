@@ -1,0 +1,171 @@
+.head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.4rem;
+
+  h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+  }
+}
+
+.status {
+  margin: 0 0 1rem;
+  color: var(--text-dim);
+}
+
+.small {
+  font-size: 13px;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 1.4rem 0 0.4rem;
+}
+
+h2 + .small {
+  margin: -0.2rem 0 0.5rem;
+}
+
+/* Money in, budgeted, left over — the same tiles as the Month page. */
+.strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+
+  .label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+
+  .figure {
+    font-size: 22px;
+    text-align: left;
+  }
+
+  .sub {
+    font-size: 12.5px;
+  }
+
+  &.spare {
+    border-color: var(--accent);
+  }
+
+  &.short {
+    border-color: var(--over);
+
+    .figure {
+      color: var(--over);
+    }
+  }
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+/* The same control as the net worth range. */
+.segmented {
+  display: flex;
+  gap: 0.15rem;
+  padding: 0.15rem;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+
+  button {
+    background: none;
+    border: none;
+    border-radius: 6px;
+    padding: 0.2rem 0.65rem;
+    font-size: 13px;
+    color: var(--text-dim);
+
+    &.on {
+      background: var(--surface-2);
+      color: var(--text);
+      font-weight: 600;
+    }
+  }
+}
+
+/* A figure you can click to take. Looks like a number until hovered. */
+button.figure {
+  background: none;
+  border: none;
+  padding: 0.1rem 0.3rem;
+  margin-right: -0.3rem;
+  border-radius: 4px;
+  color: var(--text-dim);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--accent-dim);
+    color: var(--text);
+  }
+}
+
+.why {
+  display: block;
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+.amount {
+  width: 7rem;
+  text-align: right;
+  font-family: var(--mono);
+
+  &.bad {
+    border-color: var(--over);
+    outline-color: var(--over);
+  }
+}
+
+tfoot td {
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.total {
+  font-family: var(--mono);
+  padding-right: 0.9rem;
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-top: 0.9rem;
+
+  p {
+    margin: 0;
+  }
+
+  .spacer {
+    flex: 1;
+  }
+}
+
+a.quiet {
+  color: var(--text-dim);
+  font-size: 14px;
+}

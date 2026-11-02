@@ -97,27 +97,142 @@ def test_budgets_are_replaced_wholesale(
         "/api/budgets/2026/3",
         json=[{"category_id": spending_category.id, "amount": "400.00"}],
     )
-    assert client.get("/api/budgets/2026/3").json()[0]["amount"] == "400.00"
+    plan = client.get("/api/budgets/2026/3/plan").json()
+    assert plan["budget_from"] == "2026-03-01"
+    assert plan["rows"][0]["budget"] == "400.00"
 
     client.put("/api/budgets/2026/3", json=[])
 
-    assert client.get("/api/budgets/2026/3").json() == []
+    plan = client.get("/api/budgets/2026/3/plan").json()
+    assert plan["budget_from"] is None
+    assert plan["rows"][0]["budget"] is None
 
 
-def test_budgets_can_be_carried_forward(
+def test_a_budget_holds_until_it_is_changed(
     client: TestClient, session: Session, spending_category
 ):
     """Budgets went unmaintained for a year in the version this replaced, and
-    the reason was that every month started empty."""
+    the reason was that every month started empty. Set once, a budget carries
+    into every later month until one of them is given its own."""
     client.put(
         "/api/budgets/2026/3",
         json=[{"category_id": spending_category.id, "amount": "400.00"}],
     )
+    client.put(
+        "/api/budgets/2026/6",
+        json=[{"category_id": spending_category.id, "amount": "250.00"}],
+    )
 
-    copied = client.post("/api/budgets/2026/4/copy").json()
+    def budget(month: int) -> tuple[str | None, str]:
+        body = client.get(f"/api/month/2026/{month}").json()
+        return body["budget_from"], body["budgeted"]
 
-    assert copied[0]["amount"] == "400.00"
-    assert copied[0]["category_id"] == spending_category.id
+    assert budget(2) == (None, "0.00")
+    assert budget(3) == ("2026-03-01", "400.00")
+    assert budget(5) == ("2026-03-01", "400.00")
+    assert budget(6) == ("2026-06-01", "250.00")
+    assert budget(9) == ("2026-06-01", "250.00")
+
+
+def test_the_plan_proposes_from_last_month_rounded_up(
+    client: TestClient, session: Session, add_transaction, account, spending_category
+):
+    """$842.17 proposes $850: a target, not a receipt — and rounded up, because
+    rounding down sets a budget already broken last month. A category with
+    nothing spent proposes nothing rather than a $0 target."""
+    idle = Category(name="Idle Test", kind=CategoryKind.SPENDING, sort_order=60)
+    session.add(idle)
+    session.flush()
+    add_transaction(
+        account=account, category=spending_category,
+        amount="842.17", occurred_on=date(2026, 10, 9),
+    )
+    add_transaction(
+        account=account, category=spending_category,
+        amount="100.00", occurred_on=date(2026, 9, 9),
+    )
+
+    plan = client.get("/api/budgets/2026/11/plan").json()
+
+    assert plan["last_month"] == "2026-10-01"
+    assert plan["last_month_spent"] == "842.17"
+    rows = {r["category_name"]: r for r in plan["rows"]}
+    shopping = rows[spending_category.name]
+    assert shopping["last_month"] == "842.17"
+    assert shopping["from_last_month"] == "850.00"
+    # Median of Aug (nothing), Sep 100 and Oct 842.17.
+    assert shopping["typical"] == "100.00"
+    assert shopping["from_typical"] == "100.00"
+    assert shopping["months_seen"] == 2
+    assert rows["Idle Test"]["from_last_month"] is None
+    assert rows["Idle Test"]["last_month"] == "0.00"
+    assert plan["rows"][0]["category_name"] == spending_category.name
+
+
+def test_the_plan_proposes_income_rounded_down(
+    client: TestClient, add_transaction, account, income_category
+):
+    """Income is planned the other way up: shown positive, and rounded down,
+    because a plan you fall short of spends money that never arrived."""
+    add_transaction(
+        account=account, category=income_category,
+        amount="-4957.23", occurred_on=date(2026, 10, 15),
+    )
+
+    plan = client.get("/api/budgets/2026/11/plan").json()
+
+    [income] = plan["income"]
+    assert income["last_month"] == "4957.23"
+    assert income["from_last_month"] == "4950.00"
+    assert plan["last_month_income"] == "4957.23"
+    assert all(r["category_id"] != income_category.id for r in plan["rows"])
+
+
+def test_the_month_says_what_is_left(
+    client: TestClient, add_transaction, account, spending_category, income_category
+):
+    """Half the pay has landed and $1,000 is spent. As it stands, $1,500 is
+    left; once the rest of the expected $5,000 arrives, $4,000 is; and the plan
+    itself ($3,000 of spending) leaves $2,000."""
+    client.put(
+        "/api/budgets/2026/3",
+        json=[
+            {"category_id": spending_category.id, "amount": "3000.00"},
+            {"category_id": income_category.id, "amount": "5000.00"},
+        ],
+    )
+    add_transaction(
+        account=account, category=income_category,
+        amount="-2500.00", occurred_on=date(2026, 3, 15),
+    )
+    add_transaction(
+        account=account, category=spending_category,
+        amount="1000.00", occurred_on=date(2026, 3, 16),
+    )
+
+    body = client.get("/api/month/2026/3").json()
+
+    assert body["income_expected"] == "5000.00"
+    assert body["left"] == "1500.00"
+    assert body["left_expected"] == "4000.00"
+    assert body["left_planned"] == "2000.00"
+    # Spending budgets only, still: the income target is not "budgeted".
+    assert body["budgeted"] == "3000.00"
+
+
+def test_no_income_budget_makes_no_claim_about_what_is_left(
+    client: TestClient, add_transaction, account, spending_category
+):
+    add_transaction(
+        account=account, category=spending_category,
+        amount="10.00", occurred_on=date(2026, 3, 16),
+    )
+
+    body = client.get("/api/month/2026/3").json()
+
+    assert body["left"] == "-10.00"
+    assert body["left_expected"] is None
+    assert body["left_planned"] is None
 
 
 def test_a_transaction_can_be_refiled_but_not_rewritten(

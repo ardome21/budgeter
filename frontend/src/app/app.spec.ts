@@ -42,6 +42,7 @@ describe('App', () => {
     );
     expect(Array.from(links).map((a) => a.textContent?.trim())).toEqual([
       'Month',
+      'Budget',
       'Transactions',
       'Net worth',
       'Linked',

@@ -12,6 +12,9 @@
       }
     </select>
   }
+  @if (summary()?.budget_from) {
+    <a class="edit" routerLink="/budget" [queryParams]="{ month: budgetMonth() }">Edit budget</a>
+  }
 </div>
 
 @if (error()) {
@@ -21,6 +24,20 @@
 @if (loading()) {
   <p class="dim">Loading…</p>
 } @else if (summary(); as s) {
+  @if (plan(); as p) {
+    <!-- No budget has ever been set. Offered here, where its absence shows,
+         rather than left in a menu: the last one was, and nobody found it. -->
+    <a class="card setup" routerLink="/budget" [queryParams]="{ month: budgetMonth() }">
+      <span class="setup-title">Set {{ monthName(s.month) }}'s budget from what you spent</span>
+      <span class="dim">
+        {{ p.last_month_spent | usd }} in {{ monthName(p.last_month) }}, across
+        {{ planCategories() }} categories. Takes a minute, and it
+        carries into every month after.
+      </span>
+      <span class="go">Start →</span>
+    </a>
+  }
+
   <div class="totals">
     <div class="card total" [class]="verdict() ? 'verdict-' + verdict() : ''">
       <span class="label">Spent</span>
@@ -29,6 +46,9 @@
         <span class="sub">
           of {{ s.budgeted | usd }} budgeted — <strong>{{ v }}</strong>
         </span>
+        @if (s.budget_from && s.budget_from !== s.month) {
+          <span class="sub dim">budget carried from {{ label(s.budget_from) }}</span>
+        }
         @if (inProgress()) {
           <!-- The comparison the headline is actually making. Said out loud
                because "ahead of pace" is meaningless without the figure it is
@@ -45,6 +65,29 @@
     <div class="card total">
       <span class="label">Money in</span>
       <span class="figure num">{{ s.income | usd }}</span>
+      @if (s.income_expected) {
+        <span class="sub dim">of {{ s.income_expected | usd }} expected</span>
+      }
+    </div>
+    <!-- What is still yours this month. With an expected income, reckoned as
+         if the rest of the pay has landed, so the 14th does not read as broke
+         just because payday is the 15th. Without one, money in less spending
+         as it stands, and it says so. -->
+    @let left = s.left_expected ?? s.left;
+    <div class="card total" [class.left-short]="left.startsWith('-')">
+      <span class="label">Left</span>
+      <span class="figure num">{{ left | usd }}</span>
+      @if (s.left_expected !== null) {
+        <span class="sub dim">after spending, with the expected pay</span>
+        @if (s.left_planned; as planned) {
+          <span class="sub dim">the plan leaves {{ planned | usd }}</span>
+        }
+      } @else {
+        <span class="sub dim">
+          money in less spending so far ·
+          <a routerLink="/budget" [queryParams]="{ month: budgetMonth() }">set expected income</a>
+        </span>
+      }
     </div>
     <div class="card total">
       <span class="label">Saved</span>

@@ -4,33 +4,14 @@
   <p class="banner error">{{ error() }}</p>
 }
 
-<h2>Budgets</h2>
-<div class="budget-head">
-  <label>
-    <span>Month</span>
-    <input
-      type="month"
-      [value]="month()"
-      (change)="changeMonth($any($event.target).value)"
-    />
-  </label>
-  <button type="button" class="quiet" (click)="suggest()">
-    Suggest from what I actually spent
-  </button>
-  <button type="button" class="quiet" (click)="copyForward()">
-    Copy last month
-  </button>
-  <button type="button" (click)="save()">Save</button>
-  @if (saved()) { <span class="dim">Saved.</span> }
-</div>
-
+<h2>Categories</h2>
+<p class="dim small">Budgets are set on the <a routerLink="/budget">Budget</a> page.</p>
 <div class="card scroll-x">
   <table>
     <thead>
       <tr>
         <th>Category</th>
         <th>Kind</th>
-        <th class="num">Target</th>
         <th></th>
       </tr>
     </thead>
@@ -39,29 +20,6 @@
         <tr>
           <td>{{ c.name }}</td>
           <td class="dim">{{ c.kind.toLowerCase() }}</td>
-          <td class="num">
-            @if (c.kind === 'SPENDING') {
-              <input
-                type="text"
-                inputmode="decimal"
-                class="amount"
-                [value]="amountFor(c.id)"
-                (input)="setAmount(c.id, $any($event.target).value)"
-                placeholder="—"
-                [attr.aria-label]="'Budget for ' + c.name"
-              />
-              @if (seenIn(c.id); as months) {
-                <!-- How much evidence is behind the proposal. A category seen
-                     in one of three months is one holiday, not a habit, and
-                     the number should not read the same as one seen in all
-                     three. -->
-                <span class="why dim">median of {{ months }}/3 months</span>
-              }
-            } @else {
-              <!-- A target only means something for money that leaves. -->
-              <span class="dim">—</span>
-            }
-          </td>
           <td>
             <button type="button" class="quiet" (click)="removeCategory(c)">
               Delete
