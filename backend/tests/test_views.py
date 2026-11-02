@@ -296,3 +296,134 @@ def test_the_basis_total_says_how_much_it_covers(session: Session, account):
     # …and it accounts for 25 of the 100, which is the half that makes it
     # readable rather than misleading.
     assert result["cost_basis_covers"] == Decimal("25.00")
+
+
+def test_expected_to_date_is_the_budget_spread_over_the_month(
+    session: Session, account, spending_category, add_transaction
+):
+    """Mid-month, "are you within budget" is a question about pace. Spent
+    against budget only answers it once you are already over."""
+    session.add(
+        Budget(
+            category_id=spending_category.id,
+            month=date(2026, 6, 1),
+            amount=Decimal("300.00"),
+        )
+    )
+    add_transaction(
+        account=account, category=spending_category,
+        amount="120.00", occurred_on=date(2026, 6, 5),
+    )
+    session.flush()
+
+    # June has 30 days; on the 10th, a $300 budget allows $100.
+    summary = queries.month_summary(session, date(2026, 6, 1), today=date(2026, 6, 10))
+
+    assert summary["days_in_month"] == 30
+    assert summary["days_elapsed"] == 10
+    assert summary["expected_to_date"] == Decimal("100.00")
+    # $120 spent against $100 allowed: ahead of pace, nowhere near over budget.
+    assert summary["over_pace"] is True
+    assert summary["over_budget"] is False
+
+
+def test_a_finished_month_is_wholly_elapsed(
+    session: Session, account, spending_category
+):
+    """Otherwise every past month reads as ahead of pace forever, because
+    'today' is past its end and the fraction would keep growing."""
+    session.add(
+        Budget(
+            category_id=spending_category.id,
+            month=date(2026, 6, 1),
+            amount=Decimal("300.00"),
+        )
+    )
+    session.flush()
+
+    summary = queries.month_summary(session, date(2026, 6, 1), today=date(2026, 9, 18))
+
+    assert summary["days_elapsed"] == 30
+    assert summary["expected_to_date"] == Decimal("300.00")
+
+
+def test_nothing_budgeted_makes_no_claim_about_pace(
+    session: Session, account, spending_category, add_transaction
+):
+    """"On track" against no target is not a statement worth rendering."""
+    add_transaction(
+        account=account, category=spending_category,
+        amount="120.00", occurred_on=date(2026, 6, 5),
+    )
+
+    summary = queries.month_summary(session, date(2026, 6, 1), today=date(2026, 6, 10))
+
+    assert summary["expected_to_date"] is None
+    assert summary["over_pace"] is False
+
+
+def test_budgeted_counts_spending_targets_only(
+    session: Session, spending_category, income_category
+):
+    """It is printed as "of X budgeted" beside a spending-only total, so a
+    savings or income target in that figure made one sentence measure two
+    different things."""
+    session.add_all([
+        Budget(category_id=spending_category.id, month=date(2026, 6, 1),
+               amount=Decimal("300.00")),
+        Budget(category_id=income_category.id, month=date(2026, 6, 1),
+               amount=Decimal("4000.00")),
+    ])
+    session.flush()
+
+    summary = queries.month_summary(session, date(2026, 6, 1))
+
+    assert summary["budgeted"] == Decimal("300.00")
+
+
+def test_a_budget_suggestion_is_the_median_not_the_mean(
+    session: Session, account, spending_category, add_transaction
+):
+    """Three months of 100, 100 and 700 is a habit of 100 and one holiday. The
+    mean proposes 300 — a budget you would never meet and never trust."""
+    for month, amount in ((6, "100.00"), (7, "100.00"), (8, "700.00")):
+        add_transaction(
+            account=account, category=spending_category,
+            amount=amount, occurred_on=date(2026, month, 5),
+        )
+
+    rows = queries.suggest_budgets(session, date(2026, 9, 1))
+
+    assert [r["amount"] for r in rows] == [Decimal("100.00")]
+    assert rows[0]["months"] == 3
+
+
+def test_a_category_seen_once_is_not_a_monthly_habit(
+    session: Session, account, spending_category, add_transaction
+):
+    """One December flight must not propose itself as a monthly budget: the
+    two months it did not appear in are zeroes, and the median knows it."""
+    add_transaction(
+        account=account, category=spending_category,
+        amount="900.00", occurred_on=date(2026, 8, 5),
+    )
+
+    rows = queries.suggest_budgets(session, date(2026, 9, 1))
+
+    assert rows[0]["amount"] == Decimal("0.00")
+    assert rows[0]["months"] == 1
+
+
+def test_the_month_being_budgeted_is_not_its_own_evidence(
+    session: Session, account, spending_category, add_transaction
+):
+    """It is partway through, so including it would propose a budget lower
+    than anything you have ever actually spent."""
+    add_transaction(
+        account=account, category=spending_category,
+        amount="500.00", occurred_on=date(2026, 9, 2),
+    )
+
+    rows = queries.suggest_budgets(session, date(2026, 9, 1))
+
+    assert rows == []

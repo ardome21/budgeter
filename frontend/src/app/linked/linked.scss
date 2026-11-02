@@ -1,5 +1,4 @@
-.head,
-.review-head {
+.head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -12,16 +11,6 @@
     font-size: 22px;
     font-weight: 600;
   }
-
-  h2 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-  }
-}
-
-.review-head {
-  margin-top: 1.6rem;
 }
 
 .actions {
@@ -62,43 +51,6 @@
   gap: 0.5rem;
 }
 
-.summary {
-  display: flex;
-  gap: 1.2rem;
-  flex-wrap: wrap;
-  font-size: 13.5px;
-  color: var(--text-dim);
-  margin-bottom: 1rem;
-}
-
-.small {
-  font-size: 13px;
-  margin-top: 0;
-}
-
-.nowrap {
-  white-space: nowrap;
-}
-
-.descriptor {
-  max-width: 28ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-
-  .account {
-    display: block;
-    font-size: 11.5px;
-  }
-}
-
-/* Why a guess was made, under the guess. A suggestion nobody can check is a
-   suggestion nobody should accept. */
-.why {
-  display: block;
-  font-size: 11.5px;
-}
-
 .tag {
   align-self: flex-start;
   padding: 0.05rem 0.4rem;
@@ -108,14 +60,6 @@
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-
-/* Unticked, not deleted — it stays legible so an accidental untick is visible
-   before the commit rather than after it. */
-tr.dropped {
-  opacity: 0.45;
-  text-decoration: line-through;
-  text-decoration-color: var(--text-dim);
 }
 
 button.secondary {
@@ -128,4 +72,8 @@ button.quiet {
   background: transparent;
   color: var(--text-dim);
   border: 1px solid var(--border);
+}
+
+.failure {
+  display: block;
 }

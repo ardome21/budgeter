@@ -44,7 +44,8 @@ def main() -> int:
             print(f"created:         {user.created_at}")
             print(f"last login:      {user.last_login_at or 'never'}")
             print(f"recovery codes:  {unused} unused")
-            print(f"second factor:   {'confirmed' if user.totp_confirmed else 'pending'}")
+            second = "confirmed" if user.totp_confirmed else "pending"
+            print(f"second factor:   {second}")
 
         if not args.apply:
             print()

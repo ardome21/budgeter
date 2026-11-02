@@ -41,6 +41,28 @@
   <button type="button" (click)="filter()">Apply</button>
 </div>
 
+<div class="filing">
+  <label class="inline">
+    <input
+      type="checkbox"
+      [checked]="applyToMerchant()"
+      (change)="applyToMerchant.set($any($event.target).checked)"
+    />
+    <!-- On by default. Uber Eats appears ten times; filing it should be one
+         decision. Only rows still unfiled move, so a deliberate one-off is
+         never overwritten. -->
+    Filing a row files the rest of that merchant
+  </label>
+
+  <button type="button" class="quiet" (click)="refileAll()" [disabled]="busy()">
+    File everything uncategorised
+  </button>
+</div>
+
+@if (note()) {
+  <p class="banner">{{ note() }}</p>
+}
+
 @if (loading()) {
   <p class="dim">Loading…</p>
 } @else if (!rows().length) {

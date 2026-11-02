@@ -1,17 +1,16 @@
 """Linking a bank, and pulling what it has.
 
-The shape of this is the part worth keeping from the previous version, because
-every rule in it was paid for. Preview first and commit second; the cursor
-advances only on commit; a linked row is keyed by Plaid's transaction id and
-never by a hash of its contents; revisions and removals apply silently; pending
-charges are not offered at all.
-
-What changed is what it writes into: eleven tables became four, and holdings
-arrive priced by the institution instead of being reconstructed from a CSV.
+One Refresh asks every bank for balances, holdings and transactions and writes
+what comes back. There is no review step — see `refresh` for why it went. What
+was kept was paid for: a linked row is keyed by Plaid's transaction id and
+never by a hash of its contents, revisions and removals apply as the bank
+reports them, pending charges are not written at all, and nothing a refresh
+does overwrites a category you chose by hand.
 """
 
 from __future__ import annotations
 
+import contextlib
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,14 +19,13 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .. import plaid_client
+from ..categorize import resolve_category
 from ..config import settings
 from ..db import get_session
 from ..merchants import resolve
 from ..models import (
     Account,
     Balance,
-    Category,
-    CategoryKind,
     Holding,
     PlaidItem,
     Security,
@@ -39,7 +37,7 @@ from ..plaid_client import (
     PlaidReauthRequired,
     describe_api_error,
 )
-from ..schemas import CommitIn, LinkedItemOut, PreviewOut, PreviewRow
+from ..schemas import LinkedItemOut, RefreshOut
 
 router = APIRouter(prefix="/linked", tags=["linked"])
 
@@ -167,229 +165,155 @@ def exchange(body: ExchangeIn, db: Session = Depends(get_session)) -> LinkedItem
     )
 
 
-@router.post("/items/{item_id}/preview", response_model=PreviewOut)
-def preview(item_id: int, db: Session = Depends(get_session)) -> PreviewOut:
-    """Everything the bank has that this database does not.
+@router.post("/refresh", response_model=RefreshOut)
+def refresh(db: Session = Depends(get_session)) -> RefreshOut:
+    """Every bank: balances, holdings and transactions, written as they arrive.
 
-    Balances, holdings, revisions and removals are applied here and now —
-    they are the institution correcting its own record, not a suggestion, and
-    holding them behind a prompt leaves the ledger knowingly wrong until
-    somebody clicks. Only *additions* are offered for review, because only an
-    addition carries a guess (a category, a merchant) that can be wrong.
+    There is no review. The previous version previewed each bank's new rows
+    and advanced the cursor only on commit, and the result was four of six
+    banks with a preview parked and not one of their transactions in the
+    ledger. Nobody reviews; a review step that is never taken loses data. The
+    category comes from Plaid's label through the map, and a row filed wrongly
+    is fixed on the Transactions screen — once, and a re-sync never undoes it.
+
+    One bank failing does not stop the others: each is rolled back and named in
+    `failures`, because a single 502 for the lot hides *which* bank is the
+    problem and makes a stale login look like a broken app.
     """
     _require_plaid()
-    item = db.get(PlaidItem, item_id)
-    if item is None:
-        raise HTTPException(404, "no such linked bank")
+    return refresh_everything(db)
 
+
+def refresh_everything(db: Session) -> RefreshOut:
+    """The body of `refresh`, callable from a script."""
+    totals = dict.fromkeys(
+        ("added", "modified", "removed", "accounts_updated", "holdings_updated"), 0
+    )
+    failures: list[str] = []
+    for item in db.scalars(select(PlaidItem).order_by(PlaidItem.institution_name)):
+        try:
+            one = _sync_item(db, item)
+        except HTTPException as exc:
+            # Rolled back so one bank's half-applied sync cannot ride along
+            # with the next one's commit.
+            db.rollback()
+            failures.append(f"{item.institution_name}: {exc.detail}")
+            continue
+        for key in totals:
+            totals[key] += one[key]
+    return RefreshOut(failures=failures, **totals)
+
+
+def _sync_item(db: Session, item: PlaidItem) -> dict[str, int]:
+    """One bank, start to finish, committed. Raises HTTPException to fail it."""
     token = plaid_client.decrypt_token(item.access_token)
+    counts = {"added": 0, "modified": 0, "removed": 0, "holdings_updated": 0}
 
-    accounts_updated = _refresh_accounts(db, item)
-    holdings_updated = 0
+    # Cleared first and set again by whichever call finds the login stale, so
+    # a bank that was signed back in to stops being reported as needing it.
+    item.needs_reauth = False
+    counts["accounts_updated"] = _refresh_accounts(db, item)
+    if item.needs_reauth:
+        db.commit()
+        raise HTTPException(409, "needs to be signed in to again")
     if "investments" in item.product_list:
-        holdings_updated = _refresh_holdings(db, item, token)
+        counts["holdings_updated"] = _refresh_holdings(db, item, token)
 
     # An item answers for the products it was created with and no others.
     # Asking a brokerage linked for investments alone to sync transactions
-    # returns ADDITIONAL_CONSENT_REQUIRED, which surfaced as a 502 and looked
-    # like the refresh being broken rather than like a question it was never
-    # granted permission to answer.
-    if "transactions" not in item.product_list:
-        item.last_synced_at = datetime.now(UTC)
-        db.commit()
-        return PreviewOut(
-            rows=[],
-            modified=0,
-            removed=0,
-            accounts_updated=accounts_updated,
-            holdings_updated=holdings_updated,
-            cursor_advanced=False,
-            message=(
-                f"{item.institution_name} is linked for holdings only, so there "
-                "are no transactions to review."
-            ),
-        )
+    # returns ADDITIONAL_CONSENT_REQUIRED, which looks like the refresh being
+    # broken rather than like a question it was never granted leave to answer.
+    if "transactions" in item.product_list:
+        try:
+            diff = plaid_client.sync_transactions(token, item.cursor)
+        except PlaidReauthRequired:
+            item.needs_reauth = True
+            db.commit()
+            raise HTTPException(409, "needs to be signed in to again") from None
+        except PlaidNotConfigured as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, describe_api_error(exc)) from exc
 
-    try:
-        diff = plaid_client.sync_transactions(token, item.cursor)
-    except PlaidReauthRequired:
-        item.needs_reauth = True
-        db.commit()
-        raise HTTPException(
-            409, f"{item.institution_name} needs to be signed in to again"
-        ) from None
-    except PlaidNotConfigured as exc:
-        raise HTTPException(503, str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(502, describe_api_error(exc)) from exc
+        homeless: list[str] = []
+        counts["removed"] = _apply_removals(db, diff.removed)
+        counts["modified"] = _apply_revisions(db, item, diff.modified, homeless)
+        counts["added"] = _write_new(db, item, diff.added, homeless)
+        # A row with no account on this side holds the cursor, so the next
+        # refresh asks for it again — by which time `_refresh_accounts` may well
+        # have created the account. Advancing would consume a real charge that
+        # was never written, with nothing on screen to say so. Re-asking is
+        # free: rows already written are skipped by transaction id.
+        if not homeless:
+            item.cursor = diff.cursor
 
-    item.needs_reauth = False
     item.last_synced_at = datetime.now(UTC)
+    db.commit()
+    return counts
 
+
+def _write_new(
+    db: Session, item: PlaidItem, incoming: list, homeless: list[str]
+) -> int:
+    """Write the rows this database does not hold yet. Returns the count.
+
+    Pending charges are skipped: Plaid withdraws a pending row and sends a new
+    one, under a new id, when it posts — usually at a different amount and with
+    a rewritten descriptor. Writing both would count the coffee twice.
+
+    A row is keyed by Plaid's transaction id, so a rewind or a repeated page
+    can never write it twice.
+    """
     by_plaid_id = {
         account.plaid_account_id: account
         for account in db.scalars(select(Account).where(Account.item_id == item.id))
     }
-
-    removed = _apply_removals(db, diff.removed)
-    modified = _apply_revisions(db, diff.modified)
-
     already = set(
         db.scalars(
             select(Transaction.plaid_transaction_id).where(
                 Transaction.plaid_transaction_id.in_(
-                    [t.transaction_id for t in diff.added] or [""]
+                    [t.transaction_id for t in incoming] or [""]
                 )
             )
         )
     )
 
-    rows: list[PreviewRow] = []
-    for txn in diff.added:
-        # Pending charges get withdrawn and re-sent when they post, with a new
-        # date, often a new amount and usually a rewritten descriptor. Offering
-        # them means reviewing the same coffee twice.
-        if txn.pending:
-            continue
-        if txn.transaction_id in already:
+    written = 0
+    for txn in incoming:
+        if txn.pending or txn.transaction_id in already:
             continue
         if txn.occurred_on < item.sync_start_on:
             continue
         account = by_plaid_id.get(txn.plaid_account_id)
         if account is None:
+            homeless.append(txn.transaction_id)
             continue
 
         merchant = resolve(db, txn.name, txn.merchant_name)
-        suggested = _suggest_category(db, merchant)
-        rows.append(
-            PreviewRow(
-                transaction_id=txn.transaction_id,
-                occurred_on=txn.occurred_on,
-                description=txn.name,
-                merchant=merchant,
-                amount=txn.amount,
-                account_id=account.id,
-                account_name=account.name,
-                category_id=suggested.id if suggested else None,
-                category_name=suggested.name if suggested else None,
-                # Plaid's own taxonomy, shown but never mapped to a category
-                # id. It is not the user's taxonomy and never will be.
-                plaid_category=txn.category,
-            )
-        )
-
-    rows.sort(key=lambda r: (r.occurred_on, r.description))
-
-    # A sync that offers nothing reviewable advances immediately. Without this,
-    # a rewind that re-offers nothing repeats forever.
-    if rows:
-        item.pending_cursor = diff.cursor
-        cursor_advanced = False
-    else:
-        item.cursor = diff.cursor
-        item.pending_cursor = None
-        cursor_advanced = True
-
-    db.commit()
-
-    return PreviewOut(
-        rows=rows,
-        modified=modified,
-        removed=removed,
-        accounts_updated=accounts_updated,
-        holdings_updated=holdings_updated,
-        cursor_advanced=cursor_advanced,
-        message=None if rows else "Nothing new to review.",
-    )
-
-
-@router.post("/commit", response_model=PreviewOut)
-def commit(body: CommitIn, db: Session = Depends(get_session)) -> PreviewOut:
-    """Write the ticked rows, and advance the cursor past all of them.
-
-    An unticked row is a rejection, and the cursor passes it too — that is what
-    makes "re-offer everything" the escape hatch rather than the norm. The
-    cursor moves here and nowhere else, so abandoning a preview costs nothing.
-    """
-    item = db.get(PlaidItem, body.item_id)
-    if item is None:
-        raise HTTPException(404, "no such linked bank")
-    if "transactions" not in item.product_list:
-        raise HTTPException(409, "this bank is linked for holdings only")
-    if item.pending_cursor is None:
-        raise HTTPException(409, "nothing is waiting to be committed")
-
-    accept = set(body.accept)
-    token = plaid_client.decrypt_token(item.access_token)
-
-    try:
-        diff = plaid_client.sync_transactions(token, item.cursor)
-    except Exception as exc:
-        raise HTTPException(502, describe_api_error(exc)) from exc
-
-    by_plaid_id = {
-        account.plaid_account_id: account
-        for account in db.scalars(select(Account).where(Account.item_id == item.id))
-    }
-    existing = set(
-        db.scalars(select(Transaction.plaid_transaction_id).where(
-            Transaction.plaid_transaction_id.is_not(None)
-        ))
-    )
-
-    written = 0
-    for txn in diff.added:
-        if txn.transaction_id not in accept or txn.transaction_id in existing:
-            continue
-        account = by_plaid_id.get(txn.plaid_account_id)
-        if account is None:
-            continue
-        merchant = resolve(db, txn.name, txn.merchant_name)
-        category = _suggest_category(db, merchant) or _fallback_category(db)
         db.add(
             Transaction(
                 plaid_transaction_id=txn.transaction_id,
                 account_id=account.id,
-                category_id=category.id,
+                category_id=resolve_category(
+                    db, txn.pfc_detailed, txn.pfc_primary, txn.name
+                ).id,
                 occurred_on=txn.occurred_on,
                 amount=txn.amount,
                 description=txn.name,
                 merchant=merchant,
+                plaid_category_primary=txn.pfc_primary,
+                plaid_category_detailed=txn.pfc_detailed,
                 created_at=datetime.now(UTC),
             )
         )
+        # Flushed per row so the next row's merchant resolution can see it.
+        # Sessions run with autoflush off, so without this a batch of ten Uber
+        # Eats charges would each resolve against the database as it was before
+        # any of them existed.
+        db.flush()
+        already.add(txn.transaction_id)
         written += 1
-
-    item.cursor = item.pending_cursor
-    item.pending_cursor = None
-    item.last_synced_at = datetime.now(UTC)
-    db.commit()
-
-    return PreviewOut(
-        rows=[],
-        modified=written,
-        removed=0,
-        accounts_updated=0,
-        holdings_updated=0,
-        cursor_advanced=True,
-        message=f"{written} added.",
-    )
-
-
-@router.post("/items/{item_id}/rewind", status_code=204)
-def rewind(item_id: int, db: Session = Depends(get_session)) -> None:
-    """Clear the cursor so the bank re-offers everything.
-
-    The escape hatch for an untick that was a mistake. Rows already committed
-    are filtered out by transaction id on the way back, so only the genuinely
-    missing ones return.
-    """
-    item = db.get(PlaidItem, item_id)
-    if item is None:
-        raise HTTPException(404, "no such linked bank")
-    item.cursor = None
-    item.pending_cursor = None
-    db.commit()
+    return written
 
 
 @router.delete("/items/{item_id}", status_code=204)
@@ -399,10 +323,9 @@ def unlink(item_id: int, db: Session = Depends(get_session)) -> None:
     if item is None:
         raise HTTPException(404, "no such linked bank")
 
-    try:
+    # Already gone at Plaid's end is fine — the row here is what matters.
+    with contextlib.suppress(Exception):
         plaid_client.remove_item(plaid_client.decrypt_token(item.access_token))
-    except Exception:  # noqa: BLE001, S110 — already gone at Plaid's end is fine
-        pass
 
     db.execute(
         Account.__table__.update()
@@ -456,6 +379,12 @@ def _refresh_accounts(db: Session, item: PlaidItem) -> int:
             db.add(account)
             db.flush()
         else:
+            # Re-adopted, not just updated. `unlink` nulls `item_id` on the way
+            # out, and every sync builds its account map from
+            # `Account.item_id == item.id` — so an account that came back
+            # without this stayed orphaned for good and its transactions were
+            # dropped by `_write_new` for having nowhere to go.
+            account.item_id = item.id
             account.mask = incoming.mask
             account.account_type = incoming.type
             account.subtype = incoming.subtype
@@ -476,6 +405,11 @@ def _refresh_accounts(db: Session, item: PlaidItem) -> int:
             existing.amount = balance
         touched += 1
 
+    # Sessions run with autoflush off, and the caller's very next act is a
+    # `select(Account).where(Account.item_id == item.id)`. Without this the
+    # re-adoption above is still pending, that query cannot see it, and the
+    # account reads as unknown for one more refresh.
+    db.flush()
     return touched
 
 
@@ -575,14 +509,19 @@ def _apply_removals(db: Session, transaction_ids: list[str]) -> int:
     return result.rowcount or 0
 
 
-def _apply_revisions(db: Session, revised: list) -> int:
+def _apply_revisions(
+    db: Session, item: PlaidItem, revised: list, homeless: list[str]
+) -> int:
     """The bank correcting its own record. Applied without asking.
 
-    Only the fields the bank owns — date, amount, descriptor. The category and
-    the merchant are the user's answer to the row, and a revision must not
-    quietly discard a correction they made by hand.
+    Only the fields the bank owns — date, amount, descriptor, and its labels.
+    The category and the merchant are the user's answer to the row, and a
+    revision must not quietly discard a correction they made by hand.
+
+    A revision of a row this database never wrote is written as new.
     """
     touched = 0
+    unknown = []
     for txn in revised:
         existing = db.scalar(
             select(Transaction).where(
@@ -590,43 +529,12 @@ def _apply_revisions(db: Session, revised: list) -> int:
             )
         )
         if existing is None:
+            unknown.append(txn)
             continue
         existing.occurred_on = txn.occurred_on
         existing.amount = txn.amount
         existing.description = txn.name
+        existing.plaid_category_primary = txn.pfc_primary
+        existing.plaid_category_detailed = txn.pfc_detailed
         touched += 1
-    return touched
-
-
-def _suggest_category(db: Session, merchant: str | None) -> Category | None:
-    """Where this merchant was filed last time.
-
-    A merchant has a history of categories, not a default — there is nowhere to
-    store one and nothing that would keep it current. The most recent answer is
-    the best guess available, and it is still only a guess on an editable row.
-    """
-    if not merchant:
-        return None
-    category_id = db.scalar(
-        select(Transaction.category_id)
-        .where(Transaction.merchant == merchant)
-        .order_by(Transaction.occurred_on.desc())
-        .limit(1)
-    )
-    return db.get(Category, category_id) if category_id else None
-
-
-def _fallback_category(db: Session) -> Category:
-    """Somewhere to put a charge nothing suggests a home for.
-
-    Created on demand rather than seeded, so it only exists once something has
-    actually needed it.
-    """
-    category = db.scalar(select(Category).where(Category.name == "Uncategorised"))
-    if category is None:
-        category = Category(
-            name="Uncategorised", kind=CategoryKind.SPENDING, sort_order=999
-        )
-        db.add(category)
-        db.flush()
-    return category
+    return touched + _write_new(db, item, unknown, homeless)

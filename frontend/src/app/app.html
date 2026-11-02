@@ -9,6 +9,24 @@
         <a routerLink="/linked" routerLinkActive="active">Linked</a>
         <a routerLink="/settings" routerLinkActive="active">Settings</a>
       </nav>
+      <div class="sync">
+        @if (sync.failures().length) {
+          <!-- Named on the Linked screen; here only that something needs you. -->
+          <a routerLink="/linked" class="warn" [title]="sync.failures().join('\n')">
+            {{ sync.failures().length }} bank{{ sync.failures().length === 1 ? '' : 's' }} need attention
+          </a>
+        }
+        <span class="dim">
+          @if (sync.running()) {
+            Refreshing…
+          } @else if (sync.lastAt(); as at) {
+            Updated {{ updated(at) }}
+          }
+        </span>
+        <button type="button" (click)="sync.run()" [disabled]="sync.running()">
+          Refresh
+        </button>
+      </div>
       <button type="button" class="signout" (click)="auth.logout()">
         Sign out
         <span class="who">{{ auth.username() }}</span>

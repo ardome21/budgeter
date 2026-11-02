@@ -4,9 +4,10 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.models import Balance, Category, CategoryKind
+from backend.models import Balance, Category, CategoryKind, PlaidCategoryMap
 
 
 def test_money_crosses_the_wire_as_a_string(
@@ -156,3 +157,96 @@ def test_merchants_are_ranked_by_use(
         )
 
     assert client.get("/api/merchants").json() == ["Harris Teeter", "Lyft"]
+
+
+def test_filing_one_row_files_the_rest_of_that_merchant(
+    client: TestClient, session, account, spending_category, add_transaction
+):
+    """Uber Eats appears ten times. Filing it should be one decision, not ten."""
+    unfiled = _uncategorised(session)
+    rows = [
+        add_transaction(
+            account=account, category=unfiled, amount="20.00",
+            occurred_on=date(2026, 3, day), merchant="Uber Eats",
+        )
+        for day in (1, 2, 3)
+    ]
+
+    body = client.patch(
+        f"/api/transactions/{rows[0].id}",
+        json={"category_id": spending_category.id, "apply_to_merchant": True},
+    ).json()
+
+    assert body["also_filed"] == 2
+    session.expire_all()
+    assert {r.category_id for r in rows} == {spending_category.id}
+
+
+def test_applying_to_a_merchant_never_overwrites_a_hand_filing(
+    client: TestClient, session, account, spending_category, income_category,
+    add_transaction,
+):
+    """A single Amazon charge under Travel may well be deliberate. A bulk
+    action that overwrites it destroys a decision nobody asked it to touch —
+    and is what makes this safe to press twice."""
+    unfiled = _uncategorised(session)
+    deliberate = add_transaction(
+        account=account, category=income_category, amount="20.00",
+        occurred_on=date(2026, 3, 1), merchant="Amazon",
+    )
+    still_unfiled = add_transaction(
+        account=account, category=unfiled, amount="20.00",
+        occurred_on=date(2026, 3, 2), merchant="Amazon",
+    )
+
+    body = client.patch(
+        f"/api/transactions/{still_unfiled.id}",
+        json={"category_id": spending_category.id, "apply_to_merchant": True},
+    ).json()
+
+    assert body["also_filed"] == 0
+    session.expire_all()
+    assert deliberate.category_id == income_category.id
+
+
+def test_refiling_places_what_the_bank_labelled(
+    client: TestClient, session, account, spending_category, add_transaction
+):
+    """The bulk version, for history that arrived before anything could file
+    it. Rows nothing can place are reported, not guessed at."""
+    unfiled = _uncategorised(session)
+    session.add(
+        PlaidCategoryMap(
+            plaid_category="FOOD_AND_DRINK", category_id=spending_category.id
+        )
+    )
+    placeable = add_transaction(
+        account=account, category=unfiled, amount="20.00",
+        occurred_on=date(2026, 3, 1), merchant="Some Cafe",
+    )
+    placeable.plaid_category_primary = "FOOD_AND_DRINK"
+    add_transaction(
+        account=account, category=unfiled, amount="5.00",
+        occurred_on=date(2026, 3, 2), merchant="Mystery",
+    )
+    session.flush()
+
+    body = client.post("/api/transactions/refile-uncategorised").json()
+
+    assert body == {"moved": 1, "left": 1}
+    session.expire_all()
+    assert placeable.category_id == spending_category.id
+
+
+def _uncategorised(session):
+    existing = session.scalar(
+        select(Category).where(Category.name == "Uncategorised")
+    )
+    if existing is not None:
+        return existing
+    created = Category(
+        name="Uncategorised", kind=CategoryKind.SPENDING, sort_order=999
+    )
+    session.add(created)
+    session.flush()
+    return created

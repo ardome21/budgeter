@@ -6,6 +6,7 @@ plain dataclasses, so the sync logic is testable without a network or a Plaid
 account.
 """
 
+import contextlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -24,6 +25,9 @@ from plaid.model.item_public_token_exchange_request import (
 )
 from plaid.model.item_remove_request import ItemRemoveRequest
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
+from plaid.model.link_token_create_request_update import (
+    LinkTokenCreateRequestUpdate,
+)
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.products import Products
 from plaid.model.transactions_sync_request import TransactionsSyncRequest
@@ -107,7 +111,16 @@ class LinkedTransaction:
     merchant_name: str | None
     amount: Decimal
     pending: bool
+    # Plaid's personal finance category, title-cased for display.
     category: str | None
+    # The same thing as Plaid's own enum values, which is what gets mapped to a
+    # budgeter category. `detailed` is the half that matters: it is the only
+    # thing separating RENT_AND_UTILITIES_RENT from
+    # RENT_AND_UTILITIES_GAS_AND_ELECTRICITY, and rent and utilities are two
+    # different budgets. `primary` is the fallback for a detailed value nothing
+    # has mapped yet.
+    pfc_primary: str | None = None
+    pfc_detailed: str | None = None
     # Filled in by the caller from its own account mapping: Plaid does not put
     # the account type on a transaction, and a negative amount means opposite
     # things on a card (a refund) and in checking (a deposit).
@@ -245,7 +258,10 @@ def create_link_token(
     """A short-lived token that authorises one run of Plaid Link in the browser.
 
     Passing `access_token` puts Link into update mode, which re-authenticates an
-    existing item instead of creating a second one for the same bank.
+    existing item instead of creating a second one for the same bank — and,
+    with account selection on, lets an account the bank added since be ticked
+    into it. That is how a card that moved between banks (Discover, folded into
+    Capital One) joins the existing item rather than spending a new one.
 
     `products` is the decision that cannot be revisited. An item is created with
     a set of products and keeps it: adding `investments` to a bank that was
@@ -260,7 +276,12 @@ def create_link_token(
         language="en",
         user=LinkTokenCreateRequestUser(client_user_id=user_id),
         **(
-            {"access_token": access_token}
+            {
+                "access_token": access_token,
+                "update": LinkTokenCreateRequestUpdate(
+                    account_selection_enabled=True
+                ),
+            }
             if access_token
             # `products` is rejected outright in update mode, where the item
             # already has the products it was created with.
@@ -368,12 +389,14 @@ def sync_transactions(access_token: str, cursor: str | None) -> SyncDiff:
 def _convert(txn) -> LinkedTransaction:
     """Plaid's transaction object, reduced to the fields budgeter stores."""
     category = None
+    primary = detailed = None
     pfc = getattr(txn, "personal_finance_category", None)
     if pfc is not None:
-        # Plaid's own taxonomy. Never written to a category_id — budgeter's
-        # categories are the user's and do not map onto it — but worth showing
-        # on the preview when there is no history to suggest from.
-        category = str(getattr(pfc, "primary", "") or "").replace("_", " ").title()
+        # Plaid's own taxonomy, kept verbatim as well as prettified. It reaches
+        # a category_id only through the editable map — see categorize.py.
+        primary = str(getattr(pfc, "primary", "") or "") or None
+        detailed = str(getattr(pfc, "detailed", "") or "") or None
+        category = (primary or "").replace("_", " ").title() or None
 
     return LinkedTransaction(
         transaction_id=txn.transaction_id,
@@ -386,6 +409,8 @@ def _convert(txn) -> LinkedTransaction:
         amount=Decimal(str(txn.amount)).quantize(Decimal("0.01")),
         pending=bool(txn.pending),
         category=category,
+        pfc_primary=primary,
+        pfc_detailed=detailed,
     )
 
 
@@ -468,8 +493,6 @@ def _price(value) -> Decimal | None:
 
 def remove_item(access_token: str) -> None:
     """Tell Plaid to stop billing for and tracking this item."""
-    try:
+    # Already gone at Plaid's end is not a reason to keep a dead row here.
+    with contextlib.suppress(ApiException):
         _api().item_remove(ItemRemoveRequest(access_token=access_token))
-    except ApiException:
-        # Already gone at Plaid's end is not a reason to keep a dead row here.
-        pass

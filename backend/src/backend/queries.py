@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -34,28 +34,51 @@ def month_bounds(month: date) -> tuple[date, date]:
     """First of the month, and first of the next. Half-open, so a transaction
     on the last day at any hour belongs to exactly one month."""
     start = month.replace(day=1)
-    end = date(start.year + 1, 1, 1) if start.month == 12 else start.replace(month=start.month + 1)
-    return start, end
+    if start.month == 12:
+        return start, date(start.year + 1, 1, 1)
+    return start, start.replace(month=start.month + 1)
 
 
-def spending_only(stmt: Select) -> Select:
-    """The rule behind every figure that claims you spent something.
-
-    This exists as a function, used everywhere, because when it was written out
-    by hand at each call site it ended up correct in three places and absent in
-    two. A $207.45 credit card payment was excluded from "spent this month" and
-    from the committed/flexible split, and then showed up as the second largest
-    purchase of the month and in the period list's total — because those two
-    totals were written before TRANSFER existed and never learned about it.
-
-    A card payment is not spending. It is last month's spending moving between
-    two accounts you own.
-    """
-    return stmt.where(Category.kind == CategoryKind.SPENDING)
-
-
-def month_summary(db: Session, month: date) -> dict:
+def days_in(month: date) -> int:
     start, end = month_bounds(month)
+    return (end - start).days
+
+
+def elapsed_in(month: date, today: date | None = None) -> int:
+    """How much of this month has actually happened.
+
+    The denominator of every pace figure. A past month is complete; a future
+    one has not started; the current one is elapsed through today inclusive, so
+    on the 1st you are one day in rather than none — spending on the 1st is not
+    infinitely ahead of pace.
+    """
+    start, end = month_bounds(month)
+    # A calendar day, not an instant — see the DTZ011 note in pyproject.
+    today = today or date.today()
+    if today >= end:
+        return (end - start).days
+    if today < start:
+        return 0
+    return today.day
+
+
+def _to_date(month: date, days_elapsed: int, days: int, budget: Decimal) -> Decimal:
+    """What a budget should have spent by now, if spread evenly.
+
+    Deliberately linear. Real spending is not, but the alternative is a model of
+    your habits that has to be maintained and that nobody can check — and the
+    exact figures sit beside this on screen, so a reader can always see what it
+    is a fraction of.
+    """
+    if not days:
+        return ZERO
+    return (budget * days_elapsed / days).quantize(Decimal("0.01"))
+
+
+def month_summary(db: Session, month: date, today: date | None = None) -> dict:
+    start, end = month_bounds(month)
+    days = days_in(start)
+    days_elapsed = elapsed_in(start, today)
 
     in_month = (
         select(Transaction, Category)
@@ -66,17 +89,44 @@ def month_summary(db: Session, month: date) -> dict:
     # One pass, bucketed by kind. Summed conditionally rather than filtered,
     # so the transaction count stays honest: a month is still listed at its
     # true number of rows when part of it is transfers.
-    totals = {kind: ZERO for kind in CategoryKind}
+    totals = dict.fromkeys(CategoryKind, ZERO)
     count = 0
     for txn, category in db.execute(in_month).all():
         totals[category.kind] += txn.amount
         count += 1
 
-    per_category = _category_spend(db, start, end)
-    budgeted = sum((row["budget"] or ZERO for row in per_category), ZERO)
+    per_category = _category_spend(db, start, end, days_elapsed, days)
+
+    # Spending categories only. Printed as "of X budgeted" beside a total that
+    # is spending alone, so counting a savings target here made the two halves
+    # of one sentence measure different things.
+    budgeted = sum(
+        (
+            row["budget"] or ZERO
+            for row in per_category
+            if row["kind"] == CategoryKind.SPENDING
+        ),
+        ZERO,
+    )
+    expected_to_date = sum(
+        (
+            row["expected_to_date"] or ZERO
+            for row in per_category
+            if row["kind"] == CategoryKind.SPENDING
+        ),
+        ZERO,
+    )
+    spent = totals[CategoryKind.SPENDING]
 
     return {
         "month": start,
+        "days_in_month": days,
+        "days_elapsed": days_elapsed,
+        # What the budget allows by today. None when nothing is budgeted —
+        # "you are on track" against no target is not a claim worth making.
+        "expected_to_date": expected_to_date if budgeted else None,
+        "over_budget": bool(budgeted) and spent > budgeted,
+        "over_pace": bool(budgeted) and spent > expected_to_date,
         "spent": totals[CategoryKind.SPENDING],
         # Income arrives negative in Plaid's convention (money entering the
         # account). Flipped once, here, so every caller sees a positive number
@@ -90,7 +140,9 @@ def month_summary(db: Session, month: date) -> dict:
     }
 
 
-def _category_spend(db: Session, start: date, end: date) -> list[dict]:
+def _category_spend(
+    db: Session, start: date, end: date, days_elapsed: int = 0, days: int = 0
+) -> list[dict]:
     """Every category, with what it cost and what it was meant to cost.
 
     Left join from categories, not from transactions: a category with a budget
@@ -128,6 +180,11 @@ def _category_spend(db: Session, start: date, end: date) -> list[dict]:
             # A category nobody used and nobody budgeted is noise on a screen
             # that is trying to say where the money went.
             continue
+        expected = (
+            None
+            if budget is None
+            else _to_date(start, days_elapsed, days, budget)
+        )
         rows.append(
             {
                 "category_id": category.id,
@@ -136,9 +193,89 @@ def _category_spend(db: Session, start: date, end: date) -> list[dict]:
                 "spent": spent,
                 "budget": budget,
                 "remaining": None if budget is None else budget - spent,
+                "expected_to_date": expected,
+                # Decided here, in Decimal, rather than by comparing two money
+                # strings in the browser. Over budget is a fact about the
+                # month; over pace is a fact about today, and a category can be
+                # the second without being the first — which is the whole point
+                # of showing it mid-month.
+                "over_budget": budget is not None and spent > budget,
+                "over_pace": expected is not None and spent > expected,
             }
         )
     return rows
+
+
+def suggest_budgets(db: Session, month: date, months_back: int = 3) -> list[dict]:
+    """A starting budget per category, from what you actually spent.
+
+    Budgets went unmaintained for a year in the version this replaced, and
+    stayed at zero in this one, for the same reason both times: every month
+    starts as seventeen empty boxes and filling them from memory is a task
+    nobody does twice.
+
+    The **median** of the last few complete months, not the mean — one flight
+    should not set your Travel budget for the year, and with three months a
+    single outlier moves a mean by a third of itself.
+
+    Complete months only: the current one is partway through, and including it
+    would propose a budget lower than anything you have ever spent.
+    """
+    this_month, _ = month_bounds(month)
+
+    # Walk back from the month before the one being budgeted.
+    periods: list[tuple[date, date]] = []
+    cursor = this_month
+    for _ in range(months_back):
+        cursor = (
+            date(cursor.year - 1, 12, 1)
+            if cursor.month == 1
+            else cursor.replace(month=cursor.month - 1)
+        )
+        periods.append(month_bounds(cursor))
+
+    per_category: dict[int, list[Decimal]] = {}
+    names: dict[int, str] = {}
+    for start, end in periods:
+        stmt = (
+            select(
+                Category.id,
+                Category.name,
+                func.coalesce(func.sum(Transaction.amount), ZERO),
+            )
+            .join(Transaction, Transaction.category_id == Category.id)
+            .where(Category.kind == CategoryKind.SPENDING)
+            .where(Transaction.occurred_on >= start, Transaction.occurred_on < end)
+            .group_by(Category.id, Category.name)
+        )
+        for category_id, name, total in db.execute(stmt).all():
+            per_category.setdefault(category_id, []).append(total)
+            names[category_id] = name
+
+    rows = []
+    for category_id, amounts in per_category.items():
+        # A category that appears in one month of three spent nothing in the
+        # other two, and its median has to know that — otherwise a single
+        # December flight reads as a monthly habit.
+        padded = amounts + [ZERO] * (len(periods) - len(amounts))
+        rows.append(
+            {
+                "category_id": category_id,
+                "category_name": names[category_id],
+                "amount": _median(padded),
+                "months": len(amounts),
+            }
+        )
+    rows.sort(key=lambda r: r["amount"], reverse=True)
+    return rows
+
+
+def _median(values: list[Decimal]) -> Decimal:
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return ((ordered[middle - 1] + ordered[middle]) / 2).quantize(Decimal("0.01"))
 
 
 def net_worth(db: Session, limit: int = 365) -> dict:

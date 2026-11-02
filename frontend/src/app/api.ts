@@ -5,12 +5,14 @@ import { Observable } from 'rxjs';
 import {
   AccountRow,
   Budget,
+  BudgetSuggestion,
   Category,
   LinkedItem,
   MonthSummary,
   NetWorth,
   Portfolio,
-  Preview,
+  Refiled,
+  RefreshResult,
   Transaction,
   TransactionPage,
 } from './models';
@@ -82,9 +84,22 @@ export class Api {
 
   updateTransaction(
     id: number,
-    patch: { category_id?: number; merchant?: string; notes?: string },
+    patch: {
+      category_id?: number;
+      merchant?: string;
+      notes?: string;
+      /** Carry this category to every other unfiled row from the same
+       *  merchant. Filing Uber Eats once should not mean filing it ten times. */
+      apply_to_merchant?: boolean;
+    },
   ): Observable<Transaction> {
     return this.http.patch<Transaction>(`/api/transactions/${id}`, patch);
+  }
+
+  /** Run every unfiled row back through the resolver — your filings first,
+   *  then the bank's own label. */
+  refileUncategorised(): Observable<Refiled> {
+    return this.http.post<Refiled>('/api/transactions/refile-uncategorised', {});
   }
 
   merchants(): Observable<string[]> {
@@ -125,6 +140,13 @@ export class Api {
     return this.http.post<Budget[]>(`/api/budgets/${year}/${month}/copy`, {});
   }
 
+  /** What the last three complete months say each category actually costs. */
+  suggestBudgets(year: number, month: number): Observable<BudgetSuggestion[]> {
+    return this.http.get<BudgetSuggestion[]>(
+      `/api/budgets/${year}/${month}/suggest`,
+    );
+  }
+
   // --- linked banks ---------------------------------------------------------
 
   linkedItems(): Observable<LinkedItem[]> {
@@ -145,19 +167,10 @@ export class Api {
     });
   }
 
-  preview(itemId: number): Observable<Preview> {
-    return this.http.post<Preview>(`/api/linked/items/${itemId}/preview`, {});
-  }
-
-  commit(itemId: number, accept: string[]): Observable<Preview> {
-    return this.http.post<Preview>('/api/linked/commit', {
-      item_id: itemId,
-      accept,
-    });
-  }
-
-  rewind(itemId: number): Observable<void> {
-    return this.http.post<void>(`/api/linked/items/${itemId}/rewind`, {});
+  /** Every bank: balances, holdings and transactions, written as they
+   *  arrive. Nothing to review. */
+  refresh(): Observable<RefreshResult> {
+    return this.http.post<RefreshResult>('/api/linked/refresh', {});
   }
 
   unlink(itemId: number): Observable<void> {

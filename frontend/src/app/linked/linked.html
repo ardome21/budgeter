@@ -1,7 +1,12 @@
 <div class="head">
   <h1>Linked banks</h1>
   <div class="actions">
-    <button type="button" (click)="link(['transactions'])" [disabled]="linking()">
+    <button
+      type="button"
+      class="secondary"
+      (click)="link(['transactions'])"
+      [disabled]="linking()"
+    >
       Link a bank
     </button>
     <!-- A separate button, because the product set is fixed at creation and
@@ -20,6 +25,16 @@
 
 @if (error()) {
   <p class="banner error">{{ error() }}</p>
+}
+
+@if (sync.failures().length) {
+  <!-- Named, not folded into one 502. A single error for the lot hides which
+       bank is the problem and makes a stale login look like a broken app. -->
+  <div class="banner error">
+    @for (failure of sync.failures(); track failure) {
+      <span class="failure">{{ failure }}</span>
+    }
+  </div>
 }
 
 @if (!items().length) {
@@ -46,11 +61,11 @@
           <button type="button" (click)="link([], item.id)">Sign in again</button>
         } @else {
           <div class="row-actions">
-            <button type="button" (click)="refresh(item)" [disabled]="busy()">
-              Refresh
-            </button>
-            <button type="button" class="quiet" (click)="rewind(item)">
-              Re-offer everything
+            <!-- Update mode with account selection: how an account the bank
+                 added since linking — a card that moved banks — is ticked in
+                 without spending a new link. -->
+            <button type="button" class="quiet" (click)="link([], item.id)" [disabled]="linking()">
+              Add or remove accounts
             </button>
             <button type="button" class="quiet" (click)="unlink(item)">
               Unlink
@@ -59,83 +74,5 @@
         }
       </div>
     }
-  </div>
-}
-
-@if (busy()) {
-  <p class="dim">Talking to the bank…</p>
-}
-
-@if (result(); as r) {
-  <div class="summary card">
-    @if (r.accounts_updated) {
-      <span>{{ r.accounts_updated }} balances recorded</span>
-    }
-    @if (r.holdings_updated) {
-      <span>{{ r.holdings_updated }} holdings priced</span>
-    }
-    @if (r.modified) { <span>{{ r.modified }} revised</span> }
-    @if (r.removed) { <span>{{ r.removed }} withdrawn by the bank</span> }
-    @if (r.message) { <span>{{ r.message }}</span> }
-  </div>
-}
-
-@if (rows().length) {
-  <div class="review-head">
-    <h2>{{ rows().length }} to review</h2>
-    <div class="actions">
-      <button type="button" class="quiet" (click)="toggleAll(true)">All</button>
-      <button type="button" class="quiet" (click)="toggleAll(false)">None</button>
-      <button type="button" (click)="commit()" [disabled]="busy()">
-        Add {{ selected() }}
-      </button>
-    </div>
-  </div>
-
-  <p class="dim small">
-    Unticked rows are not held over — the cursor passes them too. Use
-    <em>Re-offer everything</em> if that was a mistake.
-  </p>
-
-  <div class="card scroll-x">
-    <table>
-      <thead>
-        <tr>
-          <th></th>
-          <th>Date</th>
-          <th>Description</th>
-          <th>Merchant</th>
-          <th>Category</th>
-          <th class="num">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (row of rows(); track row.transaction_id) {
-          <tr [class.dropped]="!row.include">
-            <td>
-              <input type="checkbox" [(ngModel)]="row.include" aria-label="Include" />
-            </td>
-            <td class="dim nowrap">{{ day(row.occurred_on) }}</td>
-            <td class="descriptor" [title]="row.description">
-              {{ row.description }}
-              <span class="account dim">{{ row.account_name }}</span>
-            </td>
-            <td>{{ row.merchant ?? '—' }}</td>
-            <td>
-              @if (row.category_name) {
-                {{ row.category_name }}
-                <span class="why dim">filed here last time</span>
-              } @else {
-                <span class="dim">—</span>
-                @if (row.plaid_category) {
-                  <span class="why dim">bank says {{ row.plaid_category }}</span>
-                }
-              }
-            </td>
-            <td class="num">{{ row.amount }}</td>
-          </tr>
-        }
-      </tbody>
-    </table>
   </div>
 }

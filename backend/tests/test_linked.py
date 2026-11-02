@@ -1,4 +1,4 @@
-"""Preview, commit, and the cursor.
+"""Refresh, the cursor, and what gets written.
 
 Nothing here touches the network. `sync_transactions`, `get_accounts` and
 `get_holdings` are the three seams every test replaces, which is what makes it
@@ -15,7 +15,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend import plaid_client
-from backend.models import Account, Balance, Holding, PlaidItem, Security, Transaction
+from backend.models import (
+    Account,
+    Balance,
+    Holding,
+    PlaidCategoryMap,
+    PlaidItem,
+    Security,
+    Transaction,
+)
 from backend.plaid_client import (
     HeldPosition,
     HeldSecurity,
@@ -74,7 +82,7 @@ def charge(txn_id: str, day: date, name: str, amount: str, pending: bool = False
 @pytest.fixture
 def fake_plaid(monkeypatch, linked_account):
     """Replace the three network calls. `get_accounts` returns the fixture
-    account so a preview has somewhere to file rows."""
+    account so a refresh has somewhere to file rows."""
 
     def accounts(_token):
         return [
@@ -97,43 +105,34 @@ def fake_plaid(monkeypatch, linked_account):
     return set_sync
 
 
-def test_the_cursor_does_not_move_on_a_preview(
+def refresh(client: TestClient) -> dict:
+    return client.post("/api/linked/refresh").json()
+
+
+def test_a_refresh_writes_what_the_bank_sends(
     client: TestClient, session: Session, item, fake_plaid
 ):
-    """The rule everything else rests on. Abandoning a preview has to re-offer
-    the same rows next time rather than step past them for good — getting this
-    wrong loses real transactions with nothing on screen to say so."""
+    """No review. Four of six banks once sat with a preview parked and not one
+    of their transactions in the ledger, because the step that wrote them was a
+    click nobody made."""
     fake_plaid(SyncDiff(added=[charge("t1", date(2026, 3, 1), "COFFEE", "4.50")],
                         modified=[], removed=[], cursor="cursor-2"))
 
-    body = client.post(f"/api/linked/items/{item.id}/preview").json()
+    body = refresh(client)
 
-    assert len(body["rows"]) == 1
-    assert body["cursor_advanced"] is False
-    session.refresh(item)
-    assert item.cursor is None
-    assert item.pending_cursor == "cursor-2"
-
-
-def test_an_empty_sync_advances_immediately(
-    client: TestClient, session: Session, item, fake_plaid
-):
-    """Otherwise a rewind that re-offers nothing repeats forever."""
-    fake_plaid(SyncDiff(added=[], modified=[], removed=[], cursor="cursor-2"))
-
-    body = client.post(f"/api/linked/items/{item.id}/preview").json()
-
-    assert body["cursor_advanced"] is True
+    assert body["added"] == 1
+    assert [t.description for t in session.scalars(select(Transaction))] == ["COFFEE"]
     session.refresh(item)
     assert item.cursor == "cursor-2"
+    assert item.last_synced_at is not None
 
 
-def test_pending_charges_are_never_offered(
-    client: TestClient, item, fake_plaid
+def test_pending_charges_are_never_written(
+    client: TestClient, session: Session, item, fake_plaid
 ):
-    """They get withdrawn and re-sent when they post, with a new date, often a
-    new amount and usually a rewritten descriptor. Offering them means
-    reviewing the same coffee twice."""
+    """They get withdrawn and re-sent when they post, with a new id, often a
+    new amount and usually a rewritten descriptor. Writing both counts the same
+    coffee twice."""
     fake_plaid(
         SyncDiff(
             added=[
@@ -144,59 +143,53 @@ def test_pending_charges_are_never_offered(
         )
     )
 
-    rows = client.post(f"/api/linked/items/{item.id}/preview").json()["rows"]
+    refresh(client)
 
-    assert [r["description"] for r in rows] == ["LUNCH"]
+    assert [t.description for t in session.scalars(select(Transaction))] == ["LUNCH"]
 
 
-def test_an_unticked_row_is_a_rejection_the_cursor_passes(
+def test_a_row_is_never_written_twice(
     client: TestClient, session: Session, item, fake_plaid
 ):
-    """Not an oversight to be re-offered forever. `rewind` is the escape hatch
-    when it was a mistake."""
-    fake_plaid(
-        SyncDiff(
-            added=[
-                charge("t1", date(2026, 3, 1), "KEEP", "10.00"),
-                charge("t2", date(2026, 3, 2), "DROP", "20.00"),
-            ],
-            modified=[], removed=[], cursor="cursor-2",
-        )
-    )
-    client.post(f"/api/linked/items/{item.id}/preview")
+    """A rewind, or a cursor held for a homeless row, re-sends rows already
+    written. Identity is Plaid's transaction id."""
+    fake_plaid(SyncDiff(added=[charge("t1", date(2026, 3, 1), "COFFEE", "4.50")],
+                        modified=[], removed=[], cursor="c"))
 
-    client.post("/api/linked/commit", json={"item_id": item.id, "accept": ["t1"]})
+    refresh(client)
+    item.cursor = None
+    session.flush()
+    body = refresh(client)
 
-    session.refresh(item)
-    assert item.cursor == "cursor-2"
-    assert item.pending_cursor is None
-    written = session.scalars(select(Transaction)).all()
-    assert [t.description for t in written] == ["KEEP"]
+    assert body["added"] == 0
+    assert len(session.scalars(select(Transaction)).all()) == 1
 
 
-def test_committed_rows_are_not_offered_again(
-    client: TestClient, session: Session, item, fake_plaid
+def test_a_row_is_filed_by_the_banks_label(
+    client: TestClient, session: Session, item, fake_plaid, spending_category
 ):
-    """A rewind re-offers everything the bank has; only what is genuinely
-    missing should come back. Identity is Plaid's transaction id."""
-    diff = SyncDiff(added=[charge("t1", date(2026, 3, 1), "COFFEE", "4.50")],
-                    modified=[], removed=[], cursor="c")
-    fake_plaid(diff)
-    client.post(f"/api/linked/items/{item.id}/preview")
-    client.post("/api/linked/commit", json={"item_id": item.id, "accept": ["t1"]})
+    session.add(PlaidCategoryMap(plaid_category="FOOD_AND_DRINK",
+                                 category_id=spending_category.id))
+    session.flush()
+    coffee = charge("t1", date(2026, 3, 1), "COFFEE", "4.50")
+    coffee.pfc_primary = "FOOD_AND_DRINK"
+    coffee.pfc_detailed = "FOOD_AND_DRINK_COFFEE"
+    fake_plaid(SyncDiff(added=[coffee], modified=[], removed=[], cursor="c"))
 
-    client.post(f"/api/linked/items/{item.id}/rewind")
-    rows = client.post(f"/api/linked/items/{item.id}/preview").json()["rows"]
+    refresh(client)
 
-    assert rows == []
+    written = session.scalar(select(Transaction))
+    assert written.category_id == spending_category.id
+    # Kept verbatim, so a mapping added later can be applied to this row.
+    assert written.plaid_category_detailed == "FOOD_AND_DRINK_COFFEE"
 
 
 def test_a_revision_is_applied_without_asking(
     client: TestClient, session: Session, item, linked_account, fake_plaid,
     spending_category,
 ):
-    """The bank settling its own record is not a suggestion. Holding it behind
-    a prompt leaves the ledger knowingly wrong until somebody clicks."""
+    """The bank settling its own record. Only the bank's fields move — a
+    category changed by hand survives every re-sync."""
     session.add(
         Transaction(
             plaid_transaction_id="t1",
@@ -217,7 +210,7 @@ def test_a_revision_is_applied_without_asking(
             modified=[charge("t1", date(2026, 3, 3), "CORNER CAFE 001", "5.25")],
         )
     )
-    client.post(f"/api/linked/items/{item.id}/preview")
+    refresh(client)
 
     revised = session.scalar(
         select(Transaction).where(Transaction.plaid_transaction_id == "t1")
@@ -247,7 +240,7 @@ def test_a_removal_deletes_the_row(
     session.flush()
 
     fake_plaid(SyncDiff(added=[], modified=[], removed=["t1"], cursor="c"))
-    body = client.post(f"/api/linked/items/{item.id}/preview").json()
+    body = refresh(client)
 
     assert body["removed"] == 1
     assert session.scalars(select(Transaction)).all() == []
@@ -260,8 +253,8 @@ def test_a_refresh_records_todays_balance(
     readings on one date are the same fact measured twice."""
     fake_plaid(SyncDiff(added=[], modified=[], removed=[], cursor="c"))
 
-    client.post(f"/api/linked/items/{item.id}/preview")
-    client.post(f"/api/linked/items/{item.id}/preview")
+    refresh(client)
+    refresh(client)
 
     balances = session.scalars(select(Balance)).all()
     assert len(balances) == 1
@@ -286,7 +279,7 @@ def test_a_card_balance_is_stored_negative(
     )
     fake_plaid(SyncDiff(added=[], modified=[], removed=[], cursor="c"))
 
-    client.post(f"/api/linked/items/{item.id}/preview")
+    refresh(client)
 
     account = session.scalar(
         select(Account).where(Account.plaid_account_id == "card-1")
@@ -308,7 +301,7 @@ def test_holdings_are_only_fetched_for_an_investments_item(
     )
     fake_plaid(SyncDiff(added=[], modified=[], removed=[], cursor="c"))
 
-    client.post(f"/api/linked/items/{item.id}/preview")
+    refresh(client)
 
     assert called == []
 
@@ -344,7 +337,7 @@ def test_holdings_land_priced_by_the_institution(
     )
     fake_plaid(SyncDiff(added=[], modified=[], removed=[], cursor="c"))
 
-    body = client.post(f"/api/linked/items/{item.id}/preview").json()
+    body = refresh(client)
 
     assert body["holdings_updated"] == 1
     holding = session.scalar(select(Holding))
@@ -372,11 +365,12 @@ def test_a_merchant_joins_the_spelling_already_in_use(
                  modified=[], removed=[], cursor="c")
     )
 
-    rows = client.post(f"/api/linked/items/{item.id}/preview").json()["rows"]
+    refresh(client)
 
-    assert rows[0]["merchant"] == "Netflix"
-    # And the category it was filed under last time is offered with it.
-    assert rows[0]["category_id"] == spending_category.id
+    written = session.scalar(
+        select(Transaction).where(Transaction.plaid_transaction_id == "t9")
+    )
+    assert written.merchant == "Netflix"
 
 
 def test_a_holdings_only_item_is_not_asked_for_transactions(
@@ -411,9 +405,122 @@ def test_a_holdings_only_item_is_not_asked_for_transactions(
         ],
     )
 
-    body = client.post(f"/api/linked/items/{item.id}/preview").json()
+    body = refresh(client)
 
-    assert body["rows"] == []
-    assert "holdings only" in body["message"]
+    assert body["failures"] == []
     # The balance still lands — that call works for any item.
     assert body["accounts_updated"] == 1
+
+
+def test_a_row_for_an_unknown_account_does_not_advance_the_cursor(
+    client: TestClient, session: Session, item, fake_plaid
+):
+    """The quietest way this app could lose money.
+
+    A transaction whose account is not on this side cannot be written.
+    Advancing the cursor past it would consume a real charge for good. Holding
+    it means the next refresh asks again, by which point `_refresh_accounts`
+    may well have created the account.
+    """
+    orphan = charge("t1", date(2026, 3, 1), "COFFEE", "4.50")
+    orphan.plaid_account_id = "acct-nobody-knows"
+    fake_plaid(SyncDiff(added=[orphan], modified=[], removed=[], cursor="cursor-2"))
+
+    body = refresh(client)
+
+    assert body["added"] == 0
+    session.refresh(item)
+    assert item.cursor is None
+
+
+def test_relinking_re_adopts_an_orphaned_account(
+    client: TestClient, session: Session, item, linked_account, fake_plaid
+):
+    """`unlink` nulls `item_id` and leaves the account behind on purpose — its
+    balance history is still real. Re-linking has to claim it back, or every
+    sync builds an account map that cannot see it and files nothing."""
+    linked_account.item_id = None
+    session.flush()
+    fake_plaid(SyncDiff(added=[charge("t1", date(2026, 3, 1), "COFFEE", "4.50")],
+                        modified=[], removed=[], cursor="c"))
+
+    refresh(client)
+
+    session.refresh(linked_account)
+    assert linked_account.item_id == item.id
+    assert [t.description for t in session.scalars(select(Transaction))] == ["COFFEE"]
+
+
+def test_one_bank_failing_does_not_take_the_others_down(
+    client: TestClient, session: Session, item, linked_account, monkeypatch
+):
+    """A single 502 for the lot hides which bank is the problem, and makes a
+    stale login look like the whole app being broken."""
+    second = PlaidItem(
+        item_id="item-2", institution_id="ins_2", institution_name="Other Bank",
+        access_token=plaid_client.encrypt_token("access-sandbox-2"),
+        products="transactions", sync_start_on=date(2024, 1, 1),
+        linked_at=datetime.now(UTC),
+    )
+    session.add(second)
+    session.flush()
+
+    monkeypatch.setattr(
+        plaid_client, "get_accounts",
+        lambda _t: [
+            LinkedAccount(
+                plaid_account_id="acct-1", name="Test Checking",
+                official_name=None, mask="0000", type="depository",
+                subtype="checking", current=Decimal("1500.00"),
+            )
+        ],
+    )
+
+    def sync(_token, cursor):
+        if _token == "access-sandbox-2":
+            raise plaid_client.PlaidReauthRequired("login gone stale")
+        return SyncDiff(
+            added=[charge("t1", date(2026, 3, 1), "COFFEE", "4.50")],
+            modified=[], removed=[], cursor="c",
+        )
+
+    monkeypatch.setattr(plaid_client, "sync_transactions", sync)
+
+    body = refresh(client)
+
+    assert body["added"] == 1
+    assert len(body["failures"]) == 1
+    assert "Other Bank" in body["failures"][0]
+    session.refresh(second)
+    assert second.needs_reauth is True
+
+
+def test_refreshing_twice_in_a_day_leaves_one_reading(
+    client: TestClient, session: Session, item, linked_account, monkeypatch
+):
+    """A balance is keyed (account, day): two readings on one date are the same
+    fact measured twice, not two facts. That is what makes this safe to run on
+    a schedule and again the moment the app is opened."""
+    monkeypatch.setattr(
+        plaid_client, "get_accounts",
+        lambda _t: [
+            LinkedAccount(
+                plaid_account_id="acct-1", name="Test Checking",
+                official_name=None, mask="0000", type="depository",
+                subtype="checking", current=Decimal("1500.00"),
+            )
+        ],
+    )
+
+    monkeypatch.setattr(
+        plaid_client, "sync_transactions",
+        lambda *_: SyncDiff(added=[], modified=[], removed=[], cursor="c"),
+    )
+
+    refresh(client)
+    refresh(client)
+
+    rows = session.scalars(
+        select(Balance).where(Balance.account_id == linked_account.id)
+    ).all()
+    assert len(rows) == 1

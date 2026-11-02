@@ -1,7 +1,8 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
 
 import { Api } from '../api';
 import { AccountRow, NetWorth, NetWorthPoint, Portfolio } from '../models';
+import { Sync } from '../sync';
 
 /**
  * What you own, what you owe, and how that has moved.
@@ -23,6 +24,7 @@ import { AccountRow, NetWorth, NetWorthPoint, Portfolio } from '../models';
 })
 export class Networth {
   private api = inject(Api);
+  private sync = inject(Sync);
 
   data = signal<NetWorth | null>(null);
   accounts = signal<AccountRow[]>([]);
@@ -32,12 +34,35 @@ export class Networth {
   readonly width = 760;
   readonly height = 180;
 
-  /** Only the days every open account reported. A series that mixes full and
-   * partial readings is a series with cliffs in it that never happened. */
+  /**
+   * Only the days that reported as fully as any day ever has.
+   *
+   * Compared against the best reading actually seen, not against the number of
+   * open accounts. Those differ whenever an account exists that Plaid never
+   * returns a balance for — no Balance row is written at all for it, so
+   * `accounts_reporting` could never reach `account_count` and the filter
+   * dropped every point, blanking the chart permanently with nothing on screen
+   * to explain why. The purpose of the filter is to keep a partial day from
+   * reading as a collapse, and the high-water mark does that exactly as well.
+   */
+  best = computed(() => {
+    const points = this.data()?.points ?? [];
+    return points.reduce((most, p) => Math.max(most, p.accounts_reporting), 0);
+  });
+
   complete = computed(() => {
+    const points = this.data()?.points ?? [];
+    const best = this.best();
+    return points.filter((p) => p.accounts_reporting >= best);
+  });
+
+  /** Accounts that have never reported a balance. Named on screen rather than
+   *  silently excluded — an account contributing nothing to net worth is a
+   *  fact about the total, not a detail. */
+  silent = computed(() => {
     const d = this.data();
-    if (!d) return [];
-    return d.points.filter((p) => p.accounts_reporting >= d.account_count);
+    if (!d) return 0;
+    return Math.max(0, d.account_count - this.best());
   });
 
   partialCount = computed(() => {
@@ -68,6 +93,15 @@ export class Networth {
   assets = computed(() => this.accounts().filter((a) => !a.is_liability));
 
   constructor() {
+    this.load();
+    // A balance is only written by a refresh, so the series grows by one day
+    // for every day the app is opened — the header's daily refresh does that.
+    effect(() => {
+      if (this.sync.version()) untracked(() => this.load());
+    });
+  }
+
+  private load(): void {
     this.api.netWorth().subscribe({
       next: (d) => {
         this.data.set(d);

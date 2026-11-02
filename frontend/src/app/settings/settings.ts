@@ -2,7 +2,7 @@ import { Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
 import { Api } from '../api';
-import { Budget, Category, CategoryKind } from '../models';
+import { Budget, BudgetSuggestion, Category, CategoryKind } from '../models';
 
 /**
  * Categories, and what each is meant to cost this month.
@@ -30,6 +30,10 @@ export class Settings {
 
   newName = signal('');
   newKind = signal<CategoryKind>('SPENDING');
+
+  /** Filled by "Suggest", so the table can say where each number came from
+   *  before it is saved. A proposal is not a budget until you accept it. */
+  suggestions = signal<Record<number, BudgetSuggestion>>({});
 
   readonly kinds: CategoryKind[] = ['SPENDING', 'INCOME', 'TRANSFER', 'SAVINGS'];
 
@@ -73,6 +77,41 @@ export class Settings {
     });
   }
 
+  /**
+   * Fill the boxes from what the last three complete months actually cost.
+   *
+   * Budgets went unmaintained for a year in the version this replaced and sat
+   * at zero in this one, both times for the same reason: every month starts as
+   * seventeen empty boxes and filling them from memory is a job nobody does
+   * twice. Nothing is saved here — this only proposes, and Save still decides.
+   */
+  suggest(): void {
+    const [year, month] = this.month().split('-').map(Number);
+    this.api.suggestBudgets(year, month).subscribe({
+      next: (rows) => {
+        const byCategory: Record<number, BudgetSuggestion> = {};
+        for (const row of rows) byCategory[row.category_id] = row;
+        this.suggestions.set(byCategory);
+        this.amounts.update((current) => {
+          const next = { ...current };
+          // Only where nothing is set. A target you typed is a decision, and a
+          // suggestion must not quietly replace it.
+          for (const row of rows) {
+            if (!next[row.category_id]) next[row.category_id] = row.amount;
+          }
+          return next;
+        });
+      },
+      error: (e) => this.error.set(this.describe(e)),
+    });
+  }
+
+  /** How many months this proposal saw the category in. One of three is a
+   *  much weaker claim than three of three, and the table should say so. */
+  seenIn(id: number): number | null {
+    return this.suggestions()[id]?.months ?? null;
+  }
+
   addCategory(): void {
     const name = this.newName().trim();
     if (!name) return;
@@ -109,6 +148,7 @@ export class Settings {
     const next: Record<number, string> = {};
     for (const row of rows) next[row.category_id] = row.amount;
     this.amounts.set(next);
+    this.suggestions.set({});
   }
 
   private currentMonth(): string {

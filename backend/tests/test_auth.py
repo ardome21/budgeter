@@ -99,7 +99,8 @@ def test_setup_can_be_restarted_while_unconfirmed(client, wipe_users):
 
 def test_confirm_rejects_a_wrong_code(client, wipe_users):
     setup_user(client)
-    assert client.post("/api/auth/setup/confirm", json={"code": "000000"}).status_code == 401
+    refused = client.post("/api/auth/setup/confirm", json={"code": "000000"})
+    assert refused.status_code == 401
 
 
 def test_the_password_minimum_is_eight(client, wipe_users):
@@ -137,7 +138,11 @@ def test_login_needs_both_factors(client, wipe_users):
 
     wrong_password_right_code = client.post(
         "/api/auth/login",
-        json={"username": "ardome", "password": "wrong-password", "code": totp_for(secret)},
+        json={
+            "username": "ardome",
+            "password": "wrong-password",
+            "code": totp_for(secret),
+        },
     )
     assert wrong_password_right_code.status_code == 401
 
@@ -157,7 +162,11 @@ def test_the_error_does_not_say_which_factor_was_wrong(client, wipe_users):
 
     bad_password = client.post(
         "/api/auth/login",
-        json={"username": "ardome", "password": "nope-nope-nope", "code": totp_for(secret)},
+        json={
+            "username": "ardome",
+            "password": "nope-nope-nope",
+            "code": totp_for(secret),
+        },
     ).json()["detail"]
     bad_code = client.post(
         "/api/auth/login",

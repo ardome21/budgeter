@@ -14,6 +14,9 @@
       (change)="changeMonth($any($event.target).value)"
     />
   </label>
+  <button type="button" class="quiet" (click)="suggest()">
+    Suggest from what I actually spent
+  </button>
   <button type="button" class="quiet" (click)="copyForward()">
     Copy last month
   </button>
@@ -47,6 +50,13 @@
                 placeholder="—"
                 [attr.aria-label]="'Budget for ' + c.name"
               />
+              @if (seenIn(c.id); as months) {
+                <!-- How much evidence is behind the proposal. A category seen
+                     in one of three months is one holiday, not a habit, and
+                     the number should not read the same as one seen in all
+                     three. -->
+                <span class="why dim">median of {{ months }}/3 months</span>
+              }
             } @else {
               <!-- A target only means something for money that leaves. -->
               <span class="dim">—</span>

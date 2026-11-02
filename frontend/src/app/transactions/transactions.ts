@@ -1,10 +1,11 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 
 import { Api } from '../api';
 import { MerchantField } from '../merchant-field/merchant-field';
 import { AccountRow, Category, Transaction } from '../models';
+import { Sync } from '../sync';
 
 /**
  * The ledger, and the three things about a row that are yours to change.
@@ -26,6 +27,7 @@ import { AccountRow, Category, Transaction } from '../models';
 })
 export class Transactions {
   private api = inject(Api);
+  private sync = inject(Sync);
   private route = inject(ActivatedRoute);
 
   rows = signal<Transaction[]>([]);
@@ -39,6 +41,20 @@ export class Transactions {
   categoryId = signal<number | null>(null);
   accountId = signal<number | null>(null);
   search = signal('');
+
+  /**
+   * Whether re-filing a row carries the rest of that merchant with it.
+   *
+   * On by default, and that is the point: Uber Eats appears ten times, Rhino
+   * Market nine, Apple nine. Filing each of them one row at a time is the
+   * reason 71 transactions sat unfiled. Only rows still in Uncategorised move,
+   * so a deliberate one-off filing is never overwritten.
+   */
+  applyToMerchant = signal(true);
+
+  /** What the last bulk action did, shown until the next one. */
+  note = signal<string | null>(null);
+  busy = signal(false);
 
   private readonly pageSize = 200;
   offset = signal(0);
@@ -54,6 +70,11 @@ export class Transactions {
       const category = params.get('category');
       this.categoryId.set(category ? Number(category) : null);
       this.load();
+    });
+
+    // A refresh that lands while this screen is open updates it in place.
+    effect(() => {
+      if (this.sync.version()) untracked(() => this.load());
     });
   }
 
@@ -90,9 +111,55 @@ export class Transactions {
 
   refile(row: Transaction, categoryId: number): void {
     this.saving.set(row.id);
-    this.api.updateTransaction(row.id, { category_id: Number(categoryId) }).subscribe({
-      next: (updated) => this.replace(updated),
-      error: () => this.saving.set(null),
+    this.api
+      .updateTransaction(row.id, {
+        category_id: Number(categoryId),
+        apply_to_merchant: this.applyToMerchant(),
+      })
+      .subscribe({
+        next: (updated) => {
+          const also = updated.also_filed ?? 0;
+          this.replace(updated);
+          if (also) {
+            this.note.set(
+              `${also} other ${row.merchant} ${also === 1 ? 'row' : 'rows'} moved too.`,
+            );
+            // Those rows are on this page as well, so the table has to be told
+            // — otherwise the change is real in the database and invisible
+            // here, which reads as the action having done nothing.
+            this.load();
+          }
+        },
+        error: () => this.saving.set(null),
+      });
+  }
+
+  /**
+   * Run every unfiled row back through the resolver.
+   *
+   * The 71 rows that arrived before anything could file them: the merchant
+   * history the suggester reads did not exist yet, and the bank's own label
+   * was being discarded rather than stored. Both are fixed, so this is the
+   * one-off that applies the fix to what is already here.
+   */
+  refileAll(): void {
+    this.busy.set(true);
+    this.note.set(null);
+    this.api.refileUncategorised().subscribe({
+      next: ({ moved, left }) => {
+        this.note.set(
+          left
+            ? `${moved} filed. ${left} still need a category — file one row of ` +
+              'each merchant and the rest follow.'
+            : `${moved} filed. Nothing left unfiled.`,
+        );
+        this.busy.set(false);
+        this.load();
+      },
+      error: () => {
+        this.note.set('Could not re-file those rows.');
+        this.busy.set(false);
+      },
     });
   }
 
@@ -114,8 +181,9 @@ export class Transactions {
     });
   }
 
-  /** Money out is positive in storage. Shown as a negative here, because a
-   * column of unsigned numbers where some are refunds reads as all spending. */
+  /** Money out is positive in storage and stays unsigned here; a refund, which
+   * is stored negative, is shown with a leading + and its own colour. A column
+   * where refunds looked like charges read as all spending. */
   display(row: Transaction): string {
     return row.amount.startsWith('-') ? `+${row.amount.slice(1)}` : row.amount;
   }

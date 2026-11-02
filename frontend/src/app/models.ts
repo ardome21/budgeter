@@ -52,6 +52,9 @@ export interface Transaction {
   account_id: number;
   account_name: string;
   notes: string | null;
+  /** How many other rows moved with this one, when the edit was applied to the
+   *  whole merchant. Zero on an ordinary edit. */
+  also_filed?: number;
 }
 
 export interface TransactionPage {
@@ -64,6 +67,16 @@ export interface Budget {
   amount: string;
 }
 
+export interface BudgetSuggestion {
+  category_id: number;
+  category_name: string;
+  /** The median of the last few complete months, not the mean. */
+  amount: string;
+  /** How many of those months this category appeared in. Seen once in three is
+   *  a different proposal from seen every month. */
+  months: number;
+}
+
 export interface CategorySpend {
   category_id: number;
   category_name: string;
@@ -72,10 +85,25 @@ export interface CategorySpend {
   budget: string | null;
   /** Null means no target set — a different claim from "nothing left". */
   remaining: string | null;
+  /** What an evenly-spread budget allows by today. Null with no budget. */
+  expected_to_date: string | null;
+  /** Both decided on the server, in Decimal. Over budget is a fact about the
+   *  month; over pace is a fact about today, and a category can be the second
+   *  without being the first — which is the point of showing it mid-month. */
+  over_budget: boolean;
+  over_pace: boolean;
 }
 
 export interface MonthSummary {
   month: string;
+  /** The denominator of every pace figure. */
+  days_in_month: number;
+  days_elapsed: number;
+  /** What the spending budgets allow by today, or null when none are set —
+   *  "on track" against no target is not a claim worth rendering. */
+  expected_to_date: string | null;
+  over_budget: boolean;
+  over_pace: boolean;
   spent: string;
   income: string;
   saved: string;
@@ -136,27 +164,21 @@ export interface LinkedItem {
   account_count: number;
 }
 
-export interface PreviewRow {
-  transaction_id: string;
-  occurred_on: string;
-  description: string;
-  merchant: string | null;
-  amount: string;
-  account_id: number;
-  account_name: string;
-  category_id: number | null;
-  category_name: string | null;
-  plaid_category: string | null;
-}
-
-export interface Preview {
-  rows: PreviewRow[];
+/** What one Refresh did across every bank. */
+export interface RefreshResult {
+  added: number;
   modified: number;
   removed: number;
   accounts_updated: number;
   holdings_updated: number;
-  cursor_advanced: boolean;
-  message: string | null;
+  /** Banks that could not be reached, named. */
+  failures: string[];
+}
+
+export interface Refiled {
+  moved: number;
+  /** Rows nothing could place — what is left to do by hand. */
+  left: number;
 }
 
 export interface AuthStatus {

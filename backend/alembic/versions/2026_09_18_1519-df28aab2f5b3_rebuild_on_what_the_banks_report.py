@@ -1,7 +1,7 @@
 """Rebuild on what the banks report
 
 Revision ID: df28aab2f5b3
-Revises: 
+Revises:
 Create Date: 2026-09-18 15:19:49.469805
 
 """

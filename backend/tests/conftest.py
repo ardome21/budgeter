@@ -36,6 +36,7 @@ from backend.models import (
     Category,
     CategoryKind,
     Holding,
+    PlaidCategoryMap,
     PlaidItem,
     Security,
     Transaction,
@@ -116,6 +117,12 @@ def _empty_ledger(session: Session) -> None:
     session.execute(delete(Budget))
     session.execute(delete(Security))
     session.execute(delete(Account))
+    # And the seeded Plaid category map. It is real configuration on this
+    # machine — 26 rows from scripts/seed_category_map.py — so a test asserting
+    # "FOOD_AND_DRINK files as Food and Drinks" would be asserting on the
+    # developer's seed rather than on the resolver, and would break the day
+    # that seed was edited. Each test states the mapping it depends on.
+    session.execute(delete(PlaidCategoryMap))
     session.flush()
 
 

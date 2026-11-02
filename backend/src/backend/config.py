@@ -85,7 +85,8 @@ class Settings(BaseSettings):
     # long-lived read key to a real bank account, which is a different class of
     # secret from anything else here, and the database is backed up and copied
     # around like ordinary data. Generate with:
-    #   python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    #   python3 -c "from cryptography.fernet import Fernet; \
+    #              print(Fernet.generate_key().decode())"
     plaid_token_key: SecretStr = SecretStr("")
 
     @property

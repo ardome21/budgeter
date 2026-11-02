@@ -22,11 +22,24 @@
   <p class="dim">Loading…</p>
 } @else if (summary(); as s) {
   <div class="totals">
-    <div class="card total">
+    <div class="card total" [class]="verdict() ? 'verdict-' + verdict() : ''">
       <span class="label">Spent</span>
       <span class="figure num">{{ s.spent }}</span>
-      @if (s.budgeted !== '0.00') {
-        <span class="sub dim">of {{ s.budgeted }} budgeted</span>
+      @if (verdict(); as v) {
+        <span class="sub">
+          of {{ s.budgeted }} budgeted — <strong>{{ v }}</strong>
+        </span>
+        @if (inProgress()) {
+          <!-- The comparison the headline is actually making. Said out loud
+               because "ahead of pace" is meaningless without the figure it is
+               ahead of, and that figure is not on screen anywhere else. -->
+          <span class="sub dim">
+            {{ s.expected_to_date }} allowed by day {{ s.days_elapsed }} of
+            {{ s.days_in_month }}
+          </span>
+        }
+      } @else {
+        <span class="sub dim">no budget set for this month</span>
       }
     </div>
     <div class="card total">
@@ -55,7 +68,11 @@
             <th class="num">Spent</th>
             <th class="num">Budget</th>
             <th class="num">Left</th>
-            <th class="bar-col"></th>
+            <th class="bar-col">
+              @if (inProgress()) {
+                <span class="dim small">pace</span>
+              }
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -76,8 +93,18 @@
               </td>
               <td class="bar-col">
                 @if (row.budget) {
-                  <span class="bar" [class.over]="isOver(row)">
+                  <span class="bar" [class]="'state-' + state(row)">
                     <span class="fill" [style.width.%]="barWidth(row)"></span>
+                    <!-- Where an evenly-spread budget would have you today. A
+                         bar past this line but short of the end is the case
+                         worth catching, and it has no other marker. -->
+                    @if (inProgress()) {
+                      <span
+                        class="pace"
+                        [style.left.%]="monthProgress()"
+                        [title]="row.expected_to_date + ' by today'"
+                      ></span>
+                    }
                   </span>
                 }
               </td>

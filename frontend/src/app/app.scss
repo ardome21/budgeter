@@ -56,8 +56,31 @@ main {
 }
 
 /* Pushed to the far end of the bar; the nav keeps whatever room it needs. */
-.signout {
+.sync {
   margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 13px;
+
+  .dim {
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .warn {
+    color: var(--warn);
+    white-space: nowrap;
+  }
+
+  button {
+    font-size: 13px;
+    padding: 0.3rem 0.7rem;
+  }
+}
+
+.signout {
   flex-shrink: 0;
   background: none;
   border: 1px solid transparent;

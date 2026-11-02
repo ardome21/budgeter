@@ -90,3 +90,45 @@ a {
     border-bottom-color: var(--accent);
   }
 }
+
+/* The headline's three states. Colour is never the only signal — the word
+   ("on track", "ahead of pace", "over budget") sits beside it, because a
+   red number and a green number are the same number to a lot of readers. */
+.card.total.verdict-ok .sub strong {
+  color: var(--ok, #1a7f4b);
+}
+
+.card.total.verdict-ahead .sub strong {
+  color: var(--warn, #9a6700);
+}
+
+.card.total.verdict-over .sub strong {
+  color: var(--over, #b3261e);
+}
+
+/* Bar states. `ahead` is inside the budget but spending faster than it lasts
+   — the case a spent-versus-budget bar cannot show at all, and the whole
+   reason for the pace marker. */
+.bar.state-ahead .fill {
+  background: var(--warn, #d9a200);
+}
+
+.bar.state-over .fill {
+  background: var(--over, #b3261e);
+}
+
+.bar {
+  position: relative;
+}
+
+.pace {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--text, #333);
+  opacity: 0.55;
+  /* Sits on the boundary rather than starting at it, so the line reads as a
+     mark on the bar and not as a second fill. */
+  transform: translateX(-1px);
+}

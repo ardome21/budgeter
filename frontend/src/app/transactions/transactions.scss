@@ -75,3 +75,18 @@ tr.saving {
   margin-top: 1rem;
   font-size: 13px;
 }
+
+.filing {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0 0.75rem;
+}
+
+.filing .inline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+}

@@ -99,6 +99,9 @@ class TransactionOut(Base):
     account_id: int
     account_name: str
     notes: str | None
+    # How many *other* rows moved with this one, when the edit was applied to
+    # the whole merchant. Zero on an ordinary edit.
+    also_filed: int = 0
 
 
 class TransactionPage(BaseModel):
@@ -110,6 +113,17 @@ class TransactionPatch(BaseModel):
     category_id: int | None = None
     merchant: str | None = None
     notes: str | None = None
+    # Apply this category to every other row from the same merchant that is
+    # still unfiled. Filing Uber Eats once should not mean filing it ten times.
+    # Never touches a row already filed by hand — see `_file_merchant`.
+    apply_to_merchant: bool = False
+
+
+class RefileOut(BaseModel):
+    moved: int
+    # Rows nothing could place. Reported rather than hidden: it is the number
+    # that says how much is left to do by hand.
+    left: int
 
 
 # --- budgets ----------------------------------------------------------------
@@ -125,6 +139,18 @@ class BudgetOut(Base):
     amount: Money
 
 
+class BudgetSuggestion(BaseModel):
+    category_id: int
+    category_name: str
+    # The median of the last few complete months, not the mean — one flight
+    # should not set the Travel budget for the year.
+    amount: Money
+    # How many of those months this category appeared in. A category seen once
+    # in three is a different proposal from one seen every month, and the
+    # screen should be able to say so before you accept it.
+    months: int
+
+
 # --- the month --------------------------------------------------------------
 
 
@@ -137,10 +163,25 @@ class CategorySpend(BaseModel):
     # Present only when there is a budget. Null means "no target", which is a
     # different thing from "nothing left" and must not render as an empty bar.
     remaining: Money | None
+    # What an evenly-spread budget allows by today. Null with no budget.
+    expected_to_date: Money | None = None
+    # Decided server-side, in Decimal. The browser compares booleans rather
+    # than two money strings — it has no decimal type and nothing here adds up.
+    over_budget: bool = False
+    over_pace: bool = False
 
 
 class MonthOut(BaseModel):
     month: date
+    # The denominator of every pace figure. A past month is complete, a future
+    # one has not started, the current one is elapsed through today inclusive.
+    days_in_month: int
+    days_elapsed: int
+    # What the spending budgets allow by today. Null when nothing is budgeted:
+    # "on track" against no target is not a claim worth making.
+    expected_to_date: Money | None = None
+    over_budget: bool = False
+    over_pace: bool = False
     spent: Money
     income: Money
     saved: Money
@@ -217,31 +258,12 @@ class LinkedItemOut(Base):
     account_count: int = 0
 
 
-class PreviewRow(BaseModel):
-    transaction_id: str
-    occurred_on: date
-    description: str
-    merchant: str | None
-    amount: Money
-    account_id: int
-    account_name: str
-    # The guess, and where it came from. A suggestion nobody can check is a
-    # suggestion nobody should accept.
-    category_id: int | None
-    category_name: str | None
-    plaid_category: str | None
-
-
-class PreviewOut(BaseModel):
-    rows: list[PreviewRow]
+class RefreshOut(BaseModel):
+    added: int
     modified: int
     removed: int
     accounts_updated: int
     holdings_updated: int
-    cursor_advanced: bool
-    message: str | None = None
-
-
-class CommitIn(BaseModel):
-    item_id: int
-    accept: list[str]
+    # Banks that could not be reached, named. One 502 for the lot hides which
+    # bank is the problem and makes a stale login look like a broken app.
+    failures: list[str] = []

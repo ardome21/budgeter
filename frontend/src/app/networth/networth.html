@@ -20,13 +20,17 @@
       </div>
     </div>
 
-    @if (latest.accounts_reporting < d.account_count) {
+    @if (latest.accounts_reporting < best()) {
       <!-- Said plainly rather than shown as a dip. A partial reading and a real
-           fall are the same shape on a chart, and only one of them is news. -->
+           fall are the same shape on a chart, and only one of them is news.
+           Measured against the best reading ever taken, not against the number
+           of open accounts: an account Plaid never prices would otherwise pin
+           this banner on permanently, and a warning that is always there is a
+           warning nobody reads. -->
       <p class="banner">
-        Only {{ latest.accounts_reporting }} of {{ d.account_count }} accounts
-        reported on {{ day(latest.as_of) }}. This figure is incomplete — refresh
-        the remaining banks to bring it up to date.
+        Only {{ latest.accounts_reporting }} of {{ best() }} accounts reported
+        on {{ day(latest.as_of) }}. This figure is incomplete — refresh the
+        remaining banks to bring it up to date.
       </p>
     }
   }
@@ -55,6 +59,16 @@
     <p class="dim small">
       {{ partialCount() }} partial readings are held out of the line — days when
       some accounts had not been refreshed.
+    </p>
+  }
+
+  @if (silent()) {
+    <!-- Named rather than quietly excluded. An account that has never reported
+         contributes nothing to any figure above, which is a fact about the
+         total and not a detail. -->
+    <p class="dim small">
+      {{ silent() }} of {{ d.account_count }} accounts have never reported a
+      balance, so nothing here counts them.
     </p>
   }
 }

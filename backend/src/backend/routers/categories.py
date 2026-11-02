@@ -8,7 +8,14 @@ from sqlalchemy.orm import Session
 
 from ..db import get_session
 from ..models import Budget, Category, Transaction
-from ..schemas import BudgetIn, BudgetOut, CategoryIn, CategoryOut
+from ..queries import suggest_budgets
+from ..schemas import (
+    BudgetIn,
+    BudgetOut,
+    BudgetSuggestion,
+    CategoryIn,
+    CategoryOut,
+)
 
 router = APIRouter(tags=["categories"])
 
@@ -22,7 +29,8 @@ def list_categories(db: Session = Depends(get_session)) -> list[Category]:
 
 @router.post("/categories", response_model=CategoryOut, status_code=201)
 def create_category(body: CategoryIn, db: Session = Depends(get_session)) -> Category:
-    if db.scalar(select(Category).where(func.lower(Category.name) == body.name.lower())):
+    clash = select(Category).where(func.lower(Category.name) == body.name.lower())
+    if db.scalar(clash):
         raise HTTPException(409, f"{body.name} already exists")
     category = Category(name=body.name, kind=body.kind, sort_order=body.sort_order)
     db.add(category)
@@ -37,6 +45,16 @@ def update_category(
     category = db.get(Category, category_id)
     if category is None:
         raise HTTPException(404, "no such category")
+    clash = db.scalar(
+        select(Category)
+        .where(func.lower(Category.name) == body.name.lower())
+        .where(Category.id != category_id)
+    )
+    if clash is not None:
+        # Checked rather than left to the unique constraint, which surfaces as
+        # a 500 and a stack trace where create already answers 409 and says
+        # what is in the way.
+        raise HTTPException(409, f"{body.name} already exists")
     category.name = body.name
     category.kind = body.kind
     category.sort_order = body.sort_order
@@ -122,3 +140,19 @@ def copy_budgets(
         )
     db.commit()
     return list(db.scalars(select(Budget).where(Budget.month == when)))
+
+
+@router.get(
+    "/budgets/{year}/{month}/suggest", response_model=list[BudgetSuggestion]
+)
+def suggest(
+    year: int, month: int, db: Session = Depends(get_session)
+) -> list[dict]:
+    """What the last three complete months say each category costs.
+
+    A proposal, not a save — the screen fills its boxes with this and nothing
+    is written until Save. `/copy` carries last month's *targets* forward;
+    this reads what actually happened, which is the one available answer when
+    no target has ever been set.
+    """
+    return suggest_budgets(db, date(year, month, 1))

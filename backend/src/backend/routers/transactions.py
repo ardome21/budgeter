@@ -3,13 +3,19 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
+from ..categorize import UNCATEGORISED, resolve_category
 from ..db import get_session
 from ..models import Account, Category, Transaction
 from ..queries import month_bounds
-from ..schemas import TransactionOut, TransactionPage, TransactionPatch
+from ..schemas import (
+    RefileOut,
+    TransactionOut,
+    TransactionPage,
+    TransactionPatch,
+)
 
 router = APIRouter(tags=["transactions"])
 
@@ -93,10 +99,15 @@ def update_transaction(
         raise HTTPException(404, "no such transaction")
 
     fields = body.model_dump(exclude_unset=True)
+    also_filed = 0
     if "category_id" in fields:
         if db.get(Category, fields["category_id"]) is None:
             raise HTTPException(400, "no such category")
         txn.category_id = fields["category_id"]
+        if body.apply_to_merchant and txn.merchant:
+            also_filed = _file_merchant(
+                db, txn.merchant, fields["category_id"], besides=txn.id
+            )
     if "merchant" in fields:
         txn.merchant = (fields["merchant"] or "").strip() or None
     if "notes" in fields:
@@ -118,7 +129,74 @@ def update_transaction(
         account_id=account.id,
         account_name=account.name,
         notes=txn.notes,
+        also_filed=also_filed,
     )
+
+
+def _file_merchant(
+    db: Session, merchant: str, category_id: int, besides: int
+) -> int:
+    """Apply one filing decision to the rest of that merchant's unfiled rows.
+
+    `besides` is the row being edited, excluded so the count is how many
+    *others* moved. Excluded by id rather than by relying on it having been
+    flushed already: sessions here run with autoflush off, so the pending
+    change to that row is invisible to this statement and it would otherwise
+    count itself.
+
+    Only rows still sitting in `Uncategorised` move. A row you filed by hand is
+    a decision, and a bulk action must never overwrite one — you might well
+    have put a single Amazon charge under Travel on purpose. That is also what
+    makes this safe to press twice.
+
+    Nothing is stored about the merchant itself, and a future refresh of the
+    same shop still files by Plaid's label — see `categorize`.
+    """
+    result = db.execute(
+        update(Transaction)
+        .where(Transaction.id != besides)
+        .where(Transaction.merchant == merchant)
+        .where(Transaction.category_id != category_id)
+        .where(
+            Transaction.category_id.in_(
+                select(Category.id).where(Category.name == UNCATEGORISED)
+            )
+        )
+        .values(category_id=category_id)
+    )
+    return result.rowcount or 0
+
+
+@router.post("/transactions/refile-uncategorised", response_model=RefileOut)
+def refile_uncategorised(db: Session = Depends(get_session)) -> RefileOut:
+    """Run every unfiled row back through the resolver.
+
+    For rows that arrived before their Plaid label was mapped: add the mapping
+    in Settings, press this, and they follow. Rows nothing can place are left
+    where they are rather than guessed at.
+    """
+    unfiled = db.scalars(
+        select(Transaction)
+        .join(Category, Transaction.category_id == Category.id)
+        .where(Category.name == UNCATEGORISED)
+        .order_by(Transaction.occurred_on)
+    ).all()
+
+    moved = 0
+    for txn in unfiled:
+        category = resolve_category(
+            db,
+            txn.plaid_category_detailed,
+            txn.plaid_category_primary,
+            txn.description,
+        )
+        if category.id == txn.category_id:
+            continue
+        txn.category_id = category.id
+        moved += 1
+
+    db.commit()
+    return RefileOut(moved=moved, left=len(unfiled) - moved)
 
 
 @router.get("/merchants", response_model=list[str])

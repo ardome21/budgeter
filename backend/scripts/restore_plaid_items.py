@@ -63,7 +63,6 @@ def main() -> int:
                     access_token=encrypt_token(entry["access_token"]),
                     products="transactions",
                     cursor=None,
-                    pending_cursor=None,
                     sync_start_on=args.sync_from,
                     needs_reauth=False,
                     linked_at=datetime.fromisoformat(entry["linked_at"]),

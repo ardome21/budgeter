@@ -51,7 +51,7 @@ Quantity = Numeric(20, 6)
 Price = Numeric(14, 4)
 
 
-class CategoryKind(str, enum.Enum):
+class CategoryKind(enum.StrEnum):
     """Whether money in this category actually left.
 
     This exists because of a bug that took three commits to stamp out. A credit
@@ -73,7 +73,7 @@ class CategoryKind(str, enum.Enum):
     SAVINGS = "SAVINGS"
 
 
-class SecurityKind(str, enum.Enum):
+class SecurityKind(enum.StrEnum):
     EQUITY = "EQUITY"
     ETF = "ETF"
     MUTUAL_FUND = "MUTUAL_FUND"
@@ -216,8 +216,49 @@ class Transaction(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
+    # What Plaid called this, kept verbatim. Evidence, in the same way
+    # `description` is evidence beside `merchant`: `category_id` is the answer
+    # and it is editable, while these two say where the first guess came from
+    # and let a remapping be applied to rows already written.
+    plaid_category_primary: Mapped[str | None] = mapped_column(
+        String(60), nullable=True
+    )
+    plaid_category_detailed: Mapped[str | None] = mapped_column(
+        String(80), nullable=True
+    )
+
     account: Mapped[Account] = relationship()
     category: Mapped[Category] = relationship()
+
+
+class PlaidCategoryMap(Base):
+    """Which budgeter category one of Plaid's category values means.
+
+    A table rather than a dict in code, because the answer is a judgement and
+    the judgement is the user's: whether MEDICAL is Self Care or a category of
+    its own is not something this app gets to decide once and freeze. Seeded
+    from `scripts/seed_category_map.py` and editable from Settings.
+
+    Keyed on the Plaid value — `detailed` where one is mapped,
+    `primary` as the catch-all. So RENT_AND_UTILITIES_RENT can go to Rent while
+    every other RENT_AND_UTILITIES_* falls back to Utilities, without a row per
+    detailed value.
+
+    This is how every row gets its category on the way in. A row changed by
+    hand afterwards keeps that change; a re-sync never touches `category_id`.
+    See `categorize.resolve_category`.
+    """
+
+    __tablename__ = "plaid_category_map"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plaid_category: Mapped[str] = mapped_column(String(80), unique=True)
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
+
+    category: Mapped["Category"] = relationship()
+
+    def __repr__(self) -> str:
+        return f"<PlaidCategoryMap {self.plaid_category}>"
 
 
 class Budget(Base):
@@ -330,17 +371,12 @@ class PlaidItem(Base):
     # knowing what an item can answer is not something to find out by asking.
     products: Mapped[str] = mapped_column(String(120), default="transactions")
 
-    # How far /transactions/sync has been consumed. Advanced only when a sync
-    # is *committed*, never when one is previewed — abandoning a preview has to
-    # re-offer the same rows next time rather than step past them for good.
+    # How far /transactions/sync has been consumed. Advanced in the same
+    # commit that writes the rows it covers, so a failed refresh re-asks for
+    # exactly what it did not write.
     cursor: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # Where the last preview got to, held here rather than in the response so a
-    # commit advances to exactly where the reviewed batch ended even if the
-    # browser was reloaded in between.
-    pending_cursor: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Nothing dated before this is offered.
+    # Nothing dated before this is written.
     sync_start_on: Mapped[date] = mapped_column(Date)
 
     # Set when Plaid reports the login has gone stale. The item stays — its
