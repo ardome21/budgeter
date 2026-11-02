@@ -127,12 +127,9 @@ def test_a_refresh_writes_what_the_bank_sends(
     assert item.last_synced_at is not None
 
 
-def test_pending_charges_are_never_written(
+def test_a_pending_charge_is_written_and_marked_pending(
     client: TestClient, session: Session, item, fake_plaid
 ):
-    """They get withdrawn and re-sent when they post, with a new id, often a
-    new amount and usually a rewritten descriptor. Writing both counts the same
-    coffee twice."""
     fake_plaid(
         SyncDiff(
             added=[
@@ -145,7 +142,62 @@ def test_pending_charges_are_never_written(
 
     refresh(client)
 
-    assert [t.description for t in session.scalars(select(Transaction))] == ["LUNCH"]
+    rows = {t.description: t.pending for t in session.scalars(select(Transaction))}
+    assert rows == {"COFFEE": True, "LUNCH": False}
+
+
+def posted(txn_id: str, pending_id: str, day: date, name: str, amount: str):
+    row = charge(txn_id, day, name, amount)
+    row.pending_transaction_id = pending_id
+    return row
+
+
+def test_a_posted_charge_takes_over_its_pending_row(
+    client: TestClient, session: Session, item, fake_plaid, income_category
+):
+    """In place, so the coffee is never there twice, and a category chosen
+    while it was pending survives the day it posts."""
+    fake_plaid(SyncDiff(
+        added=[charge("p1", date(2026, 3, 1), "COFFEE PENDING", "4.50", pending=True)],
+        modified=[], removed=[], cursor="c1",
+    ))
+    refresh(client)
+    row = session.scalar(select(Transaction))
+    row.category_id = income_category.id  # chosen by hand while pending
+    row.notes = "with Sam"
+    session.flush()
+
+    # Plaid's posting: the posted row points back, the pending id is removed.
+    fake_plaid(SyncDiff(
+        added=[posted("t1", "p1", date(2026, 3, 3), "COFFEE", "5.40")],
+        modified=[], removed=["p1"], cursor="c2",
+    ))
+    refresh(client)
+
+    rows = session.scalars(select(Transaction)).all()
+    assert len(rows) == 1
+    (only,) = rows
+    assert only.plaid_transaction_id == "t1"
+    assert only.pending is False
+    assert only.amount == Decimal("5.40")
+    assert only.occurred_on == date(2026, 3, 3)
+    assert only.category_id == income_category.id
+    assert only.notes == "with Sam"
+
+
+def test_a_pending_charge_the_bank_withdraws_goes(
+    client: TestClient, session: Session, item, fake_plaid
+):
+    """A hold that never posts — a hotel deposit, a cancelled order."""
+    fake_plaid(SyncDiff(
+        added=[charge("p1", date(2026, 3, 1), "HOTEL HOLD", "200.00", pending=True)],
+        modified=[], removed=[], cursor="c1",
+    ))
+    refresh(client)
+    fake_plaid(SyncDiff(added=[], modified=[], removed=["p1"], cursor="c2"))
+    refresh(client)
+
+    assert session.scalars(select(Transaction)).all() == []
 
 
 def test_a_row_is_never_written_twice(

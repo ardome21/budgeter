@@ -112,9 +112,17 @@ def month_summary(db: Session, month: date, today: date | None = None) -> dict:
     # One pass, bucketed by kind. Summed conditionally rather than filtered,
     # so the transaction count stays honest: a month is still listed at its
     # true number of rows when part of it is transfers.
+    # Pending rows are reported apart and counted in none of the totals: the
+    # amount still moves when it posts, and "spent" means what has posted.
     totals = dict.fromkeys(CategoryKind, ZERO)
     count = 0
+    pending_total, pending_count = ZERO, 0
     for txn, category in db.execute(in_month).all():
+        if txn.pending:
+            if category.kind == CategoryKind.SPENDING:
+                pending_total += txn.amount
+                pending_count += 1
+            continue
         totals[category.kind] += txn.amount
         count += 1
 
@@ -222,20 +230,26 @@ def month_summary(db: Session, month: date, today: date | None = None) -> dict:
         "biggest": _biggest(db, start, end),
         "upcoming": upcoming,
         "upcoming_total": upcoming_total,
-        # What is left once the regular charges still to come have landed.
-        "left_after_upcoming": left_now - upcoming_total,
+        # Spending authorised but not posted.
+        "pending_total": pending_total,
+        "pending_count": pending_count,
+        # What is left once what is pending has posted and the regular
+        # charges still to come have landed.
+        "left_after_upcoming": left_now - pending_total - upcoming_total,
     }
 
 
-def _spending(start: date, end: date):
+def _spending(start: date, end: date, include_pending: bool = False):
     """Spending rows in [start, end). Every "you spent this" figure below
-    starts here, so a card payment can never wander into one of them."""
-    return (
+    starts here, so a card payment can never wander into one of them — nor a
+    pending charge, whose amount is not settled yet."""
+    stmt = (
         select(Transaction)
         .join(Category, Transaction.category_id == Category.id)
         .where(Category.kind == CategoryKind.SPENDING)
         .where(Transaction.occurred_on >= start, Transaction.occurred_on < end)
     )
+    return stmt if include_pending else stmt.where(Transaction.pending.is_(False))
 
 
 def _spending_total(db: Session, start: date, end: date) -> Decimal:
@@ -361,7 +375,8 @@ def upcoming_charges(
         list(db.scalars(_spending(*month_bounds(m)).where(Transaction.amount > 0)))
         for m in months
     ]
-    this_month = list(db.scalars(_spending(start, end)))
+    # Pending counts as arrived: rent that is pending is not still to come.
+    this_month = list(db.scalars(_spending(start, end, include_pending=True)))
 
     found = []
     for charge in history[0]:
@@ -427,6 +442,7 @@ def _category_spend(
             func.coalesce(func.sum(Transaction.amount), ZERO).label("spent"),
         )
         .where(Transaction.occurred_on >= start, Transaction.occurred_on < end)
+        .where(Transaction.pending.is_(False))
         .group_by(Transaction.category_id)
         .subquery()
     )
@@ -524,6 +540,7 @@ def suggest_budgets(
             .join(Transaction, Transaction.category_id == Category.id)
             .where(Category.kind == kind)
             .where(Transaction.occurred_on >= start, Transaction.occurred_on < end)
+            .where(Transaction.pending.is_(False))
             .group_by(Category.id, Category.name)
         )
         for category_id, name, total in db.execute(stmt).all():

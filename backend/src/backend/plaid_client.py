@@ -121,6 +121,10 @@ class LinkedTransaction:
     # has mapped yet.
     pfc_primary: str | None = None
     pfc_detailed: str | None = None
+    # On a posted row: the pending row it replaces. Plaid sends the pending
+    # id in `removed` in the same sync; this is how the two are known to be
+    # one charge.
+    pending_transaction_id: str | None = None
     # Filled in by the caller from its own account mapping: Plaid does not put
     # the account type on a transaction, and a negative amount means opposite
     # things on a card (a refund) and in checking (a deposit).
@@ -411,6 +415,7 @@ def _convert(txn) -> LinkedTransaction:
         category=category,
         pfc_primary=primary,
         pfc_detailed=detailed,
+        pending_transaction_id=getattr(txn, "pending_transaction_id", None) or None,
     )
 
 

@@ -66,6 +66,8 @@ export interface Transaction {
   account_id: number;
   account_name: string;
   notes: string | null;
+  /** Authorised, not posted. In no total until it posts. */
+  pending: boolean;
   /** How many other rows moved with this one, when the edit was applied to the
    *  whole merchant. Zero on an ordinary edit. */
   also_filed?: number;
@@ -197,7 +199,10 @@ export interface MonthSummary {
   biggest: BigPurchase[];
   upcoming: UpcomingCharge[];
   upcoming_total: string;
-  /** What is left once the charges still to come have landed. */
+  /** Spending authorised but not posted, in no other figure. */
+  pending_total: string;
+  pending_count: number;
+  /** Left, less what is pending and what is still to come. */
   left_after_upcoming: string;
 }
 

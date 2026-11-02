@@ -103,6 +103,8 @@ class TransactionOut(Base):
     account_id: int
     account_name: str
     notes: str | None
+    # Authorised, not posted: counted in no total until it is.
+    pending: bool = False
     # How many *other* rows moved with this one, when the edit was applied to
     # the whole merchant. Zero on an ordinary edit.
     also_filed: int = 0
@@ -264,6 +266,10 @@ class MonthOut(BaseModel):
     # Regular charges that have come every month and not yet this one.
     upcoming: list[UpcomingCharge] = []
     upcoming_total: Money
+    # Spending authorised but not posted, in no other figure.
+    pending_total: Money = Decimal("0.00")
+    pending_count: int = 0
+    # Left, less what is pending and what is still to come.
     left_after_upcoming: Money
 
 

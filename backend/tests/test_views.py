@@ -679,3 +679,41 @@ def test_each_category_names_where_its_money_went(
         {"name": "Cava", "spent": Decimal("26.00"), "count": 2},
     ]
     assert summary["biggest"][0]["merchant"] == "Chipotle"
+
+
+def test_pending_spending_is_shown_apart_and_counted_in_no_total(
+    session: Session, add_transaction, account, spending_category
+):
+    """Its amount still moves when it posts, so "spent" is what has posted.
+    It still comes off what is left — it is money you have committed."""
+    add_transaction(account=account, category=spending_category, amount="20.00",
+                    occurred_on=date(2025, 9, 2))
+    pending = add_transaction(account=account, category=spending_category,
+                              amount="8.00", occurred_on=date(2025, 9, 3))
+    pending.pending = True
+    session.flush()
+
+    summary = queries.month_summary(session, date(2025, 9, 1), today=date(2025, 9, 3))
+
+    assert summary["spent"] == Decimal("20.00")
+    assert _row(summary, spending_category)["spent"] == Decimal("20.00")
+    assert summary["daily"][-1] == Decimal("20.00")
+    assert summary["pending_total"] == Decimal("8.00")
+    assert summary["pending_count"] == 1
+    assert summary["transaction_count"] == 1
+    assert summary["left_after_upcoming"] == summary["left"] - Decimal("8.00")
+
+
+def test_a_pending_bill_is_not_still_to_come(
+    session: Session, add_transaction, account, spending_category
+):
+    add, cat = add_transaction, spending_category
+    _monthly(add, account, cat, "Rent", "1600.00", 3, [6, 7, 8])
+    rent = add(account=account, category=cat, amount="1600.00",
+               occurred_on=date(2025, 9, 2), merchant="Rent")
+    rent.pending = True
+    session.flush()
+
+    summary = queries.month_summary(session, date(2025, 9, 1), today=date(2025, 9, 2))
+
+    assert summary["upcoming"] == []

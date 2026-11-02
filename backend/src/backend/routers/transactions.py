@@ -76,6 +76,7 @@ def list_transactions(
             account_id=account.id,
             account_name=account.name,
             notes=txn.notes,
+            pending=txn.pending,
         )
         for txn, category, account in db.execute(stmt).all()
     ]
@@ -129,6 +130,7 @@ def update_transaction(
         account_id=account.id,
         account_name=account.name,
         notes=txn.notes,
+        pending=txn.pending,
         also_filed=also_filed,
     )
 

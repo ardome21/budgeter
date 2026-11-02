@@ -42,6 +42,13 @@
     <div class="card total" [class]="verdict() ? 'verdict-' + verdict() : ''">
       <span class="label">Spent</span>
       <span class="figure num">{{ s.spent | usd }}</span>
+      @if (s.pending_count) {
+        <!-- Not in the figure above: a pending amount still moves when it
+             posts. Said here so the gap from your card app is explained. -->
+        <span class="sub dim">
+          + {{ s.pending_total | usd }} pending ({{ s.pending_count }})
+        </span>
+      }
       @if (verdict(); as v) {
         <span class="sub">
           of {{ s.budgeted | usd }} budgeted — <strong>{{ v }}</strong>
@@ -74,13 +81,21 @@
          just because payday is the 15th. Without one, money in less spending
          as it stands, and it says so. Either way, less the regular charges
          that have not come yet — rent on the 2nd is not money you have. -->
-    @let left = s.upcoming.length ? s.left_after_upcoming : (s.left_expected ?? s.left);
+    @let ahead = s.upcoming.length || s.pending_count;
+    @let left = ahead ? s.left_after_upcoming : (s.left_expected ?? s.left);
     <div class="card total" [class.left-short]="left.startsWith('-')">
       <span class="label">Left</span>
       <span class="figure num">{{ left | usd }}</span>
-      @if (s.upcoming.length) {
+      @if (ahead) {
         <span class="sub dim">
-          after <a href="#still-to-come">{{ s.upcoming_total | usd }} still to come</a>
+          after
+          @if (s.pending_count) {
+            <a [routerLink]="['/transactions']" [queryParams]="{ month: selected() }">{{ s.pending_total | usd }} pending</a>
+          }
+          @if (s.pending_count && s.upcoming.length) { and }
+          @if (s.upcoming.length) {
+            <a href="#still-to-come">{{ s.upcoming_total | usd }} still to come</a>
+          }
         </span>
       }
       @if (s.left_expected !== null) {
@@ -312,6 +327,6 @@
   }
 
   <p class="dim small count">
-    {{ s.transaction_count }} transactions this month.
+    {{ s.transaction_count }} transactions this month@if (s.pending_count) {, and {{ s.pending_count }} pending}.
   </p>
 }

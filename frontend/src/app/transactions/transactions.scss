@@ -90,3 +90,25 @@ tr.saving {
   gap: 0.4rem;
   font-size: 0.9rem;
 }
+
+/* Not posted yet. Quieter than the rest, never hidden: it is real money. */
+tr.pending {
+  .descriptor,
+  .num {
+    color: var(--text-dim);
+  }
+
+  .num {
+    font-style: italic;
+  }
+}
+
+.tag.pending {
+  display: inline-block;
+  margin-left: 0.3rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  border: 1px dashed var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}

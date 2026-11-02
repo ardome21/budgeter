@@ -82,8 +82,15 @@
       </thead>
       <tbody>
         @for (row of rows(); track row.id) {
-          <tr [class.saving]="saving() === row.id">
-            <td class="dim nowrap">{{ day(row.occurred_on) }}</td>
+          <tr [class.saving]="saving() === row.id" [class.pending]="row.pending">
+            <td class="dim nowrap">
+              {{ day(row.occurred_on) }}
+              @if (row.pending) {
+                <!-- Authorised, not posted. Editable all the same: what you
+                     set here carries over when it posts. -->
+                <span class="tag pending" title="Not posted yet. The amount may still change, and it is in no total until it posts.">pending</span>
+              }
+            </td>
             <!-- What the bank sent, verbatim. It is the evidence behind every
                  other cell on the row, so it is never overwritten by a guess. -->
             <td class="descriptor" [title]="row.description">

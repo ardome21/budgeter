@@ -33,6 +33,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import false as sa_false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -245,6 +246,15 @@ class Transaction(Base):
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    # Authorised but not posted. Shown, and counted in nothing that says "you
+    # spent this": the amount still moves when it posts (a tip lands on top).
+    # When it posts, Plaid sends the posted row pointing back at this one, and
+    # this row is turned into it in place — so a category chosen while it was
+    # pending survives, and the charge is never there twice.
+    pending: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa_false()
+    )
 
     # What Plaid called this, kept verbatim. Evidence, in the same way
     # `description` is evidence beside `merchant`: `category_id` is the answer

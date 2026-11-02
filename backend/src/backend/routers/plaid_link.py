@@ -4,8 +4,9 @@ One Refresh asks every bank for balances, holdings and transactions and writes
 what comes back. There is no review step — see `refresh` for why it went. What
 was kept was paid for: a linked row is keyed by Plaid's transaction id and
 never by a hash of its contents, revisions and removals apply as the bank
-reports them, pending charges are not written at all, and nothing a refresh
-does overwrites a category you chose by hand.
+reports them, a pending charge becomes its posted self in place rather than
+being written twice, and nothing a refresh does overwrites a category you
+chose by hand.
 """
 
 from __future__ import annotations
@@ -286,8 +287,11 @@ def _sync_item(db: Session, item: PlaidItem) -> dict[str, int]:
             raise HTTPException(502, describe_api_error(exc)) from exc
 
         homeless: list[str] = []
+        # Before removals: the pending row the bank withdraws in this same
+        # sync is the one a posted charge is about to take over.
+        counts["modified"] = _adopt_posted(db, diff.added)
         counts["removed"] = _apply_removals(db, diff.removed)
-        counts["modified"] = _apply_revisions(db, item, diff.modified, homeless)
+        counts["modified"] += _apply_revisions(db, item, diff.modified, homeless)
         counts["added"] = _write_new(db, item, diff.added, homeless)
         # A row with no account on this side holds the cursor, so the next
         # refresh asks for it again — by which time `_refresh_accounts` may well
@@ -307,9 +311,10 @@ def _write_new(
 ) -> int:
     """Write the rows this database does not hold yet. Returns the count.
 
-    Pending charges are skipped: Plaid withdraws a pending row and sends a new
-    one, under a new id, when it posts — usually at a different amount and with
-    a rewritten descriptor. Writing both would count the coffee twice.
+    Pending charges are written, marked pending. When one posts, Plaid sends a
+    new row under a new id and withdraws the pending one; `_adopt_posted` has
+    already turned the pending row into the posted one by then, so the coffee
+    is never there twice.
 
     A row is keyed by Plaid's transaction id, so a rewind or a repeated page
     can never write it twice.
@@ -330,7 +335,7 @@ def _write_new(
 
     written = 0
     for txn in incoming:
-        if txn.pending or txn.transaction_id in already:
+        if txn.transaction_id in already:
             continue
         if txn.occurred_on < item.sync_start_on:
             continue
@@ -353,6 +358,7 @@ def _write_new(
                 merchant=merchant,
                 plaid_category_primary=txn.pfc_primary,
                 plaid_category_detailed=txn.pfc_detailed,
+                pending=txn.pending,
                 created_at=datetime.now(UTC),
             )
         )
@@ -601,5 +607,55 @@ def _apply_revisions(
         existing.description = txn.name
         existing.plaid_category_primary = txn.pfc_primary
         existing.plaid_category_detailed = txn.pfc_detailed
+        existing.pending = txn.pending
         touched += 1
     return touched + _write_new(db, item, unknown, homeless)
+
+
+def _adopt_posted(db: Session, added: list) -> int:
+    """Turn each pending row into the posted charge that replaces it.
+
+    In place, rather than deleting one and writing the other, because the row
+    is yours as well as the bank's: a category or a note set while it was
+    pending would otherwise vanish the day it posted. The bank's fields —
+    id, date, amount, descriptor — are taken from the posted row. The category
+    is re-resolved from the posted labels only if it is still the one the
+    pending labels gave: a category you chose stays chosen.
+    """
+    adopted = 0
+    for txn in added:
+        if txn.pending or not txn.pending_transaction_id:
+            continue
+        row = db.scalar(
+            select(Transaction).where(
+                Transaction.plaid_transaction_id == txn.pending_transaction_id
+            )
+        )
+        if row is None:
+            continue
+        posted = db.scalar(
+            select(Transaction.id).where(
+                Transaction.plaid_transaction_id == txn.transaction_id
+            )
+        )
+        if posted is not None:
+            # Both already here; the removal that follows takes the pending one.
+            continue
+        guessed = resolve_category(
+            db, row.plaid_category_detailed, row.plaid_category_primary,
+            row.description,
+        ).id
+        if row.category_id == guessed:
+            row.category_id = resolve_category(
+                db, txn.pfc_detailed, txn.pfc_primary, txn.name
+            ).id
+        row.plaid_transaction_id = txn.transaction_id
+        row.pending = False
+        row.occurred_on = txn.occurred_on
+        row.amount = txn.amount
+        row.description = txn.name
+        row.plaid_category_primary = txn.pfc_primary
+        row.plaid_category_detailed = txn.pfc_detailed
+        db.flush()
+        adopted += 1
+    return adopted

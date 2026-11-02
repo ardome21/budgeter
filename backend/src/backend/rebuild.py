@@ -104,6 +104,9 @@ def _from_transactions(
         db.execute(
             select(Transaction.occurred_on, func.sum(Transaction.amount))
             .where(Transaction.account_id == account.id)
+            # Rebuilt from posted rows only, as it was before pending rows
+            # were kept: the anchor reading is the bank's posted balance.
+            .where(Transaction.pending.is_(False))
             .group_by(Transaction.occurred_on)
         ).all()
     )
