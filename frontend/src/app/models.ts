@@ -35,9 +35,20 @@ export interface AccountRow {
   is_liability: boolean;
   is_retirement: boolean;
   closed_on: string | null;
+  /** Derived on the server from what the bank reports. */
+  group: AccountGroup;
   balance: string | null;
   balance_as_of: string | null;
 }
+
+export type AccountGroup =
+  | 'checking'
+  | 'savings'
+  | 'credit'
+  | 'loan'
+  | 'retirement'
+  | 'investment'
+  | 'other';
 
 export interface Transaction {
   id: number;
@@ -120,6 +131,24 @@ export interface NetWorthPoint {
   net: string;
   /** How many accounts reported that day. A partial reading is not a crash. */
   accounts_reporting: number;
+  /** Some figure on this day was rebuilt rather than read. */
+  estimated: boolean;
+  /** What the day is made of, summed by the server. */
+  groups: DayGroup[];
+}
+
+export interface DayGroup {
+  group: AccountGroup;
+  total: string;
+  accounts: DayAccount[];
+}
+
+export interface DayAccount {
+  account_id: number;
+  name: string;
+  amount: string;
+  /** bank and archive are readings; rebuilt is worked out. */
+  source: 'bank' | 'archive' | 'rebuilt';
 }
 
 export interface NetWorth {

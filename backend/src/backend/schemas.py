@@ -74,6 +74,9 @@ class AccountOut(Base):
     is_liability: bool
     is_retirement: bool
     closed_on: date | None
+    # checking, savings, credit, loan, retirement, investment or other. See
+    # `Account.group`.
+    group: str
     balance: Money | None = None
     balance_as_of: date | None = None
 
@@ -197,6 +200,21 @@ class MonthOut(BaseModel):
 # --- net worth --------------------------------------------------------------
 
 
+class DayAccount(BaseModel):
+    account_id: int
+    name: str
+    amount: Money
+    # bank, archive or rebuilt — see `Balance.source`.
+    source: str
+
+
+class DayGroup(BaseModel):
+    # See `Account.group`.
+    group: str
+    total: Money
+    accounts: list[DayAccount]
+
+
 class NetWorthPoint(BaseModel):
     as_of: date
     assets: Money
@@ -206,6 +224,11 @@ class NetWorthPoint(BaseModel):
     # accounts were read is not a day net worth halved, and the series has to
     # be able to say so.
     accounts_reporting: int
+    # Whether any figure on this day was rebuilt rather than read. See
+    # `backend.rebuild`.
+    estimated: bool = False
+    # What the day is made of, for the chart's hover.
+    groups: list[DayGroup] = []
 
 
 class NetWorthOut(BaseModel):

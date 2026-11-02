@@ -3,6 +3,7 @@ import { RouterLink } from '@angular/router';
 
 import { Api } from '../api';
 import { CategorySpend, MonthSummary } from '../models';
+import { UsdPipe } from '../usd';
 import { Sync } from '../sync';
 
 /**
@@ -16,7 +17,7 @@ import { Sync } from '../sync';
  */
 @Component({
   selector: 'app-month',
-  imports: [RouterLink],
+  imports: [RouterLink, UsdPipe],
   templateUrl: './month.html',
   styleUrl: './month.scss',
 })

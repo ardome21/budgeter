@@ -278,7 +278,9 @@ def _median(values: list[Decimal]) -> Decimal:
     return ((ordered[middle - 1] + ordered[middle]) / 2).quantize(Decimal("0.01"))
 
 
-def net_worth(db: Session, limit: int = 365) -> dict:
+def net_worth(
+    db: Session, limit: int = 365, account_ids: list[int] | None = None
+) -> dict:
     """The balance series, one point per day anything reported.
 
     Liabilities are already negative in the table, so `net` is a plain sum.
@@ -294,6 +296,9 @@ def net_worth(db: Session, limit: int = 365) -> dict:
     counting a since-closed account would make every day before it closed the
     standard and every day after it look partial — which is exactly what
     hiding Bilt's BillPay account did on 2026-11-02, blanking the chart.
+
+    `account_ids` narrows every figure to those accounts — the card debt over
+    time, or the investments alone. None means every account.
     """
     stmt = (
         select(
@@ -304,12 +309,15 @@ def net_worth(db: Session, limit: int = 365) -> dict:
             func.count(Balance.account_id)
             .filter(Account.closed_on.is_(None))
             .label("reporting"),
+            func.bool_or(Balance.source == "rebuilt").label("estimated"),
         )
         .join(Account, Account.id == Balance.account_id)
         .group_by(Balance.as_of)
         .order_by(Balance.as_of.desc())
         .limit(limit)
     )
+    if account_ids is not None:
+        stmt = stmt.where(Balance.account_id.in_(account_ids))
 
     points = [
         {
@@ -318,14 +326,17 @@ def net_worth(db: Session, limit: int = 365) -> dict:
             "liabilities": row.liabilities or ZERO,
             "net": row.net or ZERO,
             "accounts_reporting": row.reporting,
+            "estimated": bool(row.estimated),
         }
         for row in db.execute(stmt).all()
     ]
     points.reverse()
+    _attach_breakdown(db, points, account_ids)
 
-    account_count = db.scalar(
-        select(func.count(Account.id)).where(Account.closed_on.is_(None))
-    )
+    counted = select(func.count(Account.id)).where(Account.closed_on.is_(None))
+    if account_ids is not None:
+        counted = counted.where(Account.id.in_(account_ids))
+    account_count = db.scalar(counted)
     return {
         "points": points,
         "latest": points[-1] if points else None,
@@ -333,14 +344,64 @@ def net_worth(db: Session, limit: int = 365) -> dict:
     }
 
 
-def portfolio(db: Session) -> dict:
+def _attach_breakdown(
+    db: Session, points: list[dict], account_ids: list[int] | None
+) -> None:
+    """What each day's figure is made of: a subtotal per group, and the
+    accounts under it — what the chart's hover shows.
+
+    Summed here, in Decimal, for the reason every total is: the browser has
+    no decimal type, and a tooltip whose parts do not add up to its total is
+    worse than no tooltip. Each account says whether it was read or rebuilt,
+    because an estimate must never be mistaken for a reading at the one place
+    someone is looking closely.
+    """
+    if not points:
+        return
+    stmt = (
+        select(Balance.as_of, Balance.amount, Balance.source, Account)
+        .join(Account, Account.id == Balance.account_id)
+        .where(Balance.as_of.between(points[0]["as_of"], points[-1]["as_of"]))
+    )
+    if account_ids is not None:
+        stmt = stmt.where(Balance.account_id.in_(account_ids))
+
+    by_day: dict[date, dict[str, list[dict]]] = {}
+    for as_of, amount, source, account in db.execute(stmt).all():
+        by_day.setdefault(as_of, {}).setdefault(account.group, []).append(
+            {
+                "account_id": account.id,
+                "name": account.name,
+                "amount": amount,
+                "source": source,
+            }
+        )
+
+    for point in points:
+        groups = by_day.get(point["as_of"], {})
+        point["groups"] = [
+            {
+                "group": group,
+                "total": sum((a["amount"] for a in accounts), ZERO),
+                "accounts": sorted(accounts, key=lambda a: -abs(a["amount"])),
+            }
+            for group, accounts in groups.items()
+        ]
+
+
+def portfolio(db: Session, account_ids: list[int] | None = None) -> dict:
     """Holdings as of the most recent snapshot that has any.
 
     Restricted to one date rather than taking the newest row per security: a
     position sold last month would otherwise carry its final value forward
     forever and keep counting toward the total.
+
+    `account_ids` narrows it to those accounts, as `net_worth` does.
     """
-    as_of = db.scalar(select(func.max(Holding.as_of)))
+    newest = select(func.max(Holding.as_of))
+    if account_ids is not None:
+        newest = newest.where(Holding.account_id.in_(account_ids))
+    as_of = db.scalar(newest)
     if as_of is None:
         return {
             "as_of": None,
@@ -356,6 +417,8 @@ def portfolio(db: Session) -> dict:
         .where(Holding.as_of == as_of)
         .order_by(Holding.value.desc())
     )
+    if account_ids is not None:
+        stmt = stmt.where(Holding.account_id.in_(account_ids))
 
     holdings = []
     total_value = ZERO

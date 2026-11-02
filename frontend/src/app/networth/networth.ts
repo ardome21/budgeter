@@ -1,38 +1,59 @@
 import { Component, computed, effect, inject, signal, untracked } from '@angular/core';
+import { ActivatedRoute, Router } from '@angular/router';
 
 import { Api } from '../api';
-import { AccountRow, NetWorth, NetWorthPoint, Portfolio } from '../models';
+import { AccountGroup, AccountRow, NetWorth, NetWorthPoint, Portfolio } from '../models';
+import { UsdPipe } from '../usd';
 import { Sync } from '../sync';
+import { NetWorthChart } from './chart';
 
 /**
  * What you own, what you owe, and how that has moved.
  *
- * The chart is drawn as inline SVG from the series the server sends. No chart
- * library: one path, one baseline and a handful of ticks is less code than
- * configuring one, and it cannot drift from the numbers in the table below it.
+ * The chart is its own component (`chart.ts`): hover any day to see what it
+ * is made of.
  *
  * Every point carries how many accounts reported that day, because without it
  * a day when two of eleven accounts were read looks exactly like a day net
  * worth collapsed. Points below the full count are drawn hollow and named as
  * partial rather than quietly plotted alongside the rest.
+ *
+ * Everything on the page can be narrowed to a selection of accounts — card
+ * debt alone, or every investment — by group or one account at a time. The
+ * figures for a selection are summed by the server, never here: the browser
+ * has no decimal type to add money with. The selection lives in the URL, so a
+ * view can be bookmarked, and is remembered for the next visit.
  */
 @Component({
   selector: 'app-networth',
-  imports: [],
+  imports: [NetWorthChart, UsdPipe],
   templateUrl: './networth.html',
   styleUrl: './networth.scss',
 })
 export class Networth {
   private api = inject(Api);
   private sync = inject(Sync);
+  private route = inject(ActivatedRoute);
+  private router = inject(Router);
+
+  /** In display order. A group with no accounts in it is not shown. */
+  readonly groupOrder: { key: AccountGroup; label: string }[] = [
+    { key: 'checking', label: 'Checking' },
+    { key: 'savings', label: 'Savings' },
+    { key: 'credit', label: 'Credit cards' },
+    { key: 'loan', label: 'Loans' },
+    { key: 'retirement', label: 'Retirement' },
+    { key: 'investment', label: 'Other investments' },
+    { key: 'other', label: 'Other' },
+  ];
+
+  /** Ids of the accounts being looked at. Every account, until narrowed. */
+  selected = signal<ReadonlySet<number>>(new Set());
 
   data = signal<NetWorth | null>(null);
   accounts = signal<AccountRow[]>([]);
   portfolio = signal<Portfolio | null>(null);
   loading = signal(true);
-
-  readonly width = 760;
-  readonly height = 180;
 
   /**
    * Only the days that reported as fully as any day ever has.
@@ -65,52 +86,111 @@ export class Networth {
     return Math.max(0, d.account_count - this.best());
   });
 
+  /** How many plotted days lean on a rebuilt figure — said under the chart
+   *  so an estimate is never read as a measurement. */
+  estimated = computed(() => this.complete().filter((p) => p.estimated).length);
+
   partialCount = computed(() => {
     const d = this.data();
     return d ? d.points.length - this.complete().length : 0;
   });
 
-  path = computed(() => {
-    const points = this.complete();
-    if (points.length < 2) return '';
-    const values = points.map((p) => Number(p.net));
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const span = max - min || 1;
-    return points
-      .map((p, i) => {
-        const x = (i / (points.length - 1)) * this.width;
-        const y = this.height - ((Number(p.net) - min) / span) * (this.height - 12) - 6;
-        return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .join(' ');
-  });
-
-  liabilities = computed(() =>
-    this.accounts().filter((a) => a.is_liability),
+  groups = computed(() =>
+    this.groupOrder
+      .map((g) => ({ ...g, accounts: this.accounts().filter((a) => a.group === g.key) }))
+      .filter((g) => g.accounts.length),
   );
 
-  assets = computed(() => this.accounts().filter((a) => !a.is_liability));
+  everything = computed(() => this.selected().size === this.accounts().length);
+
+  /** Whether a group's chip is on, off, or partly on. */
+  groupState(accounts: AccountRow[]): 'on' | 'some' | 'off' {
+    const picked = accounts.filter((a) => this.selected().has(a.id)).length;
+    return picked === accounts.length ? 'on' : picked ? 'some' : 'off';
+  }
 
   constructor() {
-    this.load();
+    this.api.accounts().subscribe((accounts) => {
+      this.accounts.set(accounts);
+      this.selected.set(this.restore(accounts));
+      this.load();
+    });
     // A balance is only written by a refresh, so the series grows by one day
     // for every day the app is opened — the header's daily refresh does that.
     effect(() => {
-      if (this.sync.version()) untracked(() => this.load());
+      if (this.sync.version()) {
+        untracked(() => {
+          this.api.accounts().subscribe((a) => this.accounts.set(a));
+          this.load();
+        });
+      }
     });
   }
 
+  toggleGroup(accounts: AccountRow[]): void {
+    const next = new Set(this.selected());
+    const on = this.groupState(accounts) === 'on';
+    for (const a of accounts) {
+      if (on) next.delete(a.id);
+      else next.add(a.id);
+    }
+    this.choose(next);
+  }
+
+  toggleAccount(id: number): void {
+    const next = new Set(this.selected());
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this.choose(next);
+  }
+
+  all(): void {
+    this.choose(new Set(this.accounts().map((a) => a.id)));
+  }
+
+  none(): void {
+    this.choose(new Set());
+  }
+
+  private choose(ids: Set<number>): void {
+    this.selected.set(ids);
+    const value = this.everything() ? null : [...ids].sort((a, b) => a - b).join(',');
+    if (value === null) localStorage.removeItem(STORAGE_KEY);
+    else localStorage.setItem(STORAGE_KEY, value);
+    this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { accounts: value },
+      replaceUrl: true,
+    });
+    this.load();
+  }
+
+  /** The URL first, so a bookmark means what it says; then the last visit;
+   *  then everything. Ids for accounts that no longer exist are dropped. */
+  private restore(accounts: AccountRow[]): Set<number> {
+    const saved =
+      this.route.snapshot.queryParamMap.get('accounts') ?? localStorage.getItem(STORAGE_KEY);
+    const known = new Set(accounts.map((a) => a.id));
+    if (saved === null) return known;
+    return new Set(saved.split(',').map(Number).filter((id) => known.has(id)));
+  }
+
   private load(): void {
-    this.api.netWorth().subscribe({
+    const ids = this.everything() ? undefined : [...this.selected()];
+    if (ids?.length === 0) {
+      this.data.set(null);
+      this.portfolio.set(null);
+      this.loading.set(false);
+      return;
+    }
+    this.api.netWorth(365, ids).subscribe({
       next: (d) => {
         this.data.set(d);
         this.loading.set(false);
       },
       error: () => this.loading.set(false),
     });
-    this.api.accounts().subscribe((a) => this.accounts.set(a));
-    this.api.portfolio().subscribe((p) => this.portfolio.set(p));
+    this.api.portfolio(ids).subscribe((p) => this.portfolio.set(p));
   }
 
   /** Calendar dates, parsed as local. `new Date(iso)` reads them as UTC
@@ -139,3 +219,5 @@ export class Networth {
     return point.as_of;
   }
 }
+
+const STORAGE_KEY = 'networth.accounts';

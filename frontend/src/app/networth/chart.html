@@ -1,0 +1,73 @@
+<div class="frame">
+  <div class="y-axis" aria-hidden="true">
+    @for (t of yTicks(); track t.label) {
+      <span [style.top.%]="t.at">{{ t.label }}</span>
+    }
+  </div>
+
+  <div
+    class="plot"
+    tabindex="0"
+    role="img"
+    aria-label="Net worth over time. Arrow keys move between days."
+    (pointermove)="move($event)"
+    (pointerleave)="hover.set(null)"
+    (focus)="focus()"
+    (blur)="hover.set(null)"
+    (keydown)="key($event)"
+  >
+    <svg
+      [attr.viewBox]="'0 0 ' + width + ' ' + height"
+      preserveAspectRatio="none"
+      aria-hidden="true"
+    >
+      @for (t of yTicks(); track t.label) {
+        <line class="grid" x1="0" [attr.x2]="width" [attr.y1]="(t.at / 100) * height" [attr.y2]="(t.at / 100) * height" />
+      }
+      <path class="line" [attr.d]="path()" />
+    </svg>
+
+    @if (current(); as c) {
+      <div class="crosshair" [style.left.%]="c.left"></div>
+      <div class="dot" [style.left.%]="c.left" [style.top.%]="c.top"></div>
+
+      <!-- Values lead and labels follow: the reader already knows which day
+           they are on and wants the number. -->
+      <div class="tooltip" [class.flip]="c.flip" [style.left.%]="c.left" role="status">
+        <div class="when">
+          {{ day(c.point.as_of) }}
+          @if (c.point.estimated) { <span class="tag">rebuilt</span> }
+        </div>
+        <div class="net num">{{ c.point.net | usd }}</div>
+        <div class="split dim">
+          <span>Assets <span class="num">{{ c.point.assets | usd }}</span></span>
+          <span>Owed <span class="num">{{ c.point.liabilities | usd }}</span></span>
+        </div>
+
+        @for (g of c.groups; track g.group) {
+          <div class="group">
+            <div class="row head">
+              <span>{{ g.label }}</span>
+              <span class="num">{{ g.total | usd }}</span>
+            </div>
+            @for (a of g.accounts; track a.account_id) {
+              <div class="row">
+                <span class="name dim">
+                  {{ a.name }}
+                  @if (a.source === 'rebuilt') { <span class="est">est.</span> }
+                </span>
+                <span class="num">{{ a.amount | usd }}</span>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    }
+  </div>
+
+  <div class="x-axis" aria-hidden="true">
+    @for (t of xTicks(); track t.at) {
+      <span [style.left.%]="t.at">{{ t.label }}</span>
+    }
+  </div>
+</div>

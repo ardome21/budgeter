@@ -24,17 +24,17 @@
   <div class="totals">
     <div class="card total" [class]="verdict() ? 'verdict-' + verdict() : ''">
       <span class="label">Spent</span>
-      <span class="figure num">{{ s.spent }}</span>
+      <span class="figure num">{{ s.spent | usd }}</span>
       @if (verdict(); as v) {
         <span class="sub">
-          of {{ s.budgeted }} budgeted — <strong>{{ v }}</strong>
+          of {{ s.budgeted | usd }} budgeted — <strong>{{ v }}</strong>
         </span>
         @if (inProgress()) {
           <!-- The comparison the headline is actually making. Said out loud
                because "ahead of pace" is meaningless without the figure it is
                ahead of, and that figure is not on screen anywhere else. -->
           <span class="sub dim">
-            {{ s.expected_to_date }} allowed by day {{ s.days_elapsed }} of
+            {{ s.expected_to_date | usd }} allowed by day {{ s.days_elapsed }} of
             {{ s.days_in_month }}
           </span>
         }
@@ -44,15 +44,15 @@
     </div>
     <div class="card total">
       <span class="label">Money in</span>
-      <span class="figure num">{{ s.income }}</span>
+      <span class="figure num">{{ s.income | usd }}</span>
     </div>
     <div class="card total">
       <span class="label">Saved</span>
-      <span class="figure num">{{ s.saved }}</span>
+      <span class="figure num">{{ s.saved | usd }}</span>
     </div>
     <div class="card total">
       <span class="label">Moved</span>
-      <span class="figure num">{{ s.transferred }}</span>
+      <span class="figure num">{{ s.transferred | usd }}</span>
       <!-- Said out loud, because a number excluded from every other total on
            the page needs to explain why it is here at all. -->
       <span class="sub dim">between your own accounts</span>
@@ -84,12 +84,12 @@
                   {{ row.category_name }}
                 </a>
               </td>
-              <td class="num">{{ row.spent }}</td>
-              <td class="num dim">{{ row.budget ?? '—' }}</td>
+              <td class="num">{{ row.spent | usd }}</td>
+              <td class="num dim">{{ (row.budget | usd) ?? '—' }}</td>
               <td class="num" [class.over]="isOver(row)">
                 <!-- Null is not zero. No target set is a different statement
                      from nothing left, and an em dash says so. -->
-                {{ row.remaining ?? '—' }}
+                {{ (row.remaining | usd) ?? '—' }}
               </td>
               <td class="bar-col">
                 @if (row.budget) {
@@ -142,7 +142,7 @@
                   @case ('TRANSFER') { moved }
                 }
               </td>
-              <td class="num">{{ row.spent }}</td>
+              <td class="num">{{ row.spent | usd }}</td>
             </tr>
           }
         </tbody>

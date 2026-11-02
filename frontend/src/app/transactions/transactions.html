@@ -107,7 +107,7 @@
                 }
               </select>
             </td>
-            <td class="num" [class.credit]="isCredit(row)">{{ display(row) }}</td>
+            <td class="num" [class.credit]="isCredit(row)">{{ display(row) | usd }}</td>
             <td>
               <input
                 type="text"

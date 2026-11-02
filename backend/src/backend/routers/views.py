@@ -23,14 +23,23 @@ def month(year: int, month: int, db: Session = Depends(get_session)) -> MonthOut
     return MonthOut(**queries.month_summary(db, date(year, month, 1)))
 
 
+# Repeated, `?account=3&account=7`. Absent means every account; summed here
+# rather than in the browser, which has no decimal type to add money with.
+AccountFilter = Query(None, alias="account")
+
+
 @router.get("/net-worth", response_model=NetWorthOut)
 def net_worth(
     days: int = Query(365, ge=1, le=3650),
+    account_ids: list[int] | None = AccountFilter,
     db: Session = Depends(get_session),
 ) -> NetWorthOut:
-    return NetWorthOut(**queries.net_worth(db, limit=days))
+    return NetWorthOut(**queries.net_worth(db, limit=days, account_ids=account_ids))
 
 
 @router.get("/portfolio", response_model=PortfolioOut)
-def portfolio(db: Session = Depends(get_session)) -> PortfolioOut:
-    return PortfolioOut(**queries.portfolio(db))
+def portfolio(
+    account_ids: list[int] | None = AccountFilter,
+    db: Session = Depends(get_session),
+) -> PortfolioOut:
+    return PortfolioOut(**queries.portfolio(db, account_ids=account_ids))

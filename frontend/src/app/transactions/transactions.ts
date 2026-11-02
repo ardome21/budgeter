@@ -5,6 +5,7 @@ import { ActivatedRoute } from '@angular/router';
 import { Api } from '../api';
 import { MerchantField } from '../merchant-field/merchant-field';
 import { AccountRow, Category, Transaction } from '../models';
+import { UsdPipe } from '../usd';
 import { Sync } from '../sync';
 
 /**
@@ -21,7 +22,7 @@ import { Sync } from '../sync';
  */
 @Component({
   selector: 'app-transactions',
-  imports: [FormsModule, MerchantField],
+  imports: [FormsModule, MerchantField, UsdPipe],
   templateUrl: './transactions.html',
   styleUrl: './transactions.scss',
 })

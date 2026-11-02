@@ -40,14 +40,17 @@ export class Api {
 
   // --- net worth ------------------------------------------------------------
 
-  netWorth(days = 365): Observable<NetWorth> {
+  /** `accountIds` narrows every figure to those accounts; omit it for all. */
+  netWorth(days = 365, accountIds?: number[]): Observable<NetWorth> {
     return this.http.get<NetWorth>('/api/net-worth', {
-      params: new HttpParams().set('days', days),
+      params: withAccounts(new HttpParams().set('days', days), accountIds),
     });
   }
 
-  portfolio(): Observable<Portfolio> {
-    return this.http.get<Portfolio>('/api/portfolio');
+  portfolio(accountIds?: number[]): Observable<Portfolio> {
+    return this.http.get<Portfolio>('/api/portfolio', {
+      params: withAccounts(new HttpParams(), accountIds),
+    });
   }
 
   accounts(includeClosed = false): Observable<AccountRow[]> {
@@ -176,4 +179,10 @@ export class Api {
   unlink(itemId: number): Observable<void> {
     return this.http.delete<void>(`/api/linked/items/${itemId}`);
   }
+}
+
+/** Repeated `account=` params, which is what the API reads as a list. */
+function withAccounts(params: HttpParams, ids?: number[]): HttpParams {
+  for (const id of ids ?? []) params = params.append('account', id);
+  return params;
 }

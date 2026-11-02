@@ -148,6 +148,28 @@ class Account(Base):
         back_populates="account", cascade="all, delete-orphan"
     )
 
+    @property
+    def group(self) -> str:
+        """Which group the Net worth screen files this account under.
+
+        Derived from what the bank reports and never stored, so a new account
+        lands in the right group without anyone filing it. Retirement is
+        checked first because it is the one flag that is yours to set: a Roth
+        IRA is an investment account, but it is retirement money first.
+        """
+        if self.is_retirement:
+            return "retirement"
+        if self.account_type == "investment":
+            return "investment"
+        if self.account_type == "credit":
+            return "credit"
+        if self.is_liability:
+            return "loan"
+        if self.account_type == "depository":
+            savings = ("savings", "money market", "cd")
+            return "savings" if (self.subtype or "") in savings else "checking"
+        return "other"
+
     def __repr__(self) -> str:
         return f"<Account {self.institution} {self.name}>"
 
@@ -162,6 +184,11 @@ class Balance(Base):
     Liabilities are stored **negative**, so net worth is a plain sum and no
     caller has to remember the sign rule. That decision belongs here, once, at
     the point of writing — not in every query that reads it.
+
+    `source` says how the figure is known. `bank` and `archive` are readings —
+    the institution's own number, today or before the 2026-09-18 rebuild.
+    `rebuilt` is worked out by `rebuild.py`, and is only ever written on a day
+    that has no reading; a reading always replaces it.
     """
 
     __tablename__ = "balances"
@@ -171,6 +198,9 @@ class Balance(Base):
     account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"))
     as_of: Mapped[date] = mapped_column(Date)
     amount: Mapped[Decimal] = mapped_column(Money)
+    source: Mapped[str] = mapped_column(
+        String(10), default="bank", server_default="bank"
+    )
 
     account: Mapped[Account] = relationship(back_populates="balances")
 

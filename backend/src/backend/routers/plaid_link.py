@@ -37,6 +37,7 @@ from ..plaid_client import (
     PlaidReauthRequired,
     describe_api_error,
 )
+from ..rebuild import rebuild_balances
 from ..schemas import LinkedItemOut, RefreshOut
 
 router = APIRouter(prefix="/linked", tags=["linked"])
@@ -201,6 +202,10 @@ def refresh_everything(db: Session) -> RefreshOut:
             continue
         for key in totals:
             totals[key] += one[key]
+
+    # Today's readings can close a gap — a day the app was not opened now has
+    # a reading after it — so the rebuilt days are recomputed every time.
+    rebuild_balances(db)
     return RefreshOut(failures=failures, **totals)
 
 
@@ -403,7 +408,9 @@ def _refresh_accounts(db: Session, item: PlaidItem) -> int:
         if existing is None:
             db.add(Balance(account_id=account.id, as_of=today, amount=balance))
         else:
+            # A reading replaces anything rebuilt for the same day.
             existing.amount = balance
+            existing.source = "bank"
         touched += 1
 
     # Sessions run with autoflush off, and the caller's very next act is a

@@ -1,22 +1,52 @@
 <h1>Net worth</h1>
 
-@if (loading()) {
+@if (groups().length) {
+  <!-- Groups to combine; the checkboxes in the Accounts table cut finer. A
+       chip half-filled means some of its accounts are in the selection. -->
+  <div class="filters" role="group" aria-label="Accounts shown">
+    @for (g of groups(); track g.key) {
+      @let state = groupState(g.accounts);
+      <button
+        type="button"
+        class="chip"
+        [class.on]="state === 'on'"
+        [class.some]="state === 'some'"
+        [attr.aria-pressed]="state === 'on' ? 'true' : state === 'some' ? 'mixed' : 'false'"
+        (click)="toggleGroup(g.accounts)"
+      >
+        {{ g.label }}
+      </button>
+    }
+    <span class="spacer"></span>
+    <button type="button" class="quiet" (click)="all()" [disabled]="everything()">All</button>
+    <button type="button" class="quiet" (click)="none()" [disabled]="!selected().size">None</button>
+  </div>
+  @if (!everything() && selected().size) {
+    <p class="dim small scope">
+      Showing {{ selected().size }} of {{ accounts().length }} accounts.
+    </p>
+  }
+}
+
+@if (!selected().size && accounts().length) {
+  <p class="dim">No accounts selected. Pick a group above, or tick accounts below.</p>
+} @else if (loading()) {
   <p class="dim">Loading…</p>
 } @else if (data(); as d) {
   @if (d.latest; as latest) {
     <div class="totals">
       <div class="card total">
         <span class="label">Net</span>
-        <span class="figure num">{{ latest.net }}</span>
+        <span class="figure num">{{ latest.net | usd }}</span>
         <span class="sub dim">as of {{ day(latest.as_of) }}</span>
       </div>
       <div class="card total">
         <span class="label">Assets</span>
-        <span class="figure num">{{ latest.assets }}</span>
+        <span class="figure num">{{ latest.assets | usd }}</span>
       </div>
       <div class="card total">
         <span class="label">Owed</span>
-        <span class="figure num over">{{ latest.liabilities }}</span>
+        <span class="figure num over">{{ latest.liabilities | usd }}</span>
       </div>
     </div>
 
@@ -35,18 +65,20 @@
     }
   }
 
-  @if (path()) {
+  @if (complete().length >= 2) {
     <div class="card chart">
-      <svg
-        [attr.viewBox]="'0 0 ' + width + ' ' + height"
-        [attr.height]="height"
-        preserveAspectRatio="none"
-        role="img"
-        aria-label="Net worth over time"
-      >
-        <path [attr.d]="path()" fill="none" />
-      </svg>
+      <app-networth-chart [points]="complete()" [groupLabels]="groupOrder" />
       <p class="dim small">{{ span() }}</p>
+      @if (estimated(); as n) {
+        <!-- The banks only report today's balance. Earlier days are rebuilt:
+             cash and cards from their transactions, investments drawn straight
+             between real readings. -->
+        <p class="dim small">
+          {{ n }} of {{ complete().length }} days are rebuilt rather than read —
+          cash and cards from their transactions, investments estimated between
+          real readings.
+        </p>
+      }
     </div>
   } @else {
     <p class="dim">
@@ -75,40 +107,41 @@
 
 <h2>Accounts</h2>
 <div class="card scroll-x">
-  <table>
+  <table class="accounts">
     <thead>
       <tr>
+        <th></th>
         <th>Account</th>
         <th>Institution</th>
         <th class="num">Balance</th>
         <th>Last read</th>
       </tr>
     </thead>
-    <tbody>
-      @for (a of assets(); track a.id) {
-        <tr>
-          <td>
-            {{ a.name }}
-            @if (a.is_retirement) { <span class="tag">retirement</span> }
-          </td>
-          <td class="dim">{{ a.institution }}</td>
-          <td class="num">{{ a.balance ?? '—' }}</td>
-          <td class="dim" [class.over]="isStale(a)">
-            {{ a.balance_as_of ? day(a.balance_as_of) : 'never' }}
-          </td>
+    @for (g of groups(); track g.key) {
+      <tbody>
+        <tr class="group-head">
+          <th colspan="5">{{ g.label }}</th>
         </tr>
-      }
-      @for (a of liabilities(); track a.id) {
-        <tr>
-          <td>{{ a.name }}</td>
-          <td class="dim">{{ a.institution }}</td>
-          <td class="num over">{{ a.balance ?? '—' }}</td>
-          <td class="dim" [class.over]="isStale(a)">
-            {{ a.balance_as_of ? day(a.balance_as_of) : 'never' }}
-          </td>
-        </tr>
-      }
-    </tbody>
+        @for (a of g.accounts; track a.id) {
+          <tr [class.unpicked]="!selected().has(a.id)">
+            <td>
+              <input
+                type="checkbox"
+                [checked]="selected().has(a.id)"
+                (change)="toggleAccount(a.id)"
+                [attr.aria-label]="'Show ' + a.name"
+              />
+            </td>
+            <td>{{ a.name }}</td>
+            <td class="dim">{{ a.institution }}</td>
+            <td class="num" [class.over]="a.is_liability">{{ (a.balance | usd) ?? '—' }}</td>
+            <td class="dim" [class.over]="isStale(a)">
+              {{ a.balance_as_of ? day(a.balance_as_of) : 'never' }}
+            </td>
+          </tr>
+        }
+      </tbody>
+    }
   </table>
 </div>
 
@@ -122,8 +155,8 @@
            holds most of the money: a "paid in" total that quietly describes a
            fifth of the portfolio is worse than one that admits its range. -->
       @if (p.total_cost_basis) {
-        <br />What was paid in is known for {{ p.cost_basis_covers }} of the
-        {{ p.total_value }} here — the rest is held where no cost basis is
+        <br />What was paid in is known for {{ p.cost_basis_covers | usd }} of the
+        {{ p.total_value | usd }} here — the rest is held where no cost basis is
         reported.
       }
     </p>
@@ -149,20 +182,20 @@
               </td>
               <td class="dim">{{ h.account_name }}</td>
               <td class="num">{{ h.quantity }}</td>
-              <td class="num dim">{{ h.price ?? '—' }}</td>
-              <td class="num">{{ h.value }}</td>
+              <td class="num dim">{{ (h.price | usd) ?? '—' }}</td>
+              <td class="num">{{ h.value | usd }}</td>
               <!-- Not reported is not zero. Zero would claim the whole position
                    as gain, which is the kind of wrong that looks like news. -->
-              <td class="num dim">{{ h.cost_basis ?? 'not reported' }}</td>
-              <td class="num">{{ h.gain ?? '—' }}</td>
+              <td class="num dim">{{ (h.cost_basis | usd) ?? 'not reported' }}</td>
+              <td class="num">{{ (h.gain | usd) ?? '—' }}</td>
             </tr>
           }
         </tbody>
         <tfoot>
           <tr>
             <td colspan="4">Total</td>
-            <td class="num">{{ p.total_value }}</td>
-            <td class="num dim">{{ p.total_cost_basis ?? 'incomplete' }}</td>
+            <td class="num">{{ p.total_value | usd }}</td>
+            <td class="num dim">{{ (p.total_cost_basis | usd) ?? 'incomplete' }}</td>
             <td></td>
           </tr>
         </tfoot>

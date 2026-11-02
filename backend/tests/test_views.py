@@ -3,6 +3,7 @@
 from datetime import date
 from decimal import Decimal
 
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -129,6 +130,80 @@ def test_net_worth_nets_liabilities(
     assert latest["assets"] == Decimal("5000.00")
     assert latest["liabilities"] == Decimal("-1200.00")
     assert latest["net"] == Decimal("3800.00")
+
+
+def test_net_worth_narrows_to_the_accounts_asked_for(
+    client: TestClient, session: Session, account
+):
+    """Card debt on its own, over time. The sum is the server's: the browser
+    has no decimal type to add money with."""
+    cards = [
+        type(account)(
+            plaid_account_id=f"test-card-{n}", name=f"Card {n}",
+            institution="Test Bank", account_type="credit",
+            subtype="credit card", is_liability=True,
+        )
+        for n in (1, 2)
+    ]
+    session.add_all(cards)
+    session.flush()
+    session.add_all(
+        [
+            Balance(account_id=account.id, as_of=date(2026, 3, 1),
+                    amount=Decimal("5000.00")),
+            Balance(account_id=cards[0].id, as_of=date(2026, 3, 1),
+                    amount=Decimal("-537.24")),
+            Balance(account_id=cards[1].id, as_of=date(2026, 3, 1),
+                    amount=Decimal("-411.34")),
+        ]
+    )
+    session.flush()
+
+    body = client.get(
+        "/api/net-worth", params=[("account", c.id) for c in cards]
+    ).json()
+
+    assert body["latest"]["net"] == "-948.58"
+    assert body["latest"]["assets"] == "0.00"
+    # The breakdown the hover shows adds up, server-side, to the same figure.
+    [cards_group] = body["latest"]["groups"]
+    assert cards_group["group"] == "credit"
+    assert cards_group["total"] == "-948.58"
+    assert [a["amount"] for a in cards_group["accounts"]] == ["-537.24", "-411.34"]
+    assert body["latest"]["accounts_reporting"] == 2
+    assert body["account_count"] == 2
+
+
+def test_accounts_are_grouped_by_what_the_bank_reports(
+    client: TestClient, session: Session, account
+):
+    """Retirement wins over investment: a Roth IRA is invested, but it is
+    retirement money first. An HSA is not flagged retirement, so it is an
+    investment."""
+    def add(name, kind, subtype, *, liability=False, retirement=False):
+        session.add(
+            type(account)(
+                plaid_account_id=f"test-{name}", name=name,
+                institution="Test Bank", account_type=kind, subtype=subtype,
+                is_liability=liability, is_retirement=retirement,
+            )
+        )
+
+    add("Savings", "depository", "savings")
+    add("Card", "credit", "credit card", liability=True)
+    add("Roth", "investment", "roth", retirement=True)
+    add("HSA", "investment", "hsa")
+    session.flush()
+
+    groups = {a["name"]: a["group"] for a in client.get("/api/accounts").json()}
+
+    assert groups == {
+        "Test Checking": "checking",
+        "Savings": "savings",
+        "Card": "credit",
+        "Roth": "retirement",
+        "HSA": "investment",
+    }
 
 
 def test_net_worth_reports_how_many_accounts_answered(

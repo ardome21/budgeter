@@ -170,6 +170,30 @@ Every point carries how many accounts reported that day. Without it, a day when
 two of eleven accounts were read looks exactly like a day net worth collapsed.
 Partial days are held out of the line and counted underneath instead.
 
+### The days nobody read are rebuilt, and say so
+
+Plaid reports a balance as of today and nothing earlier, so the line could
+only grow one point per day the app was opened. `backend/rebuild.py` fills in
+behind the readings, and every row it writes is `balances.source = 'rebuilt'`:
+
+- **Cash and cards** from their transactions: a day's balance is the next
+  reading after it with the transactions in between put back. Checked against
+  the real 2026-09-18 readings: five accounts of six to the cent, Chase off by
+  one debit the bank had not posted yet.
+- **Investments** drawn straight between real readings, because their value
+  moves with the market and nothing reports past prices. An account first read
+  later than the rest is held at its first reading back to theirs.
+
+A reading — `bank`, or `archive` for the August 2026 readings recovered from the
+pre-reset dump — is never overwritten, and a reading for a rebuilt day replaces
+it. The rebuilt rows are deleted and recomputed after every Refresh
+(`scripts/rebuild_balances.py` does it by hand). The chart says how many of the
+days it draws are rebuilt.
+
+The rebuild is only as complete as the transactions. Capital One never sent the
+$1,030.57 payment Chase shows leaving on 2026-08-25, so Venture reads that much
+too high from Aug 18 to 24, until the Aug 17 reading resets it.
+
 ### Holdings are priced by the institution
 
 This used to be 1,500 lines. A Fidelity CSV was parsed for positions, public
