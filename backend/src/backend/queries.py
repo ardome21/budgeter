@@ -288,6 +288,12 @@ def net_worth(db: Session, limit: int = 365) -> dict:
     that makes the series readable: a day when two of eleven accounts were read
     is not a day net worth collapsed, and without the count that dip is
     indistinguishable from a real one.
+
+    Only accounts still tracked are counted as reporting, though every balance
+    is summed. The screen judges a day against the best day ever seen, so
+    counting a since-closed account would make every day before it closed the
+    standard and every day after it look partial — which is exactly what
+    hiding Bilt's BillPay account did on 2026-11-02, blanking the chart.
     """
     stmt = (
         select(
@@ -295,8 +301,11 @@ def net_worth(db: Session, limit: int = 365) -> dict:
             func.sum(func.greatest(Balance.amount, 0)).label("assets"),
             func.sum(func.least(Balance.amount, 0)).label("liabilities"),
             func.sum(Balance.amount).label("net"),
-            func.count(Balance.account_id).label("reporting"),
+            func.count(Balance.account_id)
+            .filter(Account.closed_on.is_(None))
+            .label("reporting"),
         )
+        .join(Account, Account.id == Balance.account_id)
         .group_by(Balance.as_of)
         .order_by(Balance.as_of.desc())
         .limit(limit)

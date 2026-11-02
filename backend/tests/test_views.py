@@ -163,6 +163,38 @@ def test_net_worth_reports_how_many_accounts_answered(
     assert [p["accounts_reporting"] for p in points] == [2, 1]
 
 
+def test_a_closed_account_does_not_make_later_days_look_partial(
+    session: Session, account
+):
+    """Hiding an account stops it reporting. Counted, the days before would
+    out-number every day after, and every new day would read as incomplete.
+    Its balance still counts toward the day it was read."""
+    hidden = type(account)(
+        plaid_account_id="test-billpay", name="BillPay", institution="Test Bank",
+        account_type="depository", subtype="checking", is_liability=False,
+        closed_on=date(2026, 3, 2),
+    )
+    session.add(hidden)
+    session.flush()
+
+    session.add_all(
+        [
+            Balance(account_id=account.id, as_of=date(2026, 3, 1),
+                    amount=Decimal("100.00")),
+            Balance(account_id=hidden.id, as_of=date(2026, 3, 1),
+                    amount=Decimal("5.00")),
+            Balance(account_id=account.id, as_of=date(2026, 3, 2),
+                    amount=Decimal("100.00")),
+        ]
+    )
+    session.flush()
+
+    points = queries.net_worth(session)["points"]
+
+    assert [p["accounts_reporting"] for p in points] == [1, 1]
+    assert points[0]["net"] == Decimal("105.00")
+
+
 def test_portfolio_uses_one_snapshot_date(
     session: Session, add_transaction, account
 ):

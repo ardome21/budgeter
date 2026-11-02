@@ -262,6 +262,30 @@ def test_a_refresh_records_todays_balance(
     assert balances[0].as_of == date.today()
 
 
+def test_an_account_takes_the_name_the_bank_shows(
+    client: TestClient, session: Session, item, linked_account, monkeypatch,
+    fake_plaid,
+):
+    """Fidelity's `official_name` is "Investment" for every account it has;
+    `name` is ROTH IRA. And a rename at the bank reaches an existing row."""
+    monkeypatch.setattr(
+        plaid_client, "get_accounts",
+        lambda _t: [
+            LinkedAccount(
+                plaid_account_id="acct-1", name="ROTH IRA",
+                official_name="Investment", mask="2613", type="investment",
+                subtype="roth", current=Decimal("5529.09"),
+            )
+        ],
+    )
+    fake_plaid(SyncDiff(added=[], modified=[], removed=[], cursor="c"))
+
+    refresh(client)
+
+    session.refresh(linked_account)
+    assert linked_account.name == "ROTH IRA"
+
+
 def test_a_card_balance_is_stored_negative(
     client: TestClient, session: Session, item, monkeypatch, fake_plaid
 ):

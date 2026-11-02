@@ -368,7 +368,7 @@ def _refresh_accounts(db: Session, item: PlaidItem) -> int:
             account = Account(
                 plaid_account_id=incoming.plaid_account_id,
                 item_id=item.id,
-                name=incoming.official_name or incoming.name,
+                name=_display_name(incoming),
                 institution=item.institution_name,
                 mask=incoming.mask,
                 account_type=incoming.type,
@@ -385,6 +385,7 @@ def _refresh_accounts(db: Session, item: PlaidItem) -> int:
             # without this stayed orphaned for good and its transactions were
             # dropped by `_write_new` for having nowhere to go.
             account.item_id = item.id
+            account.name = _display_name(incoming)
             account.mask = incoming.mask
             account.account_type = incoming.type
             account.subtype = incoming.subtype
@@ -411,6 +412,18 @@ def _refresh_accounts(db: Session, item: PlaidItem) -> int:
     # account reads as unknown for one more refresh.
     db.flush()
     return touched
+
+
+def _display_name(incoming) -> str:
+    """Plaid's `name`, which is what the bank shows you.
+
+    Not `official_name`, which this used to prefer: Fidelity sends
+    "Investment" as the official name of all five of its accounts, and names
+    them properly — ROTH IRA, Individual, Health Savings Account — in `name`.
+    Refreshed on every sync, since nothing here lets a name be edited and a
+    bank renaming an account (Discover's card, under Capital One) should show.
+    """
+    return incoming.name or incoming.official_name or "Account"
 
 
 def _looks_like_retirement(incoming) -> bool:
