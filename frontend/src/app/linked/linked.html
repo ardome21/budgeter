@@ -40,36 +40,99 @@
 @if (!items().length) {
   <p class="dim">No banks linked yet.</p>
 } @else {
+  <p class="dim small intro">
+    Every account, and how recent its newest transaction is. One gone quiet
+    while the rest of its bank keeps coming in is how a missing payment shows.
+  </p>
   <div class="items">
     @for (item of items(); track item.id) {
       <div class="card item" [class.stale]="item.needs_reauth">
-        <div class="who">
-          <strong>{{ item.institution_name }}</strong>
-          <span class="dim">
-            {{ item.account_count }} accounts · last synced {{ when(item.last_synced_at) }}
-          </span>
-          @if (hasInvestments(item)) {
-            <span class="tag">holdings</span>
+        <div class="item-head">
+          <div class="who">
+            <strong>
+              {{ item.institution_name }}
+              @if (hasInvestments(item)) {
+                <span class="tag">holdings</span>
+              }
+            </strong>
+            <span class="dim">
+              Synced {{ when(item.last_synced_at) }}
+              @if (since(item); as from) { · history from {{ day(from) }} }
+            </span>
+          </div>
+          @if (!item.needs_reauth) {
+            <div class="row-actions">
+              <!-- Update mode with account selection: how an account the bank
+                   added since linking — a card that moved banks — is ticked in
+                   without spending a new link. -->
+              <button type="button" class="quiet" (click)="link([], item.id)" [disabled]="linking()">
+                Add or remove accounts
+              </button>
+              <button type="button" class="quiet" (click)="unlink(item)">Unlink</button>
+            </div>
           }
         </div>
 
         @if (item.needs_reauth) {
-          <p class="banner error">
-            The login for {{ item.institution_name }} has gone stale. Its history
-            is intact — it just cannot sync until you sign in again.
-          </p>
-          <button type="button" (click)="link([], item.id)">Sign in again</button>
-        } @else {
-          <div class="row-actions">
-            <!-- Update mode with account selection: how an account the bank
-                 added since linking — a card that moved banks — is ticked in
-                 without spending a new link. -->
-            <button type="button" class="quiet" (click)="link([], item.id)" [disabled]="linking()">
-              Add or remove accounts
-            </button>
-            <button type="button" class="quiet" (click)="unlink(item)">
-              Unlink
-            </button>
+          <div class="reauth">
+            <p class="banner error">
+              The login for {{ item.institution_name }} has gone stale. Its history
+              is intact — it just cannot sync until you sign in again.
+            </p>
+            <button type="button" (click)="link([], item.id)">Sign in again</button>
+          </div>
+        }
+
+        @if (item.accounts.length) {
+          <div class="scroll-x">
+            <table class="accounts">
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th class="num">Balance</th>
+                  <th>Newest transaction</th>
+                  <th class="num">This week</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (a of item.accounts; track a.id) {
+                  <tr [class.hidden-row]="a.closed_on">
+                    <td>
+                      {{ a.name }}
+                      @if (a.mask) { <span class="dim">··{{ a.mask }}</span> }
+                      <span class="dim small group">{{ groupName(a.group) }}</span>
+                    </td>
+                    <td class="num">{{ (a.balance | usd) ?? '—' }}</td>
+                    <td>
+                      @if (a.newest_transaction; as newest) {
+                        <span [class.quiet-acct]="isQuiet(a)"
+                              [title]="a.transaction_count + ' transactions since ' + day(a.oldest_transaction!)">
+                          {{ day(newest) }}
+                          <span class="dim">· {{ ago(newest) }}</span>
+                        </span>
+                        @if (isQuiet(a)) {
+                          <span class="tag warn">quiet</span>
+                        }
+                      } @else {
+                        <span class="dim">
+                          {{ a.group === 'investment' || a.group === 'retirement' ? 'holdings only' : 'none yet' }}
+                        </span>
+                      }
+                    </td>
+                    <td class="num dim">{{ a.new_this_week || '—' }}</td>
+                    <td class="hide-col">
+                      <!-- Hidden is the account's closed date: its history
+                           stays, it just stops counting as current. -->
+                      <button type="button" class="link-button" (click)="toggleHidden(a)"
+                              [title]="a.closed_on ? 'Count it in net worth again' : 'Stop counting it in net worth. Its history stays.'">
+                        {{ a.closed_on ? 'Show' : 'Hide' }}
+                      </button>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
           </div>
         }
       </div>

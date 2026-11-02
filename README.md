@@ -70,11 +70,23 @@ Five screens over one database that fills itself from the banks.
 
 | Screen | What it answers |
 |---|---|
-| **Month** | Where the money went, against what you meant it to |
+| **Month** | Where the money went, against the budget and last month, when in the month it went, and the regular charges still to come |
+| **Budget** | What each category is meant to cost, set once and carried forward; and the categories themselves |
 | **Transactions** | The ledger, and the three things about a row you can change |
 | **Net worth** | What you own and owe, and how that has moved |
-| **Linked** | Which banks are linked, and which need you to sign in again |
-| **Settings** | Categories, and what each is meant to cost |
+| **Linked** | Every account at every bank, and whether each is still coming in |
+
+Signing-in devices (passkeys) and signing out sit under your name in the
+header. There is no Settings screen: it had one table on it, and that table
+belongs where categories are decided, on Budget.
+
+**Still to come** is worked out from the rows, never stored. A charge counts
+as regular when the same merchant charged within 20% of the same amount,
+within a week of the same day, in each of the last three months — and no more
+than twice a month, or a weekly supermarket shop would pass by chance. Each
+is expected at last month's amount on last month's day, and is taken off
+**Left**. A bill whose amount swings more than that (the electric bill) is
+not predicted rather than guessed.
 
 ### Rebuilt on 2026-09-18, and why
 

@@ -1,7 +1,8 @@
 import { Component, effect, inject, signal, untracked } from '@angular/core';
 
 import { Api } from '../api';
-import { LinkedItem } from '../models';
+import { AccountGroup, LinkedAccount, LinkedItem } from '../models';
+import { UsdPipe } from '../usd';
 import { Sync } from '../sync';
 
 /** Plaid Link, injected into the page by the script tag in index.html. */
@@ -14,12 +15,13 @@ declare const Plaid: {
 };
 
 /**
- * The banks themselves: which are linked, when each was last asked, and the
- * ones that need you to sign in again. Refreshing lives in the header.
+ * Is everything coming in? Each bank with each of its accounts: its balance,
+ * its newest transaction and what the last week brought, so an account gone
+ * quiet stands out against its siblings. Refreshing lives in the header.
  */
 @Component({
   selector: 'app-linked',
-  imports: [],
+  imports: [UsdPipe],
   templateUrl: './linked.html',
   styleUrl: './linked.scss',
 })
@@ -108,16 +110,96 @@ export class Linked {
     this.api.unlink(item.id).subscribe({ next: () => this.load() });
   }
 
+  toggleHidden(account: LinkedAccount): void {
+    const closed_on = account.closed_on ? null : today();
+    this.api.updateAccount(account.id, { closed_on }).subscribe({
+      next: () => this.load(),
+      error: (e) => this.error.set(this.describe(e)),
+    });
+  }
+
+  /**
+   * A spending account with nothing for three weeks, while it is still
+   * counted. Savings and brokerages go quiet for months and mean nothing by
+   * it, so only checking and cards are asked.
+   */
+  isQuiet(account: LinkedAccount): boolean {
+    if (account.closed_on || !account.newest_transaction) return false;
+    if (account.group !== 'checking' && account.group !== 'credit') return false;
+    return daysSince(account.newest_transaction) > QUIET_DAYS;
+  }
+
+  /** The oldest transaction across the bank — how far back Plaid reached. */
+  since(item: LinkedItem): string | null {
+    const dates = item.accounts
+      .map((a) => a.oldest_transaction)
+      .filter((d): d is string => !!d)
+      .sort();
+    return dates[0] ?? null;
+  }
+
+  groupName(group: AccountGroup): string {
+    return GROUP_NAMES[group];
+  }
+
+  /** "Oct 30", read as a local calendar day. */
+  day(iso: string): string {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+    });
+  }
+
+  ago(iso: string): string {
+    const n = daysSince(iso);
+    if (n <= 0) return 'today';
+    if (n === 1) return 'yesterday';
+    return `${n} days ago`;
+  }
+
   hasInvestments(item: LinkedItem): boolean {
     return item.products.includes('investments');
   }
 
+  /** A sync is an instant, not a calendar day: "today 2:44 PM", "Oct 30". */
   when(iso: string | null): string {
-    return iso ? new Date(iso).toLocaleString() : 'never';
+    if (!iso) return 'never';
+    const at = new Date(iso);
+    const time = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return at.toDateString() === new Date().toDateString()
+      ? `today ${time}`
+      : at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ` ${time}`;
   }
 
   private describe(err: unknown): string {
     const detail = (err as { error?: { detail?: string } })?.error?.detail;
     return detail ?? 'Something went wrong talking to the bank.';
   }
+}
+
+const QUIET_DAYS = 21;
+
+const GROUP_NAMES: Record<AccountGroup, string> = {
+  checking: 'checking',
+  savings: 'savings',
+  credit: 'card',
+  loan: 'loan',
+  retirement: 'retirement',
+  investment: 'investment',
+  other: 'other',
+};
+
+/** Whole days from a local calendar day to today. */
+function daysSince(iso: string): number {
+  const [y, m, d] = iso.split('-').map(Number);
+  const then = new Date(y, m - 1, d);
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((midnight.getTime() - then.getTime()) / 86_400_000);
+}
+
+function today(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 }

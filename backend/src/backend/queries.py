@@ -10,7 +10,7 @@ rows it totals.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 from sqlalchemy import func, select
@@ -151,6 +151,31 @@ def month_summary(db: Session, month: date, today: date | None = None) -> dict:
     ]
     income_expected = sum(expected, ZERO) if expected else None
 
+    # Against last month, and to the same day while this one is running:
+    # comparing the 2nd of November with the whole of October says November is
+    # cheap, every month, until about the 25th.
+    last = previous_month(start)
+    last_start, last_end = month_bounds(last)
+    through = None if days_elapsed >= days else min(days_elapsed, days_in(last))
+    compare_end = last_end if through is None else last_start + timedelta(days=through)
+    before = _spending_by_category(db, last_start, compare_end)
+    for row in per_category:
+        if row["kind"] == CategoryKind.SPENDING:
+            row["previous"] = before.pop(row["category_id"], ZERO)
+            row["change"] = row["spent"] - row["previous"]
+    previous_spent = _spending_total(db, last_start, compare_end)
+
+    merchants = _top_merchants(db, start, end)
+    for row in per_category:
+        row["merchants"] = merchants.get(row["category_id"], [])
+
+    upcoming = upcoming_charges(db, start, today) if days_elapsed < days else []
+    upcoming_total = sum((u["amount"] for u in upcoming), ZERO)
+    left_now = (
+        income - spent if income_expected is None
+        else max(income, income_expected) - spent
+    )
+
     return {
         "month": start,
         "days_in_month": days,
@@ -188,7 +213,199 @@ def month_summary(db: Session, month: date, today: date | None = None) -> dict:
         "budget_from": source,
         "categories": per_category,
         "transaction_count": count,
+        "previous_month": last,
+        # None when the whole of last month is the comparison.
+        "compared_through": through,
+        "previous_spent": previous_spent,
+        "daily": _cumulative(db, start, end, days_elapsed),
+        "previous_daily": _cumulative(db, last_start, last_end, days_in(last)),
+        "biggest": _biggest(db, start, end),
+        "upcoming": upcoming,
+        "upcoming_total": upcoming_total,
+        # What is left once the regular charges still to come have landed.
+        "left_after_upcoming": left_now - upcoming_total,
     }
+
+
+def _spending(start: date, end: date):
+    """Spending rows in [start, end). Every "you spent this" figure below
+    starts here, so a card payment can never wander into one of them."""
+    return (
+        select(Transaction)
+        .join(Category, Transaction.category_id == Category.id)
+        .where(Category.kind == CategoryKind.SPENDING)
+        .where(Transaction.occurred_on >= start, Transaction.occurred_on < end)
+    )
+
+
+def _spending_total(db: Session, start: date, end: date) -> Decimal:
+    rows = _spending(start, end).subquery()
+    return db.scalar(select(func.coalesce(func.sum(rows.c.amount), ZERO)))
+
+
+def _spending_by_category(db: Session, start: date, end: date) -> dict[int, Decimal]:
+    rows = _spending(start, end).subquery()
+    return dict(
+        db.execute(
+            select(rows.c.category_id, func.sum(rows.c.amount)).group_by(
+                rows.c.category_id
+            )
+        ).all()
+    )
+
+
+def _cumulative(db: Session, start: date, end: date, through: int) -> list[Decimal]:
+    """Spending so far at the end of each day, from day 1 through `through`.
+
+    One figure per day, including the days nothing was spent, so the line is
+    flat where the month was quiet rather than skipping over it.
+    """
+    rows = _spending(start, end).subquery()
+    by_day = dict(
+        db.execute(
+            select(rows.c.occurred_on, func.sum(rows.c.amount)).group_by(
+                rows.c.occurred_on
+            )
+        ).all()
+    )
+    running, out = ZERO, []
+    for offset in range(min(through, (end - start).days)):
+        running += by_day.get(start + timedelta(days=offset), ZERO)
+        out.append(running)
+    return out
+
+
+def _merchant_of(txn: Transaction) -> str:
+    return txn.merchant or txn.description
+
+
+def _top_merchants(
+    db: Session, start: date, end: date, per_category: int = 3
+) -> dict[int, list[dict]]:
+    """The few merchants that make up most of each category this month."""
+    totals: dict[int, dict[str, list]] = {}
+    for txn in db.scalars(_spending(start, end)):
+        entry = totals.setdefault(txn.category_id, {}).setdefault(
+            _merchant_of(txn), [ZERO, 0]
+        )
+        entry[0] += txn.amount
+        entry[1] += 1
+    return {
+        category_id: [
+            {"name": name, "spent": spent, "count": n}
+            for name, (spent, n) in sorted(
+                names.items(), key=lambda kv: kv[1][0], reverse=True
+            )[:per_category]
+        ]
+        for category_id, names in totals.items()
+    }
+
+
+def _biggest(db: Session, start: date, end: date, limit: int = 5) -> list[dict]:
+    stmt = (
+        _spending(start, end)
+        .order_by(Transaction.amount.desc(), Transaction.occurred_on)
+        .limit(limit)
+    )
+    return [
+        {
+            "id": txn.id,
+            "occurred_on": txn.occurred_on,
+            "merchant": _merchant_of(txn),
+            "category_name": txn.category.name,
+            "amount": txn.amount,
+        }
+        for txn in db.scalars(stmt)
+    ]
+
+
+# How alike two charges have to be to count as the same bill: within a fifth
+# of the amount, and within a week of the same day of the month. Loose enough
+# for a streaming price rise and rent that moves by $50; tight enough that a
+# restaurant you happen to visit monthly does not pass, because its amount and
+# its day both wander. A bill whose amount swings more than that (an electric
+# bill: $85 to $286 in two months) is not predicted, and is not guessed at.
+SAME_AMOUNT = Decimal("0.20")
+SAME_DAY = 7
+# And a bill comes from a merchant you pay once a month, or twice (Apple bills
+# two subscriptions separately). Somewhere you shop ten times a month always
+# has some charge that lines up with last month's by chance; on real data
+# that made the supermarket three "bills".
+MOST_A_MONTH = 2
+
+
+def _alike(a: Transaction, b: Transaction) -> bool:
+    return (
+        abs(a.amount - b.amount) <= a.amount * SAME_AMOUNT
+        and abs(a.occurred_on.day - b.occurred_on.day) <= SAME_DAY
+    )
+
+
+def upcoming_charges(
+    db: Session, month: date, today: date | None = None
+) -> list[dict]:
+    """Regular charges that have landed in each of the last three months and
+    not yet in this one.
+
+    Worked out from the rows, not stored: a charge that stops recurring stops
+    being predicted after one month without anyone cancelling anything. Each
+    is expected for the amount it was last month, on the day it came last
+    month — a price rise shows up the first month it lands.
+    """
+    start, end = month_bounds(month)
+    today = today or date.today()
+    months = [previous_month(start)]
+    for _ in range(2):
+        months.append(previous_month(months[-1]))
+    history = [
+        list(db.scalars(_spending(*month_bounds(m)).where(Transaction.amount > 0)))
+        for m in months
+    ]
+    this_month = list(db.scalars(_spending(start, end)))
+
+    found = []
+    for charge in history[0]:
+        key = _merchant_of(charge)
+        if any(
+            sum(_merchant_of(t) == key for t in month_rows) > MOST_A_MONTH
+            for month_rows in history
+        ):
+            continue
+        regular = all(
+            any(_merchant_of(t) == key and _alike(charge, t) for t in older)
+            for older in history[1:]
+        )
+        if not regular:
+            continue
+        # Already here this month — at any amount near it, on any day.
+        if any(
+            _merchant_of(t) == key
+            and abs(t.amount - charge.amount) <= charge.amount * SAME_AMOUNT
+            for t in this_month
+        ):
+            continue
+        # One prediction per bill, even when last month charged it twice.
+        if any(f["merchant"] == key and _alike(charge, f["_charge"]) for f in found):
+            continue
+        day = min(charge.occurred_on.day, (end - start).days)
+        expected_on = start.replace(day=day)
+        found.append(
+            {
+                "_charge": charge,
+                "merchant": key,
+                "category_name": charge.category.name,
+                "amount": charge.amount,
+                "expected_on": expected_on,
+                # Its day has passed and it has not posted: late, or pending,
+                # or cancelled. Said rather than dropped, because which of the
+                # three is yours to know.
+                "late": expected_on < today,
+            }
+        )
+    for f in found:
+        del f["_charge"]
+    found.sort(key=lambda f: (f["expected_on"], f["merchant"]))
+    return found
 
 
 def _category_spend(

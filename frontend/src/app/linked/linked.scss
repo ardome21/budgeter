@@ -24,16 +24,83 @@
   margin-bottom: 1.2rem;
 }
 
+.intro {
+  margin: -0.4rem 0 1rem;
+  max-width: 44rem;
+}
+
 .item {
+  display: grid;
+  gap: 0.8rem;
+
+  &.stale {
+    border-color: var(--over);
+  }
+}
+
+.item-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
+}
 
-  &.stale {
-    border-color: var(--over);
+.reauth {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+
+  .banner {
+    margin: 0;
   }
+}
+
+.accounts {
+  font-size: 14px;
+
+  .group {
+    margin-left: 0.4rem;
+  }
+
+  .hide-col {
+    width: 1%;
+    text-align: right;
+  }
+}
+
+.hidden-row td {
+  opacity: 0.5;
+
+  &.hide-col {
+    opacity: 1;
+  }
+}
+
+.quiet-acct {
+  color: var(--warn);
+}
+
+.link-button {
+  all: unset;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+
+  &:hover {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent-dim);
+  }
+}
+
+.small {
+  font-size: 13px;
 }
 
 .who {
@@ -52,7 +119,8 @@
 }
 
 .tag {
-  align-self: flex-start;
+  margin-left: 0.4rem;
+  vertical-align: 2px;
   padding: 0.05rem 0.4rem;
   border-radius: 999px;
   background: var(--accent-dim);
@@ -76,4 +144,9 @@ button.quiet {
 
 .failure {
   display: block;
+}
+
+.tag.warn {
+  background: var(--warn-dim);
+  color: var(--warn);
 }

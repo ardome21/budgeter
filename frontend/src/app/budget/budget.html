@@ -165,6 +165,8 @@
       Save {{ label(p.month, false) }}'s budget
     </button>
   </div>
+
+  <app-categories (changed)="reload()" />
 } @else if (!error()) {
   <p class="dim">Loading…</p>
 }

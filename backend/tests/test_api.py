@@ -365,3 +365,15 @@ def _uncategorised(session):
     session.add(created)
     session.flush()
     return created
+
+
+def test_categories_say_how_many_rows_they_hold(
+    client: TestClient, add_transaction, account, spending_category
+):
+    """So the screen can offer delete only where it would work."""
+    add_transaction(account=account, category=spending_category,
+                    amount="5.00", occurred_on=date(2025, 3, 4))
+
+    rows = {c["id"]: c for c in client.get("/api/categories").json()}
+
+    assert rows[spending_category.id]["transaction_count"] >= 1

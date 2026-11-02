@@ -1,0 +1,184 @@
+/* This month is the one series with a hue; last month is grey and dashed,
+   because it is the reference rather than a second thing to read. Checked
+   with the dataviz validator in both modes: the pair clears ΔE 14 under
+   colour-blindness, and the dash carries the difference as well. */
+:host {
+  --c-this: #2a78d6;
+  --c-last: var(--text-dim);
+  --c-budget: var(--accent);
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :host {
+    --c-this: #3987e5;
+  }
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.2rem;
+  margin-bottom: 0.6rem;
+  font-size: 13px;
+  color: var(--text-dim);
+
+  .key {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  i {
+    display: inline-block;
+    width: 18px;
+    border-top: 2px solid var(--c);
+  }
+
+  .this { --c: var(--c-this); }
+  .last i { border-top-style: dashed; }
+  .last { --c: var(--c-last); }
+  .budget i { border-top-style: dotted; }
+  .budget { --c: var(--c-budget); }
+}
+
+.frame {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr;
+  grid-template-rows: 200px 1.5rem;
+}
+
+.y-axis {
+  position: relative;
+
+  span {
+    position: absolute;
+    right: 0.6rem;
+    transform: translateY(-50%);
+    font-size: 11.5px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+.x-axis {
+  grid-column: 2;
+  position: relative;
+
+  span {
+    position: absolute;
+    top: 0.35rem;
+    transform: translateX(-50%);
+    font-size: 11.5px;
+    color: var(--text-dim);
+  }
+}
+
+.plot {
+  position: relative;
+  cursor: crosshair;
+  outline: none;
+
+  &:focus-visible {
+    box-shadow: 0 0 0 2px var(--accent-dim);
+    border-radius: 4px;
+  }
+}
+
+svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+
+  line,
+  path {
+    fill: none;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .grid {
+    stroke: var(--border);
+    stroke-width: 1;
+  }
+
+  .budget {
+    stroke: var(--c-budget);
+    stroke-width: 1.5;
+    stroke-dasharray: 2 4;
+  }
+
+  .last {
+    stroke: var(--c-last);
+    stroke-width: 1.5;
+    stroke-dasharray: 5 4;
+  }
+
+  .this {
+    stroke: var(--c-this);
+    stroke-width: 2;
+    stroke-linejoin: round;
+  }
+
+  .cross {
+    stroke: var(--text-dim);
+    stroke-width: 1;
+    opacity: 0.5;
+  }
+}
+
+/* Where today is. A ring of surface keeps it legible over the gridlines. */
+.dot {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--c-this);
+  box-shadow: 0 0 0 2px var(--surface);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.tip {
+  position: absolute;
+  top: 0;
+  transform: translateX(10px);
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.5rem 0.65rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.08);
+  font-size: 12.5px;
+  white-space: nowrap;
+  pointer-events: none;
+
+  &.flip {
+    transform: translateX(calc(-100% - 10px));
+  }
+
+  span {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--text-dim);
+  }
+
+  b {
+    margin-left: auto;
+    padding-left: 0.8rem;
+    color: var(--text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  i {
+    width: 12px;
+    border-top: 2px solid var(--c-this);
+
+    &.last {
+      border-top: 2px dashed var(--c-last);
+    }
+  }
+}

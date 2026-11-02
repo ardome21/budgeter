@@ -6,6 +6,7 @@ import { Api } from '../api';
 import { Budget, BudgetPlan, BudgetPlanRow } from '../models';
 import { fromCents, toCents } from '../money';
 import { UsdPipe } from '../usd';
+import { Categories } from './categories';
 
 /** Where a column of proposals comes from. `current` is the budget in force. */
 type Source = 'last' | 'typical' | 'current';
@@ -28,7 +29,7 @@ type Source = 'last' | 'typical' | 'current';
  */
 @Component({
   selector: 'app-budget',
-  imports: [NgTemplateOutlet, RouterLink, UsdPipe],
+  imports: [NgTemplateOutlet, RouterLink, UsdPipe, Categories],
   templateUrl: './budget.html',
   styleUrl: './budget.scss',
 })
@@ -173,6 +174,12 @@ export class BudgetPage {
   private proposal(row: BudgetPlanRow, source: Source): string | null {
     if (source === 'current') return row.budget;
     return source === 'last' ? row.from_last_month : row.from_typical;
+  }
+
+  /** A category was renamed, added or re-kinded: fetch the rows again, and
+   *  keep whatever is typed in the boxes. */
+  reload(): void {
+    this.load(false);
   }
 
   /** `refill` false keeps what is in the boxes — after a save they are the budget. */

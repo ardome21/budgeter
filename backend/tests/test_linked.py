@@ -548,3 +548,24 @@ def test_refreshing_twice_in_a_day_leaves_one_reading(
         select(Balance).where(Balance.account_id == linked_account.id)
     ).all()
     assert len(rows) == 1
+
+
+def test_each_bank_lists_its_accounts_and_how_current_they_are(
+    client: TestClient, session: Session, item, linked_account, add_transaction,
+    spending_category,
+):
+    """A bank's last sync says nothing about whether every account came in.
+    Capital One synced daily while never sending a $1,030.57 payment."""
+    add_transaction(account=linked_account, category=spending_category,
+                    amount="5.00", occurred_on=date(2025, 3, 1))
+    add_transaction(account=linked_account, category=spending_category,
+                    amount="7.00", occurred_on=date(2025, 4, 9))
+
+    bank = next(i for i in client.get("/api/linked/items").json() if i["id"] == item.id)
+    acct = bank["accounts"][0]
+
+    assert acct["name"] == "Test Checking"
+    assert acct["oldest_transaction"] == "2025-03-01"
+    assert acct["newest_transaction"] == "2025-04-09"
+    assert acct["transaction_count"] == 2
+    assert acct["new_this_week"] == 2

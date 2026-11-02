@@ -3,8 +3,9 @@ import { RouterLink } from '@angular/router';
 
 import { Api } from '../api';
 import { BudgetPlan, CategorySpend, MonthSummary } from '../models';
-import { UsdPipe } from '../usd';
+import { UsdPipe, usd } from '../usd';
 import { Sync } from '../sync';
+import { PaceChart } from './pace-chart';
 
 /**
  * Where the money went, and how that compares to what you meant.
@@ -17,7 +18,7 @@ import { Sync } from '../sync';
  */
 @Component({
   selector: 'app-month',
-  imports: [RouterLink, UsdPipe],
+  imports: [RouterLink, UsdPipe, PaceChart],
   templateUrl: './month.html',
   styleUrl: './month.scss',
 })
@@ -32,6 +33,8 @@ export class Month {
   plan = signal<BudgetPlan | null>(null);
   loading = signal(true);
   error = signal<string | null>(null);
+  /** Categories opened to show their merchants. */
+  opened = signal<Set<number>>(new Set());
 
   /** Only categories money actually moved through, or that have a target. */
   spending = computed(() =>
@@ -159,6 +162,59 @@ export class Month {
       month: 'long',
       year: 'numeric',
     });
+  }
+
+  toggle(id: number): void {
+    this.opened.update((open) => {
+      const next = new Set(open);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
+  /** "vs Oct", or "vs Oct 1–2" while the month is running. */
+  compareHead = computed(() => {
+    const s = this.summary();
+    if (!s) return '';
+    const name = this.shortMonth(s.previous_month);
+    return s.compared_through
+      ? `vs ${name} 1–${s.compared_through}`
+      : `vs ${name}`;
+  });
+
+  compareTitle = computed(() => {
+    const s = this.summary();
+    if (!s) return '';
+    return s.compared_through
+      ? `Against the first ${s.compared_through} days of last month, so a month in progress is not set beside a whole one`
+      : 'Against the whole of last month';
+  });
+
+  /** "+$8.95", "−$140.00", or "same". The sign is the server's; this only
+   *  adds the plus that a positive string does not carry. */
+  signed(change: string | null): string {
+    if (change === null) return '—';
+    if (/^-?0*\.?0*$/.test(change)) return 'same';
+    return change.startsWith('-') ? usd(change)! : usd('+' + change)!;
+  }
+
+  /** Spending more than last month. Read off the sign, not compared. */
+  isUp(change: string | null): boolean {
+    return !!change && !change.startsWith('-') && !/^0*\.?0*$/.test(change);
+  }
+
+  /** "Nov 5" from a calendar day, read as local. */
+  day(iso: string): string {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+    });
+  }
+
+  private shortMonth(month: string): string {
+    const [year, m] = month.split('-').map(Number);
+    return new Date(year, m - 1, 1).toLocaleDateString(undefined, { month: 'short' });
   }
 
   /** How many categories last month's spending touched — the rows the setup fills. */

@@ -8,7 +8,6 @@
         <a routerLink="/transactions" routerLinkActive="active">Transactions</a>
         <a routerLink="/net-worth" routerLinkActive="active">Net worth</a>
         <a routerLink="/linked" routerLinkActive="active">Linked</a>
-        <a routerLink="/settings" routerLinkActive="active">Settings</a>
       </nav>
       <div class="sync">
         @if (sync.failures().length) {
@@ -28,10 +27,7 @@
           Refresh
         </button>
       </div>
-      <button type="button" class="signout" (click)="auth.logout()">
-        Sign out
-        <span class="who">{{ auth.username() }}</span>
-      </button>
+      <app-account-menu />
     }
   </div>
 </header>

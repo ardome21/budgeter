@@ -1,12 +1,13 @@
 import { Component, effect, inject } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
+import { AccountMenu } from './auth/account-menu';
 import { Auth } from './auth/auth';
 import { Sync } from './sync';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, AccountMenu],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })

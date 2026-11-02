@@ -21,10 +21,24 @@ router = APIRouter(tags=["categories"])
 
 
 @router.get("/categories", response_model=list[CategoryOut])
-def list_categories(db: Session = Depends(get_session)) -> list[Category]:
-    return list(
-        db.scalars(select(Category).order_by(Category.sort_order, Category.name))
+def list_categories(db: Session = Depends(get_session)) -> list[CategoryOut]:
+    """Each with how many rows are filed under it — which says whether it can
+    be deleted before anyone tries."""
+    counts = dict(
+        db.execute(
+            select(Transaction.category_id, func.count(Transaction.id)).group_by(
+                Transaction.category_id
+            )
+        ).all()
     )
+    return [
+        CategoryOut.model_validate(c).model_copy(
+            update={"transaction_count": counts.get(c.id, 0)}
+        )
+        for c in db.scalars(
+            select(Category).order_by(Category.sort_order, Category.name)
+        )
+    ]
 
 
 @router.post("/categories", response_model=CategoryOut, status_code=201)

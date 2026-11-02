@@ -59,6 +59,7 @@ class CategoryOut(Base):
     name: str
     kind: CategoryKind
     sort_order: int
+    transaction_count: int = 0
 
 
 # --- accounts ---------------------------------------------------------------
@@ -190,6 +191,34 @@ class CategorySpend(BaseModel):
     # than two money strings — it has no decimal type and nothing here adds up.
     over_budget: bool = False
     over_pace: bool = False
+    # Spending only. Last month to the same day while this one is running, or
+    # the whole of it once this one is over; and this month less that.
+    previous: Money | None = None
+    change: Money | None = None
+    merchants: list["MerchantSpend"] = []
+
+
+class MerchantSpend(BaseModel):
+    name: str
+    spent: Money
+    count: int
+
+
+class BigPurchase(BaseModel):
+    id: int
+    occurred_on: date
+    merchant: str
+    category_name: str
+    amount: Money
+
+
+class UpcomingCharge(BaseModel):
+    merchant: str
+    category_name: str
+    amount: Money
+    expected_on: date
+    # Its day has passed and nothing like it has posted.
+    late: bool
 
 
 class MonthOut(BaseModel):
@@ -223,6 +252,19 @@ class MonthOut(BaseModel):
     budget_from: date | None = None
     categories: list[CategorySpend]
     transaction_count: int
+    previous_month: date
+    # The day of last month the comparison runs to; None for the whole month.
+    compared_through: int | None = None
+    previous_spent: Money
+    # Spending so far at the end of each day: this month through today, and
+    # the whole of last month.
+    daily: list[Money] = []
+    previous_daily: list[Money] = []
+    biggest: list[BigPurchase] = []
+    # Regular charges that have come every month and not yet this one.
+    upcoming: list[UpcomingCharge] = []
+    upcoming_total: Money
+    left_after_upcoming: Money
 
 
 # --- net worth --------------------------------------------------------------
@@ -299,7 +341,24 @@ class PortfolioOut(BaseModel):
 # --- linked banks -----------------------------------------------------------
 
 
-class LinkedItemOut(Base):
+class LinkedAccountOut(BaseModel):
+    id: int
+    name: str
+    mask: str | None
+    # See `Account.group`.
+    group: str
+    # The bank's own latest figure, never a rebuilt one.
+    balance: Money | None = None
+    # Set when hidden. Its history stays; it just stops being reported.
+    closed_on: date | None = None
+    newest_transaction: date | None = None
+    oldest_transaction: date | None = None
+    transaction_count: int = 0
+    # Written in the last seven days, by any refresh.
+    new_this_week: int = 0
+
+
+class LinkedItemOut(BaseModel):
     id: int
     institution_name: str
     products: str
@@ -307,6 +366,7 @@ class LinkedItemOut(Base):
     sync_start_on: date
     last_synced_at: str | None = None
     account_count: int = 0
+    accounts: list[LinkedAccountOut] = []
 
 
 class RefreshOut(BaseModel):

@@ -11,7 +11,7 @@ does overwrites a category you chose by hand.
 from __future__ import annotations
 
 import contextlib
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -38,7 +38,7 @@ from ..plaid_client import (
     describe_api_error,
 )
 from ..rebuild import rebuild_balances
-from ..schemas import LinkedItemOut, RefreshOut
+from ..schemas import LinkedAccountOut, LinkedItemOut, RefreshOut
 
 router = APIRouter(prefix="/linked", tags=["linked"])
 
@@ -80,25 +80,78 @@ class ExchangeIn(BaseModel):
 
 @router.get("/items", response_model=list[LinkedItemOut])
 def list_items(db: Session = Depends(get_session)) -> list[LinkedItemOut]:
-    counts = dict(
-        db.execute(
-            select(Account.item_id, func.count(Account.id)).group_by(Account.item_id)
+    """Every bank, with each of its accounts and how current each one is.
+
+    The point of the screen is to answer "is everything coming in?", which a
+    bank's last sync time cannot: Capital One synced daily for weeks while
+    never sending a $1,030.57 payment. An account's newest transaction, set
+    beside its siblings', is what shows a gap.
+    """
+    items = list(db.scalars(select(PlaidItem).order_by(PlaidItem.institution_name)))
+    return [_item_out(db, item) for item in items]
+
+
+def _item_out(db: Session, item: PlaidItem) -> LinkedItemOut:
+    week_ago = datetime.now(UTC) - timedelta(days=7)
+    stats = {
+        account_id: (newest, oldest, count, new)
+        for account_id, newest, oldest, count, new in db.execute(
+            select(
+                Transaction.account_id,
+                func.max(Transaction.occurred_on),
+                func.min(Transaction.occurred_on),
+                func.count(Transaction.id),
+                func.count(Transaction.id).filter(Transaction.created_at >= week_ago),
+            )
+            .join(Account, Account.id == Transaction.account_id)
+            .where(Account.item_id == item.id)
+            .group_by(Transaction.account_id)
         ).all()
+    }
+    newest_reading = (
+        select(func.max(Balance.as_of))
+        .where(Balance.account_id == Account.id)
+        .where(Balance.source != "rebuilt")
+        .correlate(Account)
+        .scalar_subquery()
     )
-    return [
-        LinkedItemOut(
-            id=item.id,
-            institution_name=item.institution_name,
-            products=item.products,
-            needs_reauth=item.needs_reauth,
-            sync_start_on=item.sync_start_on,
-            last_synced_at=(
-                item.last_synced_at.isoformat() if item.last_synced_at else None
-            ),
-            account_count=counts.get(item.id, 0),
+    accounts = []
+    for account, amount in db.execute(
+        select(Account, Balance.amount)
+        .outerjoin(
+            Balance,
+            (Balance.account_id == Account.id) & (Balance.as_of == newest_reading),
         )
-        for item in db.scalars(select(PlaidItem).order_by(PlaidItem.institution_name))
-    ]
+        .where(Account.item_id == item.id)
+        .order_by(Account.closed_on.is_not(None), Account.name)
+    ).all():
+        newest, oldest, count, new = stats.get(account.id, (None, None, 0, 0))
+        accounts.append(
+            LinkedAccountOut(
+                id=account.id,
+                name=account.name,
+                mask=account.mask,
+                group=account.group,
+                balance=amount,
+                closed_on=account.closed_on,
+                newest_transaction=newest,
+                oldest_transaction=oldest,
+                transaction_count=count,
+                new_this_week=new,
+            )
+        )
+    return LinkedItemOut(
+        id=item.id,
+        institution_name=item.institution_name,
+        products=item.products,
+        needs_reauth=item.needs_reauth,
+        sync_start_on=item.sync_start_on,
+        last_synced_at=(
+            item.last_synced_at.isoformat() if item.last_synced_at else None
+        ),
+        account_count=len(accounts),
+        accounts=accounts,
+    )
 
 
 @router.post("/link-token")
@@ -155,15 +208,7 @@ def exchange(body: ExchangeIn, db: Session = Depends(get_session)) -> LinkedItem
     _refresh_accounts(db, item)
     db.commit()
 
-    return LinkedItemOut(
-        id=item.id,
-        institution_name=item.institution_name,
-        products=item.products,
-        needs_reauth=item.needs_reauth,
-        sync_start_on=item.sync_start_on,
-        last_synced_at=None,
-        account_count=len(item.accounts),
-    )
+    return _item_out(db, item)
 
 
 @router.post("/refresh", response_model=RefreshOut)

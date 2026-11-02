@@ -46,7 +46,6 @@ describe('App', () => {
       'Transactions',
       'Net worth',
       'Linked',
-      'Settings',
     ]);
   });
 

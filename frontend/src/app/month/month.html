@@ -72,13 +72,19 @@
     <!-- What is still yours this month. With an expected income, reckoned as
          if the rest of the pay has landed, so the 14th does not read as broke
          just because payday is the 15th. Without one, money in less spending
-         as it stands, and it says so. -->
-    @let left = s.left_expected ?? s.left;
+         as it stands, and it says so. Either way, less the regular charges
+         that have not come yet — rent on the 2nd is not money you have. -->
+    @let left = s.upcoming.length ? s.left_after_upcoming : (s.left_expected ?? s.left);
     <div class="card total" [class.left-short]="left.startsWith('-')">
       <span class="label">Left</span>
       <span class="figure num">{{ left | usd }}</span>
+      @if (s.upcoming.length) {
+        <span class="sub dim">
+          after <a href="#still-to-come">{{ s.upcoming_total | usd }} still to come</a>
+        </span>
+      }
       @if (s.left_expected !== null) {
-        <span class="sub dim">after spending, with the expected pay</span>
+        <span class="sub dim">counting the expected pay</span>
         @if (s.left_planned; as planned) {
           <span class="sub dim">the plan leaves {{ planned | usd }}</span>
         }
@@ -102,6 +108,31 @@
     </div>
   </div>
 
+  @if (s.daily.length || s.previous_daily.length) {
+    <div class="card chart">
+      <div class="chart-head">
+        <span class="label">Spending through the month</span>
+        <span class="dim small">
+          {{ s.spent | usd }}
+          @if (s.compared_through) {
+            by day {{ s.compared_through }} · {{ s.previous_spent | usd }} by
+            the same day of {{ monthName(s.previous_month) }}
+          } @else {
+            · {{ monthName(s.previous_month) }} was {{ s.previous_spent | usd }}
+          }
+        </span>
+      </div>
+      <app-pace-chart
+        [current]="s.daily"
+        [previous]="s.previous_daily"
+        [budgeted]="s.budget_from ? s.budgeted : null"
+        [days]="s.days_in_month"
+        [thisLabel]="monthName(s.month)"
+        [lastLabel]="monthName(s.previous_month)"
+      />
+    </div>
+  }
+
   @if (spending().length) {
     <div class="card scroll-x">
       <table>
@@ -109,6 +140,7 @@
           <tr>
             <th>Category</th>
             <th class="num">Spent</th>
+            <th class="num" [title]="compareTitle()">{{ compareHead() }}</th>
             <th class="num">Budget</th>
             <th class="num">Left</th>
             <th class="bar-col">
@@ -120,14 +152,25 @@
         </thead>
         <tbody>
           @for (row of spending(); track row.category_id) {
-            <tr>
+            @let open = opened().has(row.category_id);
+            <tr class="cat-row" [class.open]="open">
               <td>
+                @if (row.merchants.length) {
+                  <button type="button" class="disclose" (click)="toggle(row.category_id)"
+                          [attr.aria-expanded]="open"
+                          [attr.aria-label]="'Where ' + row.category_name + ' went'">
+                    <span class="chev" aria-hidden="true">›</span>
+                  </button>
+                }
                 <a [routerLink]="['/transactions']"
                    [queryParams]="{ month: selected(), category: row.category_id }">
                   {{ row.category_name }}
                 </a>
               </td>
               <td class="num">{{ row.spent | usd }}</td>
+              <td class="num change" [class.up]="isUp(row.change)" [title]="(row.previous | usd) ?? ''">
+                {{ signed(row.change) }}
+              </td>
               <td class="num dim">{{ (row.budget | usd) ?? '—' }}</td>
               <td class="num" [class.over]="isOver(row)">
                 <!-- Null is not zero. No target set is a different statement
@@ -152,12 +195,87 @@
                 }
               </td>
             </tr>
+            @if (open) {
+              <!-- Where the money went, without leaving the page. The link
+                   still goes to every row for the rest. -->
+              <tr class="detail">
+                <td colspan="6">
+                  <ul class="merchants">
+                    @for (m of row.merchants; track m.name) {
+                      <li>
+                        <span>{{ m.name }}</span>
+                        <span class="dim">{{ m.count }}×</span>
+                        <span class="num">{{ m.spent | usd }}</span>
+                      </li>
+                    }
+                  </ul>
+                  <a class="all" [routerLink]="['/transactions']"
+                     [queryParams]="{ month: selected(), category: row.category_id }">
+                    Every {{ row.category_name }} transaction →
+                  </a>
+                </td>
+              </tr>
+            }
           }
         </tbody>
       </table>
     </div>
   } @else {
     <p class="dim">No spending recorded this month.</p>
+  }
+
+  @if (s.upcoming.length || s.biggest.length) {
+    <div class="pair">
+      @if (s.upcoming.length) {
+        <section id="still-to-come">
+          <h2>Still to come</h2>
+          <p class="dim small">
+            Charged in each of the last three months and not yet in this one.
+            Taken off what is left.
+          </p>
+          <div class="card list">
+            @for (u of s.upcoming; track u.merchant + u.expected_on) {
+              <div class="line">
+                <span class="when dim">{{ day(u.expected_on) }}</span>
+                <span class="what">
+                  {{ u.merchant }}
+                  @if (u.late) {
+                    <!-- Its day has passed. Late, pending, or cancelled —
+                         which one is yours to know, so it is said, not dropped. -->
+                    <span class="tag late">not seen yet</span>
+                  }
+                  <span class="dim small">{{ u.category_name }}</span>
+                </span>
+                <span class="num">{{ u.amount | usd }}</span>
+              </div>
+            }
+            <div class="line sum">
+              <span></span>
+              <span class="what">Total</span>
+              <span class="num">{{ s.upcoming_total | usd }}</span>
+            </div>
+          </div>
+        </section>
+      }
+      @if (s.biggest.length) {
+        <section>
+          <h2>Biggest purchases</h2>
+          <p class="dim small">Spending only — card payments and transfers are not purchases.</p>
+          <div class="card list">
+            @for (b of s.biggest; track b.id) {
+              <div class="line">
+                <span class="when dim">{{ day(b.occurred_on) }}</span>
+                <span class="what">
+                  {{ b.merchant }}
+                  <span class="dim small">{{ b.category_name }}</span>
+                </span>
+                <span class="num">{{ b.amount | usd }}</span>
+              </div>
+            }
+          </div>
+        </section>
+      }
+    </div>
   }
 
   @if (other().length) {

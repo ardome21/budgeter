@@ -45,12 +45,8 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./linked/linked').then((m) => m.Linked),
   },
-  {
-    path: 'settings',
-    title: 'Settings · budgeter',
-    canActivate: [authGuard],
-    loadComponent: () => import('./settings/settings').then((m) => m.Settings),
-  },
+  // Categories moved to the foot of the Budget page; an old bookmark lands there.
+  { path: 'settings', redirectTo: 'budget' },
   {
     path: 'net-worth',
     title: 'Net worth · budgeter',

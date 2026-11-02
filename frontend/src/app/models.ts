@@ -23,6 +23,9 @@ export interface Category {
   name: string;
   kind: CategoryKind;
   sort_order: number;
+  /** Rows filed here. Delete is only offered at zero — the server refuses
+   *  otherwise, and the button should not promise what it cannot do. */
+  transaction_count: number;
 }
 
 export interface AccountRow {
@@ -122,6 +125,36 @@ export interface CategorySpend {
    *  without being the first — which is the point of showing it mid-month. */
   over_budget: boolean;
   over_pace: boolean;
+  /** Spending only: last month, to the same day while this one runs. */
+  previous: string | null;
+  /** This month less `previous`, worked out on the server. */
+  change: string | null;
+  /** The few merchants that make up most of it. */
+  merchants: MerchantSpend[];
+}
+
+export interface MerchantSpend {
+  name: string;
+  spent: string;
+  count: number;
+}
+
+export interface BigPurchase {
+  id: number;
+  occurred_on: string;
+  merchant: string;
+  category_name: string;
+  amount: string;
+}
+
+/** A charge that has come in each of the last three months, not yet this one. */
+export interface UpcomingCharge {
+  merchant: string;
+  category_name: string;
+  amount: string;
+  expected_on: string;
+  /** Its day has passed and nothing like it has posted. */
+  late: boolean;
 }
 
 export interface MonthSummary {
@@ -153,6 +186,19 @@ export interface MonthSummary {
   budget_from: string | null;
   categories: CategorySpend[];
   transaction_count: number;
+  previous_month: string;
+  /** The day of last month the comparison runs to; null for all of it. */
+  compared_through: number | null;
+  previous_spent: string;
+  /** Spending so far at the end of each day: this month through today. */
+  daily: string[];
+  /** The same, for the whole of last month. */
+  previous_daily: string[];
+  biggest: BigPurchase[];
+  upcoming: UpcomingCharge[];
+  upcoming_total: string;
+  /** What is left once the charges still to come have landed. */
+  left_after_upcoming: string;
 }
 
 export interface NetWorthPoint {
@@ -222,6 +268,22 @@ export interface LinkedItem {
   sync_start_on: string;
   last_synced_at: string | null;
   account_count: number;
+  accounts: LinkedAccount[];
+}
+
+export interface LinkedAccount {
+  id: number;
+  name: string;
+  mask: string | null;
+  group: AccountGroup;
+  /** The bank's own latest figure, never a rebuilt one. */
+  balance: string | null;
+  /** Set when hidden. */
+  closed_on: string | null;
+  newest_transaction: string | null;
+  oldest_transaction: string | null;
+  transaction_count: number;
+  new_this_week: number;
 }
 
 /** What one Refresh did across every bank. */

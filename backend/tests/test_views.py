@@ -534,3 +534,148 @@ def test_the_month_being_budgeted_is_not_its_own_evidence(
     rows = queries.suggest_budgets(session, date(2026, 9, 1))
 
     assert rows == []
+
+
+# --- what the month adds up to ----------------------------------------------
+
+
+def _row(summary, category):
+    return next(r for r in summary["categories"] if r["category_id"] == category.id)
+
+
+def _monthly(add, account, category, merchant, amount, day, months):
+    for m in months:
+        add(
+            account=account, category=category, amount=amount,
+            occurred_on=date(2025, m, day), merchant=merchant,
+        )
+
+
+def test_a_charge_from_each_of_the_last_three_months_is_still_to_come(
+    session: Session, add_transaction, account, spending_category
+):
+    """Rent and subscriptions have not landed on the 2nd, and a Left that
+    ignores them makes the start of every month look rich."""
+    add, cat = add_transaction, spending_category
+    _monthly(add, account, cat, "Rent", "1600.00", 3, [6, 7, 8])
+    _monthly(add, account, cat, "Spotify", "12.99", 12, [6, 7, 8])
+
+    summary = queries.month_summary(session, date(2025, 9, 1), today=date(2025, 9, 2))
+
+    assert [u["merchant"] for u in summary["upcoming"]] == ["Rent", "Spotify"]
+    assert summary["upcoming_total"] == Decimal("1612.99")
+    assert summary["left_after_upcoming"] == summary["left"] - Decimal("1612.99")
+
+
+def test_a_bill_that_has_already_come_this_month_is_not_still_to_come(
+    session: Session, add_transaction, account, spending_category
+):
+    add, cat = add_transaction, spending_category
+    _monthly(add, account, cat, "Spotify", "12.99", 12, [6, 7, 8, 9])
+
+    summary = queries.month_summary(session, date(2025, 9, 1), today=date(2025, 9, 20))
+
+    assert summary["upcoming"] == []
+
+
+def test_a_bill_past_its_day_is_marked_late_rather_than_dropped(
+    session: Session, add_transaction, account, spending_category
+):
+    add, cat = add_transaction, spending_category
+    _monthly(add, account, cat, "Netflix", "21.64", 1, [6, 7, 8])
+
+    summary = queries.month_summary(session, date(2025, 9, 1), today=date(2025, 9, 5))
+
+    assert summary["upcoming"][0]["late"] is True
+
+
+def test_somewhere_shopped_at_often_is_not_a_bill(
+    session: Session, add_transaction, account, spending_category
+):
+    """A supermarket visited weekly always has some charge that lines up with
+    last month's by chance. On the real data that made it three bills."""
+    for m in (6, 7, 8):
+        for day in (2, 9, 16, 23):
+            add_transaction(
+                account=account, category=spending_category, amount="40.00",
+                occurred_on=date(2025, m, day), merchant="Harris Teeter",
+            )
+
+    summary = queries.month_summary(session, date(2025, 9, 1), today=date(2025, 9, 1))
+
+    assert summary["upcoming"] == []
+
+
+def test_an_amount_that_wanders_is_not_predicted(
+    session: Session, add_transaction, account, spending_category
+):
+    for m, amount in ((6, "147.25"), (7, "85.49"), (8, "285.99")):
+        add_transaction(
+            account=account, category=spending_category, amount=amount,
+            occurred_on=date(2025, m, 10), merchant="Duke Energy",
+        )
+
+    summary = queries.month_summary(session, date(2025, 9, 1), today=date(2025, 9, 1))
+
+    assert summary["upcoming"] == []
+
+
+def test_a_running_month_is_compared_with_last_month_to_the_same_day(
+    session: Session, add_transaction, account, spending_category
+):
+    """The whole of October against two days of November says November is
+    cheap, every month, until about the 25th."""
+    add_transaction(account=account, category=spending_category, amount="30.00",
+                    occurred_on=date(2025, 8, 1))
+    add_transaction(account=account, category=spending_category, amount="500.00",
+                    occurred_on=date(2025, 8, 20))
+    add_transaction(account=account, category=spending_category, amount="45.00",
+                    occurred_on=date(2025, 9, 2))
+
+    running = queries.month_summary(session, date(2025, 9, 1), today=date(2025, 9, 2))
+    row = _row(running, spending_category)
+
+    assert running["compared_through"] == 2
+    assert running["previous_spent"] == Decimal("30.00")
+    assert row["previous"] == Decimal("30.00")
+    assert row["change"] == Decimal("15.00")
+
+    over = queries.month_summary(session, date(2025, 9, 1), today=date(2025, 10, 5))
+    assert over["compared_through"] is None
+    assert over["previous_spent"] == Decimal("530.00")
+
+
+def test_the_daily_line_is_running_spending_with_quiet_days_flat(
+    session: Session, add_transaction, account, spending_category, transfer_category
+):
+    add_transaction(account=account, category=spending_category, amount="10.00",
+                    occurred_on=date(2025, 9, 1))
+    add_transaction(account=account, category=transfer_category, amount="900.00",
+                    occurred_on=date(2025, 9, 2))
+    add_transaction(account=account, category=spending_category, amount="5.00",
+                    occurred_on=date(2025, 9, 3))
+
+    summary = queries.month_summary(session, date(2025, 9, 1), today=date(2025, 9, 3))
+
+    assert summary["daily"] == [Decimal("10.00"), Decimal("10.00"), Decimal("15.00")]
+    assert len(summary["previous_daily"]) == 31
+
+
+def test_each_category_names_where_its_money_went(
+    session: Session, add_transaction, account, spending_category
+):
+    charges = (("Cava", "12.00"), ("Cava", "14.00"), ("Chipotle", "30.00"))
+    for merchant, amount in charges:
+        add_transaction(account=account, category=spending_category, amount=amount,
+                        occurred_on=date(2025, 9, 4), merchant=merchant)
+
+    summary = queries.month_summary(
+        session, date(2025, 9, 1), today=date(2025, 9, 30)
+    )
+    row = _row(summary, spending_category)
+
+    assert row["merchants"] == [
+        {"name": "Chipotle", "spent": Decimal("30.00"), "count": 1},
+        {"name": "Cava", "spent": Decimal("26.00"), "count": 2},
+    ]
+    assert summary["biggest"][0]["merchant"] == "Chipotle"
