@@ -3,6 +3,7 @@
     <span class="brand">budgeter</span>
     @if (auth.signedIn()) {
       <nav>
+        <a routerLink="/overview" routerLinkActive="active">Overview</a>
         <a routerLink="/month" routerLinkActive="active">Month</a>
         <a routerLink="/budget" routerLinkActive="active">Budget</a>
         <a routerLink="/transactions" routerLinkActive="active">Transactions</a>

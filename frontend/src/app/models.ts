@@ -350,3 +350,114 @@ export interface PasskeyRow {
   created_at: string;
   last_used_at: string | null;
 }
+
+// --- the overview -------------------------------------------------------------
+
+export type PayLineKind = 'TAX' | 'SAVING' | 'DEDUCTION' | 'EMPLOYER';
+
+export interface PayLine {
+  kind: PayLineKind;
+  name: string;
+  amount: string;
+  /** The employer plan a saving line pays into. Whatever else lands there is the employer's. */
+  account_id: number | null;
+}
+
+/** One paycheck as the stub reads, in force from `effective_from` on. */
+export interface PayStub {
+  effective_from: string;
+  periods_per_year: number;
+  gross: string;
+  lines: PayLine[];
+  /** Per paycheck, summed by the server. */
+  tax: string;
+  saving: string;
+  deduction: string;
+  employer: string;
+  take_home: string;
+}
+
+export type StandingBucket = 'cash' | 'invested' | 'retirement' | 'owed';
+
+export interface StandingAccount {
+  account_id: number;
+  name: string;
+  institution: string;
+  bucket: StandingBucket;
+  amount: string;
+  as_of: string;
+}
+
+export interface FlowMonth {
+  month: string;
+  /** Still running. */
+  partial: boolean;
+  /** Starts before every bank's history does, so some spending is missing. */
+  missing_history: boolean;
+  take_home: string;
+  spent: string;
+  kept: string;
+  /** A pay stub covers this month. Without one the pre-paycheck fields are null. */
+  has_stub: boolean;
+  earned: string | null;
+  tax: string | null;
+  saved_from_pay: string | null;
+  employer: string | null;
+  deductions: string | null;
+  saved: string;
+  /** "0.183" is 18.3%. */
+  savings_rate: string | null;
+}
+
+export interface Typical {
+  take_home: string | null;
+  spent: string | null;
+  kept: string | null;
+  earned: string | null;
+  saved: string | null;
+  saved_from_pay: string | null;
+  employer: string | null;
+  savings_rate: string | null;
+}
+
+export interface BreakdownGroup {
+  kind: PayLineKind;
+  total: string;
+  lines: { name: string; amount: string }[];
+}
+
+/** A typical month's pay, line by line. Every figure is positive; the screen supplies signs. */
+export interface PayBreakdown {
+  paychecks_per_month: string;
+  gross_per_paycheck: string;
+  gross: string;
+  groups: BreakdownGroup[];
+  take_home_pay: string;
+  /** What reached the bank beyond the stub's take-home: interest, rounding. */
+  other_income: string;
+  reached_bank: string;
+  /** gross + other_income. */
+  earned: string;
+}
+
+export interface Overview {
+  as_of: string | null;
+  net_worth: string;
+  cash: string;
+  invested: string;
+  retirement: string;
+  /** Negative. */
+  owed: string;
+  accounts: StandingAccount[];
+  /** Cash less what is owed on the cards. */
+  cushion: string;
+  /** Typical months of spending the cushion would pay for. */
+  months_covered: string | null;
+  typical_months: string[];
+  typical: Typical;
+  /** Null until every typical month has a pay stub. */
+  pay_breakdown: PayBreakdown | null;
+  /** Newest first. */
+  flow: FlowMonth[];
+  history_start: string | null;
+}

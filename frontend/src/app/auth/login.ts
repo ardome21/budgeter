@@ -114,7 +114,7 @@ export class Login {
     try {
       await this.auth.loginWithPasskey();
       const next = this.route.snapshot.queryParamMap.get('next');
-      this.router.navigateByUrl(next || '/month');
+      this.router.navigateByUrl(next || '/overview');
     } catch (e) {
       // A cancelled Touch ID prompt is not an error worth shouting about.
       const name = (e as { name?: string })?.name;
@@ -141,7 +141,7 @@ export class Login {
       next: () => {
         this.busy.set(false);
         const next = this.route.snapshot.queryParamMap.get('next');
-        this.router.navigateByUrl(next || '/month');
+        this.router.navigateByUrl(next || '/overview');
       },
       error: (e) => {
         this.error.set(this.auth.describe(e));

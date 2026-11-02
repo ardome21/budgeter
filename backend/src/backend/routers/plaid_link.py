@@ -27,6 +27,7 @@ from ..merchants import resolve
 from ..models import (
     Account,
     Balance,
+    Contribution,
     Holding,
     PlaidItem,
     Security,
@@ -269,6 +270,7 @@ def _sync_item(db: Session, item: PlaidItem) -> dict[str, int]:
         raise HTTPException(409, "needs to be signed in to again")
     if "investments" in item.product_list:
         counts["holdings_updated"] = _refresh_holdings(db, item, token)
+        _refresh_contributions(db, item, token)
 
     # An item answers for the products it was created with and no others.
     # Asking a brokerage linked for investments alone to sync transactions
@@ -566,6 +568,64 @@ def _refresh_holdings(db: Session, item: PlaidItem, token: str) -> int:
             existing.cost_basis = position.cost_basis
         written += 1
 
+    return written
+
+
+# How far back the first read reaches — Plaid keeps 24 months — and how far
+# each later one overlaps the last, so a contribution the institution posts
+# a few days late is still picked up.
+CONTRIBUTION_HISTORY = timedelta(days=730)
+CONTRIBUTION_OVERLAP = timedelta(days=30)
+
+
+def _refresh_contributions(db: Session, item: PlaidItem, token: str) -> int:
+    """Record what was paid into each investment account. Written once per
+    Plaid id; a row already on file is left alone."""
+    by_plaid_id = {
+        account.plaid_account_id: account
+        for account in db.scalars(select(Account).where(Account.item_id == item.id))
+    }
+    latest = db.scalar(
+        select(func.max(Contribution.occurred_on)).where(
+            Contribution.account_id.in_([a.id for a in by_plaid_id.values()])
+        )
+    )
+    today = date.today()  # noqa: DTZ011 — local day
+    start = latest - CONTRIBUTION_OVERLAP if latest else today - CONTRIBUTION_HISTORY
+    try:
+        incoming = plaid_client.get_contributions(token, start, today)
+    except PlaidReauthRequired:
+        item.needs_reauth = True
+        return 0
+    except Exception:  # noqa: BLE001
+        # Same reasoning as holdings: a gap here must not fail the refresh.
+        return 0
+
+    known = set(
+        db.scalars(
+            select(Contribution.plaid_investment_transaction_id).where(
+                Contribution.plaid_investment_transaction_id.in_(
+                    [c.investment_transaction_id for c in incoming]
+                )
+            )
+        )
+    )
+    written = 0
+    for c in incoming:
+        account = by_plaid_id.get(c.plaid_account_id)
+        if account is None or c.investment_transaction_id in known:
+            continue
+        db.add(
+            Contribution(
+                account_id=account.id,
+                plaid_investment_transaction_id=c.investment_transaction_id,
+                occurred_on=c.occurred_on,
+                amount=c.amount,
+                description=c.description,
+            )
+        )
+        known.add(c.investment_transaction_id)
+        written += 1
     return written
 
 

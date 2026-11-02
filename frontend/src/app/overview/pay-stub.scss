@@ -1,0 +1,82 @@
+.stub {
+  margin-bottom: 1rem;
+}
+
+.small {
+  font-size: 13px;
+}
+
+.label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin-bottom: 0.2rem;
+}
+
+.fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0.8rem 0 1rem;
+}
+
+.amount {
+  width: 7rem;
+  text-align: right;
+  font-family: var(--mono);
+
+  &.bad {
+    border-color: var(--over);
+    outline-color: var(--over);
+  }
+}
+
+table input[type='text']:not(.amount) {
+  width: 100%;
+  min-width: 10rem;
+}
+
+.check {
+  margin: 1rem 0 0.3rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
+
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 1.2rem 0 0.3rem;
+}
+
+.on-file {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 13.5px;
+
+  li {
+    margin: 0.2rem 0;
+  }
+}
+
+.link-button {
+  all: unset;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+
+  &:hover {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent-dim);
+  }
+}

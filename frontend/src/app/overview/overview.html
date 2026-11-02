@@ -1,0 +1,253 @@
+<div class="head">
+  <h1>Overview</h1>
+</div>
+
+@if (error()) {
+  <p class="banner error">{{ error() }}</p>
+}
+
+@if (data(); as d) {
+  <!-- Today: what you have, by kind of money. -->
+  <h2>Where you stand</h2>
+  @if (d.as_of) {
+    <p class="status">As of {{ day(d.as_of) }}.</p>
+  }
+  <div class="strip">
+    <div class="card tile lead">
+      <span class="label">Net worth</span>
+      <span class="figure num">{{ d.net_worth | usd }}</span>
+      <a class="sub" routerLink="/net-worth">over time →</a>
+    </div>
+    @for (b of buckets; track b.key) {
+      <div class="card tile">
+        <span class="label">{{ b.label }}</span>
+        <span class="figure num" [class.over]="b.key === 'owed' && negative(d[b.key])">
+          {{ bucketTotal(d, b.key) | usd }}
+        </span>
+        <span class="sub dim">{{ b.note }}</span>
+      </div>
+    }
+  </div>
+
+  <details class="accounts">
+    <summary class="dim small">What each figure is made of</summary>
+    <div class="card scroll-x">
+      <table>
+        <tbody>
+          @for (b of buckets; track b.key) {
+            @for (a of accountsIn(d, b.key); track a.account_id; let first = $first) {
+              <tr>
+                <td class="dim">{{ first ? b.label : '' }}</td>
+                <td>{{ a.name }} <span class="dim small">· {{ a.institution }}</span></td>
+                <td class="num">{{ a.amount | usd }}</td>
+                <td class="dim small">{{ day(a.as_of) }}</td>
+              </tr>
+            }
+          }
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <div class="card cushion" [class.thin]="d.months_covered !== null && +d.months_covered < 3">
+    @if (d.months_covered !== null) {
+      <p>
+        Your cash, after paying off the cards, is
+        <strong class="num">{{ d.cushion | usd }}</strong> — about
+        <strong>{{ d.months_covered }} months</strong> of what you typically spend.
+      </p>
+      <p class="dim small">
+        The usual advice is three to six months set aside for a job loss or an
+        emergency. Retirement and investments are left out: they are not cash
+        you can reach quickly without a cost.
+      </p>
+    } @else {
+      <p>Your cash, after paying off the cards, is <strong class="num">{{ d.cushion | usd }}</strong>.</p>
+    }
+  </div>
+
+  <!-- A typical month: the last three finished ones. -->
+  <h2>A typical month</h2>
+  @if (d.typical_months.length) {
+    <p class="status">Averaged over {{ span(d.typical_months) }}.</p>
+    <div class="strip">
+      @if (d.typical.earned) {
+        <div class="card tile">
+          <span class="label">Earned</span>
+          <span class="figure num">{{ d.typical.earned | usd }}</span>
+          <span class="sub dim">gross, before anything comes out</span>
+        </div>
+      }
+      <div class="card tile">
+        <span class="label">Take-home</span>
+        <span class="figure num">{{ d.typical.take_home | usd }}</span>
+        <span class="sub dim">what reached the bank</span>
+      </div>
+      <div class="card tile">
+        <span class="label">Spent</span>
+        <span class="figure num">{{ d.typical.spent | usd }}</span>
+        <span class="sub dim"><a routerLink="/month">by category →</a></span>
+      </div>
+      <div class="card tile" [class.short]="negative(d.typical.saved)" [class.spare]="!negative(d.typical.saved)">
+        <span class="label">Saved</span>
+        <span class="figure num">{{ d.typical.saved | usd }}</span>
+        <span class="sub dim">
+          {{ percent(d.typical.savings_rate) }} of
+          {{ d.typical.earned ? 'what you earned' : 'take-home' }}
+        </span>
+      </div>
+    </div>
+
+    @if (d.typical.saved_from_pay !== null) {
+      <p class="dim small breakdown">
+        Saved is {{ d.typical.kept | usd }} left in the bank,
+        {{ d.typical.saved_from_pay | usd }} from your paycheck before it landed,
+        and {{ d.typical.employer | usd }} from your employer.
+        <button type="button" class="link-button" (click)="editing.set(!editing())">Edit pay stub</button>
+      </p>
+
+      @if (d.pay_breakdown; as b) {
+        <details class="adds-up">
+          <summary class="small">How {{ b.earned | usd }} earned adds up</summary>
+          <div class="card scroll-x">
+            <table class="breakdown-table">
+              <tbody>
+                <tr class="group">
+                  <td>Gross pay <span class="dim small">· {{ b.paychecks_per_month === '2.00' ? 'two' : b.paychecks_per_month }} paychecks of {{ b.gross_per_paycheck | usd }}</span></td>
+                  <td class="num"></td>
+                  <td class="num">{{ b.gross | usd }}</td>
+                </tr>
+                @for (g of outOfPay(b); track g.kind) {
+                  <tr class="group">
+                    <td>{{ groupLabels[g.kind] }}</td>
+                    <td class="num"></td>
+                    <td class="num">−{{ g.total | usd }}</td>
+                  </tr>
+                  @for (l of g.lines; track $index) {
+                    <tr class="line">
+                      <td>{{ l.name }}</td>
+                      <td class="num dim">{{ l.amount | usd }}</td>
+                      <td></td>
+                    </tr>
+                  }
+                }
+                <tr class="total">
+                  <td>Take-home pay</td>
+                  <td></td>
+                  <td class="num">{{ b.take_home_pay | usd }}</td>
+                </tr>
+                <tr class="group">
+                  <td>Other money in <span class="dim small">· savings interest, and any cents of rounding</span></td>
+                  <td></td>
+                  <td class="num">+{{ b.other_income | usd }}</td>
+                </tr>
+                <tr class="total">
+                  <td>Reached the bank</td>
+                  <td></td>
+                  <td class="num">{{ b.reached_bank | usd }}</td>
+                </tr>
+                <tr class="total earned">
+                  <td>Earned <span class="dim small">· gross pay + other money in</span></td>
+                  <td></td>
+                  <td class="num">{{ b.earned | usd }}</td>
+                </tr>
+                @if (employer(b); as e) {
+                  <tr class="group on-top">
+                    <td>{{ groupLabels['EMPLOYER'] }} <span class="dim small">· on top of your pay, not out of it</span></td>
+                    <td></td>
+                    <td class="num">+{{ e.total | usd }}</td>
+                  </tr>
+                  @for (l of e.lines; track $index) {
+                    <tr class="line">
+                      <td>{{ l.name }}</td>
+                      <td class="num dim">{{ l.amount | usd }}</td>
+                      <td></td>
+                    </tr>
+                  }
+                }
+              </tbody>
+            </table>
+          </div>
+          <p class="dim small">A typical month, from your pay stub. Each line is one paycheck's amount times paychecks a month.</p>
+        </details>
+      }
+    } @else if (!editing()) {
+      <div class="card prompt">
+        <p>
+          <strong>This leaves out what comes out of your paycheck before the bank sees it.</strong>
+          A 401(k), an HSA, an ESPP and any employer contribution are all saving,
+          but none of it reaches checking. Add your pay stub once and every month
+          counts it.
+        </p>
+        <button type="button" class="primary" (click)="editing.set(true)">Add pay stub</button>
+      </div>
+    }
+  } @else {
+    <p class="status">No finished month yet with every bank's history in it.</p>
+  }
+
+  @if (editing()) {
+    <app-pay-stub
+      [stubs]="stubs()"
+      [historyStart]="d.history_start"
+      [typicalTakeHome]="d.typical.take_home"
+      (saved)="stubSaved()"
+      (closed)="editing.set(false)"
+    />
+  }
+
+  <!-- Each month. -->
+  <h2>Month by month</h2>
+  <div class="card scroll-x">
+    <table class="flow">
+      <thead>
+        <tr>
+          <th>Month</th>
+          @if (anyStub()) {
+            <th class="num">Earned</th>
+          }
+          <th class="num">Take-home</th>
+          <th class="num">Spent</th>
+          <th class="num">Kept</th>
+          @if (anyStub()) {
+            <th class="num">From pay</th>
+            <th class="num">Employer</th>
+            <th class="num">Saved</th>
+          }
+          <th class="num">Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (f of d.flow; track f.month) {
+          <tr [class.dim]="f.partial || f.missing_history">
+            <td>
+              {{ label(f.month, true) }}
+              @if (f.partial) {
+                <span class="tag">so far</span>
+              } @else if (f.missing_history) {
+                <span class="tag" title="Some banks' history starts later in this month, so spending is missing.">incomplete</span>
+              }
+            </td>
+            @if (anyStub()) {
+              <td class="num">{{ (f.earned | usd) ?? '—' }}</td>
+            }
+            <td class="num">{{ f.take_home | usd }}</td>
+            <td class="num">{{ f.spent | usd }}</td>
+            <td class="num" [class.over]="negative(f.kept)">{{ f.kept | usd }}</td>
+            @if (anyStub()) {
+              <td class="num">{{ (f.saved_from_pay | usd) ?? '—' }}</td>
+              <td class="num">{{ (f.employer | usd) ?? '—' }}</td>
+              <td class="num" [class.over]="negative(f.saved)">{{ f.saved | usd }}</td>
+            }
+            <td class="num" [class.over]="negative(f.savings_rate)">{{ percent(f.savings_rate) }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+  <p class="dim small">
+    Kept is take-home less spending. Card payments and moves between your own
+    accounts are neither. Rate is saved as a share of
+    {{ anyStub() ? 'earned (plus what your employer adds)' : 'take-home' }}.
+  </p>
+}

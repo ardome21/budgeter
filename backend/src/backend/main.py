@@ -11,6 +11,7 @@ from .routers import (
     accounts,
     auth_routes,
     categories,
+    overview,
     passkeys,
     plaid_link,
     transactions,
@@ -87,6 +88,7 @@ def health_db(session: Session = Depends(get_session)) -> dict[str, str]:
 api.include_router(auth_routes.router)
 api.include_router(passkeys.router)
 api.include_router(views.router)
+api.include_router(overview.router)
 api.include_router(accounts.router)
 api.include_router(categories.router)
 api.include_router(transactions.router)

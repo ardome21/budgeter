@@ -176,8 +176,8 @@ export class Setup {
         // ended up locked out of it.
         if (!r.qr_svg) {
           this.auth.refresh().subscribe({
-            next: () => this.router.navigateByUrl('/month'),
-            error: () => this.router.navigateByUrl('/month'),
+            next: () => this.router.navigateByUrl('/overview'),
+            error: () => this.router.navigateByUrl('/overview'),
           });
           return;
         }
@@ -201,7 +201,7 @@ export class Setup {
     this.auth.confirmSetup(this.code()).subscribe({
       next: () => {
         this.busy.set(false);
-        this.router.navigateByUrl('/month');
+        this.router.navigateByUrl('/overview');
       },
       error: (e) => {
         this.error.set(this.auth.describe(e));

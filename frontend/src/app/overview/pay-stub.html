@@ -1,0 +1,119 @@
+<div class="card stub">
+  <p class="dim small">
+    Copy one paycheck from your pay stub — the per-paycheck amounts, not
+    year-to-date. It holds from the month you pick until you enter another, so
+    set it back to when your pay last changed and the months before fill in too.
+  </p>
+
+  <div class="fields">
+    <label>
+      <span class="label">From</span>
+      <input type="month" [value]="month()" (change)="month.set($any($event.target).value)" />
+    </label>
+    <label>
+      <span class="label">Paid</span>
+      <select (change)="periods.set(+$any($event.target).value)">
+        @for (s of schedules; track s.periods) {
+          <option [value]="s.periods" [selected]="s.periods === periods()">{{ s.label }}</option>
+        }
+      </select>
+    </label>
+    <label>
+      <span class="label">Gross pay</span>
+      <input type="text" inputmode="decimal" class="amount" [class.bad]="gross() && grossBad()"
+             [value]="gross()" (input)="gross.set($any($event.target).value)" placeholder="0.00" />
+    </label>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Line</th>
+        <th>What it is</th>
+        <th>Goes into</th>
+        <th class="num">Per paycheck</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (r of rows(); track $index; let i = $index) {
+        <tr>
+          <td>
+            <input type="text" [value]="r.name" (input)="update(i, { name: $any($event.target).value })"
+                   placeholder="Name" aria-label="Line name" />
+          </td>
+          <td>
+            <select (change)="update(i, { kind: $any($event.target).value })" aria-label="What it is">
+              @for (k of kinds; track k.key) {
+                <option [value]="k.key" [selected]="k.key === r.kind">{{ k.label }}</option>
+              }
+            </select>
+          </td>
+          <td>
+            @if (r.kind === 'SAVING') {
+              <select (change)="update(i, { account_id: $any($event.target).value ? +$any($event.target).value : null })"
+                      [attr.aria-label]="'Where ' + (r.name || 'this line') + ' goes'">
+                <option value="" [selected]="r.account_id === null">Somewhere else</option>
+                @for (a of plans(); track a.id) {
+                  <option [value]="a.id" [selected]="a.id === r.account_id">{{ a.name }}</option>
+                }
+              </select>
+            }
+          </td>
+          <td class="num">
+            <input type="text" inputmode="decimal" class="amount" [class.bad]="invalid().has(i)"
+                   [value]="r.amount" (input)="update(i, { amount: $any($event.target).value })"
+                   placeholder="—" [attr.aria-label]="'Amount for ' + (r.name || 'line')" />
+          </td>
+          <td>
+            <button type="button" class="link-button" (click)="remove(i)" [attr.aria-label]="'Remove ' + r.name">✕</button>
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
+  <button type="button" class="link-button" (click)="add()">+ Add a line</button>
+
+  <p class="check">
+    @if (takeHome(); as th) {
+      Take-home on this stub: <strong class="num">{{ th | usd }}</strong>
+      @if (receivedPerCheck(); as got) {
+        <span class="dim">· your bank received about {{ got | usd }} a paycheck</span>
+      }
+    } @else {
+      <span class="dim">Enter gross pay to see the take-home it leaves.</span>
+    }
+  </p>
+  <p class="dim small">
+    Point your 401(k) lines at your employer's plan under "Goes into". On every
+    refresh the app reads what landed in that plan, and whatever is beyond your
+    own lines — the match, and any contribution made on its own day — is
+    counted as your employer's, with nothing to type. Use "Employer adds
+    (fixed)" only for employer money that never shows up in a linked account.
+  </p>
+
+  @if (error()) {
+    <p class="banner error">{{ error() }}</p>
+  }
+
+  <div class="actions">
+    <button type="button" class="primary" (click)="save()"
+            [disabled]="saving() || grossBad() || invalid().size > 0">
+      {{ saving() ? 'Saving…' : 'Save pay stub' }}
+    </button>
+    <button type="button" (click)="closed.emit()">Cancel</button>
+  </div>
+
+  @if (stubs().length) {
+    <h3>On file</h3>
+    <ul class="on-file">
+      @for (s of stubs(); track s.effective_from) {
+        <li>
+          From {{ label(s.effective_from) }}: {{ s.gross | usd }} gross,
+          {{ s.take_home | usd }} take-home, {{ s.saving | usd }} saved a paycheck
+          <button type="button" class="link-button" (click)="removeStub(s)">Remove</button>
+        </li>
+      }
+    </ul>
+  }
+</div>

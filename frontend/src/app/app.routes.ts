@@ -9,7 +9,7 @@ import { authGuard } from './auth/auth.guard';
  * data. What it buys is not rendering a page of empty tables and 401s.
  */
 export const routes: Routes = [
-  { path: '', pathMatch: 'full', redirectTo: 'month' },
+  { path: '', pathMatch: 'full', redirectTo: 'overview' },
   {
     path: 'login',
     title: 'Sign in · budgeter',
@@ -19,6 +19,12 @@ export const routes: Routes = [
     path: 'setup',
     title: 'Set up · budgeter',
     loadComponent: () => import('./auth/setup').then((m) => m.Setup),
+  },
+  {
+    path: 'overview',
+    title: 'Overview · budgeter',
+    canActivate: [authGuard],
+    loadComponent: () => import('./overview/overview').then((m) => m.Overview),
   },
   {
     path: 'month',
@@ -53,5 +59,5 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () => import('./networth/networth').then((m) => m.Networth),
   },
-  { path: '**', redirectTo: 'month' },
+  { path: '**', redirectTo: 'overview' },
 ];

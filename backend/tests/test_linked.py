@@ -18,6 +18,7 @@ from backend import plaid_client
 from backend.models import (
     Account,
     Balance,
+    Contribution,
     Holding,
     PlaidCategoryMap,
     PlaidItem,
@@ -30,8 +31,16 @@ from backend.plaid_client import (
     HoldingsSnapshot,
     LinkedAccount,
     LinkedTransaction,
+    PlanContribution,
     SyncDiff,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_contributions(monkeypatch):
+    """The fourth seam. Replaced everywhere so no refresh in this file reaches
+    the network for investment activity; the tests that care set their own."""
+    monkeypatch.setattr(plaid_client, "get_contributions", lambda *_: [])
 
 
 @pytest.fixture
@@ -621,3 +630,33 @@ def test_each_bank_lists_its_accounts_and_how_current_they_are(
     assert acct["newest_transaction"] == "2025-04-09"
     assert acct["transaction_count"] == 2
     assert acct["new_this_week"] == 2
+
+
+def test_contributions_are_read_once_each(
+    client: TestClient, session: Session, item, linked_account, monkeypatch,
+    fake_plaid,
+):
+    """What went into a plan, kept as a fact. A second refresh overlaps the
+    first by a month and must not write anything twice."""
+    item.products = "transactions,investments"
+    session.flush()
+    monkeypatch.setattr(plaid_client, "get_holdings", lambda _t: HoldingsSnapshot())
+    paid = [
+        PlanContribution("inv-1", "acct-1", date(2026, 10, 15), Decimal("974.16"),
+                         "FID FRDM INX 2065 T - contribution"),
+        PlanContribution("inv-2", "acct-1", date(2026, 10, 9), Decimal("944.05"),
+                         "FID FRDM INX 2065 T - contribution"),
+        # Plaid knows an account this side has never seen: skipped, not fatal.
+        PlanContribution("inv-3", "acct-unknown", date(2026, 10, 9),
+                         Decimal("5.00"), "elsewhere"),
+    ]
+    monkeypatch.setattr(plaid_client, "get_contributions", lambda *_: paid)
+    fake_plaid(SyncDiff(added=[], modified=[], removed=[], cursor="c"))
+
+    refresh(client)
+    refresh(client)
+
+    rows = session.scalars(select(Contribution).order_by(Contribution.occurred_on))
+    assert [(r.occurred_on.day, r.amount) for r in rows] == [
+        (9, Decimal("944.05")), (15, Decimal("974.16"))
+    ]

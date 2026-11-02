@@ -13,7 +13,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
 
-from .models import CategoryKind, SecurityKind
+from .models import CategoryKind, PayLineKind, SecurityKind
 
 Money = Annotated[
     Decimal,
@@ -408,3 +408,143 @@ class RefreshOut(BaseModel):
     # Banks that could not be reached, named. One 502 for the lot hides which
     # bank is the problem and makes a stale login look like a broken app.
     failures: list[str] = []
+
+
+# --- the pay stub -----------------------------------------------------------
+
+
+class PayLineIn(BaseModel):
+    kind: PayLineKind
+    name: str = Field(min_length=1, max_length=60)
+    amount: Money = Field(ge=0)
+    # The employer plan a saving line pays into. See `Contribution`.
+    account_id: int | None = None
+
+
+class PayLineOut(Base):
+    kind: PayLineKind
+    name: str
+    amount: Money
+    account_id: int | None = None
+
+
+class PayStubIn(BaseModel):
+    periods_per_year: int = Field(ge=1, le=52)
+    gross: Money = Field(gt=0)
+    lines: list[PayLineIn]
+
+
+class PayStubOut(BaseModel):
+    effective_from: date
+    periods_per_year: int
+    gross: Money
+    lines: list[PayLineOut]
+    # Per paycheck, summed here so the browser never adds money.
+    tax: Money
+    saving: Money
+    deduction: Money
+    employer: Money
+    take_home: Money
+
+
+# --- the overview -----------------------------------------------------------
+
+# A share, not money: 0.183 is 18.3%. A string for the same reason money is.
+Rate = Annotated[
+    Decimal,
+    PlainSerializer(lambda v: f"{v:.3f}", return_type=str, when_used="json"),
+]
+
+
+class StandingAccount(BaseModel):
+    account_id: int
+    name: str
+    institution: str
+    # cash, invested, retirement or owed.
+    bucket: str
+    amount: Money
+    as_of: date
+
+
+class FlowMonth(BaseModel):
+    month: date
+    # Still running.
+    partial: bool
+    # Starts before every bank's history does, so some spending is missing.
+    missing_history: bool
+    take_home: Money
+    spent: Money
+    # Take-home less spending: what stayed in the bank.
+    kept: Money
+    # Whether a pay stub covers this month. Every field below that is None
+    # without one says nothing about what came out of the paycheck.
+    has_stub: bool
+    earned: Money | None
+    tax: Money | None
+    saved_from_pay: Money | None
+    employer: Money | None
+    deductions: Money | None
+    # Kept, plus what the paycheck put away and the employer added.
+    saved: Money
+    savings_rate: Rate | None
+
+
+class Typical(BaseModel):
+    take_home: Money | None
+    spent: Money | None
+    kept: Money | None
+    earned: Money | None
+    saved: Money | None
+    saved_from_pay: Money | None
+    employer: Money | None
+    savings_rate: Rate | None
+
+
+class BreakdownLine(BaseModel):
+    name: str
+    amount: Money
+
+
+class BreakdownGroup(BaseModel):
+    kind: PayLineKind
+    total: Money
+    lines: list[BreakdownLine]
+
+
+class PayBreakdown(BaseModel):
+    """A typical month's pay, line by line, in monthly amounts. Every figure
+    is positive; the screen supplies the signs."""
+
+    paychecks_per_month: Decimal
+    gross_per_paycheck: Money
+    gross: Money
+    groups: list[BreakdownGroup]
+    # Gross less every group but the employer's.
+    take_home_pay: Money
+    # What reached the bank beyond the stub's take-home: interest, rounding.
+    other_income: Money
+    reached_bank: Money
+    # gross + other_income — the "Earned" figure.
+    earned: Money
+
+
+class OverviewOut(BaseModel):
+    as_of: date | None
+    net_worth: Money
+    cash: Money
+    invested: Money
+    retirement: Money
+    # Negative.
+    owed: Money
+    accounts: list[StandingAccount]
+    # Cash less what is owed on the cards.
+    cushion: Money
+    # How many typical months of spending the cushion would pay for.
+    months_covered: Decimal | None
+    # The finished months `typical` is averaged over, newest first.
+    typical_months: list[date]
+    typical: Typical
+    # None until every typical month has a pay stub.
+    pay_breakdown: PayBreakdown | None
+    flow: list[FlowMonth]
+    history_start: date | None

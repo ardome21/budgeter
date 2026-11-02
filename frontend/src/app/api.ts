@@ -11,6 +11,9 @@ import {
   MonthSummary,
   RegularCharge,
   NetWorth,
+  Overview,
+  PayLine,
+  PayStub,
   Portfolio,
   Refiled,
   RefreshResult,
@@ -37,6 +40,32 @@ export class Api {
 
   month(year: number, month: number): Observable<MonthSummary> {
     return this.http.get<MonthSummary>(`/api/month/${year}/${month}`);
+  }
+
+  // --- the overview ---------------------------------------------------------
+
+  overview(months = 12): Observable<Overview> {
+    return this.http.get<Overview>('/api/overview', {
+      params: new HttpParams().set('months', months),
+    });
+  }
+
+  payStubs(): Observable<PayStub[]> {
+    return this.http.get<PayStub[]>('/api/pay');
+  }
+
+  /** Replace the stub starting in `month` (YYYY-MM). It holds until the next one. */
+  setPayStub(
+    month: string,
+    stub: { periods_per_year: number; gross: string; lines: PayLine[] },
+  ): Observable<PayStub> {
+    const [year, m] = month.split('-').map(Number);
+    return this.http.put<PayStub>(`/api/pay/${year}/${m}`, stub);
+  }
+
+  deletePayStub(effectiveFrom: string): Observable<void> {
+    const [year, m] = effectiveFrom.split('-').map(Number);
+    return this.http.delete<void>(`/api/pay/${year}/${m}`);
   }
 
   // --- net worth ------------------------------------------------------------

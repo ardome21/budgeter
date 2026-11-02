@@ -343,6 +343,93 @@ class Budget(Base):
     category: Mapped[Category] = relationship()
 
 
+class PayLineKind(enum.StrEnum):
+    """What one line of a pay stub does with the money.
+
+    The bank only ever sees take-home. Everything here happens before that,
+    and the kinds exist so the Overview can say how much was earned and how
+    much of it was saved without the bank telling it.
+    """
+
+    TAX = "TAX"
+    # Yours, put away before the paycheck: 401(k), HSA, ESPP.
+    SAVING = "SAVING"
+    # Taken out and gone: insurance premiums, commuter benefits.
+    DEDUCTION = "DEDUCTION"
+    # Paid in by the employer on top of gross — a match, profit sharing. Not
+    # deducted, so it is left out of take-home.
+    EMPLOYER = "EMPLOYER"
+
+
+class PayStub(Base):
+    """One paycheck as the stub reads, in force from `effective_from` on.
+
+    Entered by hand and carried forward until another is entered, the way
+    budgets are: pay changes a few times a year, and a form to fill every
+    month is a form that stops being filled. A month before the first stub
+    has no pre-paycheck figures at all rather than borrowed ones.
+    """
+
+    __tablename__ = "pay_stubs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # The first of a month.
+    effective_from: Mapped[date] = mapped_column(Date, unique=True)
+    # 24 for twice a month, 26 for every other week.
+    periods_per_year: Mapped[int] = mapped_column(Integer)
+    gross: Mapped[Decimal] = mapped_column(Money)
+
+    lines: Mapped[list["PayLine"]] = relationship(
+        back_populates="stub", cascade="all, delete-orphan", order_by="PayLine.id"
+    )
+
+
+class PayLine(Base):
+    """One amount on a stub, per paycheck."""
+
+    __tablename__ = "pay_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    stub_id: Mapped[int] = mapped_column(
+        ForeignKey("pay_stubs.id", ondelete="CASCADE")
+    )
+    kind: Mapped[PayLineKind] = mapped_column(Enum(PayLineKind, name="pay_line_kind"))
+    name: Mapped[str] = mapped_column(String(60))
+    amount: Mapped[Decimal] = mapped_column(Money)
+    # The employer plan a saving line is paid into. Whatever else lands in
+    # that account on top of it is the employer's — see `Contribution`.
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+
+    stub: Mapped[PayStub] = relationship(back_populates="lines")
+
+
+class Contribution(Base):
+    """Money paid into an investment account, as the institution reports it.
+
+    Read from Plaid's investment activity on every refresh. A plan does not
+    say whose money a contribution is, so the employer's share is worked out
+    on read: what went into the plan, less what the pay stub says you put in.
+    That catches the per-paycheck match and the contributions Moody's makes
+    on days that are not paydays, with nothing typed by hand.
+    """
+
+    __tablename__ = "contributions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE")
+    )
+    plaid_investment_transaction_id: Mapped[str] = mapped_column(
+        String(120), unique=True
+    )
+    occurred_on: Mapped[date] = mapped_column(Date, index=True)
+    # Positive: money in. Plaid's own sign is the other way round.
+    amount: Mapped[Decimal] = mapped_column(Money)
+    description: Mapped[str] = mapped_column(String(200))
+
+
 class Security(Base):
     """Something that can be held.
 

@@ -154,6 +154,18 @@ class HeldSecurity:
 
 
 @dataclass
+class PlanContribution:
+    """Money paid into an investment account. Plaid does not say whose."""
+
+    investment_transaction_id: str
+    plaid_account_id: str
+    occurred_on: date
+    # Positive: money in.
+    amount: Decimal
+    description: str
+
+
+@dataclass
 class HeldPosition:
     """One position, priced by the institution that holds it."""
 
@@ -486,6 +498,59 @@ def get_holdings(access_token: str) -> HoldingsSnapshot:
         )
 
     return HoldingsSnapshot(securities=list(securities.values()), holdings=holdings)
+
+
+def get_contributions(
+    access_token: str, start: date, end: date
+) -> list[PlanContribution]:
+    """Every contribution into the brokerage's accounts between two dates.
+
+    Only `cash`/`contribution` rows. A 401(k) deposit arrives as exactly that,
+    and so does a Roth IRA contribution moved over from checking — which
+    account it landed in is the caller's business, not this function's.
+    """
+    from plaid.model.investments_transactions_get_request import (
+        InvestmentsTransactionsGetRequest,
+    )
+    from plaid.model.investments_transactions_get_request_options import (
+        InvestmentsTransactionsGetRequestOptions,
+    )
+
+    found: list[PlanContribution] = []
+    offset = 0
+    while True:
+        try:
+            response = _api().investments_transactions_get(
+                InvestmentsTransactionsGetRequest(
+                    access_token=access_token,
+                    start_date=start,
+                    end_date=end,
+                    options=InvestmentsTransactionsGetRequestOptions(
+                        count=500, offset=offset
+                    ),
+                )
+            )
+        except ApiException as exc:
+            if _reauth_code(exc):
+                raise PlaidReauthRequired(str(exc)) from exc
+            raise
+        page = response.investment_transactions
+        for t in page:
+            if str(t.type) != "cash" or str(t.subtype) != "contribution":
+                continue
+            found.append(
+                PlanContribution(
+                    investment_transaction_id=t.investment_transaction_id,
+                    plaid_account_id=t.account_id,
+                    occurred_on=t.date,
+                    # Plaid's sign: money into the account is negative.
+                    amount=-_money(t.amount),
+                    description=str(t.name)[:200],
+                )
+            )
+        offset += len(page)
+        if not page or offset >= response.total_investment_transactions:
+            return found
 
 
 def _price(value) -> Decimal | None:
