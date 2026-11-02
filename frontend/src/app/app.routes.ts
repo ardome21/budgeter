@@ -27,6 +27,12 @@ export const routes: Routes = [
     loadComponent: () => import('./overview/overview').then((m) => m.Overview),
   },
   {
+    path: 'goals',
+    title: 'Goals · budgeter',
+    canActivate: [authGuard],
+    loadComponent: () => import('./goals/goals').then((m) => m.Goals),
+  },
+  {
     path: 'month',
     title: 'Month · budgeter',
     canActivate: [authGuard],

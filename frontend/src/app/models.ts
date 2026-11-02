@@ -461,3 +461,41 @@ export interface Overview {
   flow: FlowMonth[];
   history_start: string | null;
 }
+
+// --- goals --------------------------------------------------------------------
+
+export interface GoalInput {
+  name: string;
+  /** One or the other: dollars, or months of typical spending. */
+  amount: string | null;
+  months_of_spending: string | null;
+  target_date: string | null;
+}
+
+export interface GoalRow extends GoalInput {
+  id: number;
+  /** In dollars, whichever way the goal is sized. */
+  target: string;
+  covered_cash: string;
+  covered_invested: string;
+  remaining: string;
+  /** Dated goals only. */
+  monthly_needed: string | null;
+  /** The month it would be reached at today's pace; null if not within fifty years. */
+  reached_on: string | null;
+  on_track: boolean;
+}
+
+export interface GoalPlan {
+  cash: string;
+  invested: string;
+  unassigned_cash: string;
+  unassigned_invested: string;
+  monthly_saving: string;
+  monthly_kept: string;
+  monthly_from_pay: string;
+  typical_spent: string;
+  monthly_needed: string;
+  short_by: string;
+  goals: GoalRow[];
+}

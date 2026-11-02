@@ -405,6 +405,31 @@ class PayLine(Base):
     stub: Mapped[PayStub] = relationship(back_populates="lines")
 
 
+class Goal(Base):
+    """Something to save for: a house, a wedding, the next car.
+
+    Deliberately generic — what the money is for is a name, not a type, so a
+    goal nobody anticipated needs no code. Goals share one pot (cash and the
+    investments that are not retirement money) and are funded in `sort_order`.
+
+    A goal is sized either in dollars or in months of typical spending. The
+    second is for the emergency cushion, whose right size moves with what a
+    month costs.
+    """
+
+    __tablename__ = "goals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(60))
+    amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    months_of_spending: Mapped[Decimal | None] = mapped_column(
+        Numeric(4, 1), nullable=True
+    )
+    # None is "when I get there": the plan says when that would be.
+    target_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Contribution(Base):
     """Money paid into an investment account, as the institution reports it.
 

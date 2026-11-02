@@ -11,6 +11,7 @@ from .routers import (
     accounts,
     auth_routes,
     categories,
+    goals,
     overview,
     passkeys,
     plaid_link,
@@ -89,6 +90,7 @@ api.include_router(auth_routes.router)
 api.include_router(passkeys.router)
 api.include_router(views.router)
 api.include_router(overview.router)
+api.include_router(goals.router)
 api.include_router(accounts.router)
 api.include_router(categories.router)
 api.include_router(transactions.router)

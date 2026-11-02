@@ -1,0 +1,163 @@
+.head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.8rem;
+
+  h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+  }
+}
+
+.small {
+  font-size: 13px;
+}
+
+/* The same tiles as Overview and Budget. */
+.strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 0.8rem;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+
+  .label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-dim);
+  }
+
+  .figure {
+    font-size: 22px;
+  }
+
+  .figure.second {
+    font-size: 17px;
+    margin-top: 0.2rem;
+  }
+
+  .sub {
+    font-size: 12.5px;
+  }
+
+  &.spare {
+    border-color: var(--accent);
+  }
+
+  &.short {
+    border-color: var(--over);
+
+    .figure {
+      color: var(--over);
+    }
+  }
+}
+
+.goals {
+  td {
+    vertical-align: top;
+  }
+
+  .order {
+    width: 1%;
+    white-space: nowrap;
+  }
+
+  .arrow {
+    padding: 0.1rem 0.4rem;
+    font-size: 12px;
+  }
+
+  .name {
+    min-width: 11rem;
+    width: 100%;
+  }
+
+  .size {
+    width: 4.5rem;
+    text-align: right;
+    font-family: var(--mono);
+
+    &.money {
+      width: 7rem;
+    }
+  }
+
+  .cover {
+    min-width: 10rem;
+  }
+
+  .status {
+    min-width: 11rem;
+  }
+
+  .actions {
+    width: 1%;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  tr.add td {
+    border-top: 1px solid var(--border);
+  }
+}
+
+.why {
+  display: block;
+  font-size: 12px;
+  line-height: 1.35;
+  margin-top: 0.15rem;
+}
+
+.ok {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.over {
+  color: var(--over);
+}
+
+/* Cash in solid green, invested in pale green: the same goal, covered by
+   money that cannot fall and money that can. */
+.bar {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  overflow: hidden;
+  margin-top: 0.45rem;
+
+  .cash {
+    background: var(--accent);
+  }
+
+  .inv {
+    background: var(--accent-dim);
+  }
+}
+
+.link-button {
+  all: unset;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+
+  &:hover {
+    color: var(--over);
+    border-bottom-color: var(--over);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--accent-dim);
+  }
+}

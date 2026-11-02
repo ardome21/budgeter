@@ -35,6 +35,7 @@ from backend.models import (
     Budget,
     Category,
     CategoryKind,
+    Goal,
     Holding,
     PayStub,
     PlaidCategoryMap,
@@ -117,6 +118,7 @@ def _empty_ledger(session: Session) -> None:
     session.execute(delete(Transaction))
     session.execute(delete(Budget))
     session.execute(delete(PayStub))
+    session.execute(delete(Goal))
     session.execute(delete(Security))
     session.execute(delete(Account))
     # And the seeded Plaid category map. It is real configuration on this

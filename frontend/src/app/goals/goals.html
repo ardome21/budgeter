@@ -1,0 +1,170 @@
+<div class="head">
+  <h1>Goals</h1>
+</div>
+
+@if (error()) {
+  <p class="banner error">{{ error() }}</p>
+}
+
+@if (plan(); as p) {
+  <!-- The pot, what feeds it, and whether that is enough. -->
+  <div class="strip">
+    <div class="card tile">
+      <span class="label">Money you can reach</span>
+      <span class="figure num">{{ p.cash | usd }}</span>
+      <span class="sub dim">cash, after the cards</span>
+      <span class="figure second num">+ {{ p.invested | usd }}</span>
+      <span class="sub dim">invested, not retirement or HSA</span>
+    </div>
+    <div class="card tile">
+      <span class="label">Put toward goals each month</span>
+      <span class="figure num">{{ p.monthly_saving | usd }}</span>
+      <span class="sub dim">
+        {{ p.monthly_kept | usd }} left in the bank
+        @if (!isZero(p.monthly_from_pay)) {
+          + {{ p.monthly_from_pay | usd }} from your pay (ESPP)
+        }
+      </span>
+    </div>
+    <div class="card tile" [class.short]="!isZero(p.short_by)" [class.spare]="isZero(p.short_by)">
+      <span class="label">{{ isZero(p.short_by) ? 'On track' : 'Short each month' }}</span>
+      <span class="figure num">{{ isZero(p.short_by) ? (p.monthly_needed | usd) : (p.short_by | usd) }}</span>
+      <span class="sub dim">
+        @if (isZero(p.short_by)) {
+          what the dated goals need — the rest goes to the others
+        } @else {
+          dated goals need {{ p.monthly_needed | usd }} a month
+        }
+      </span>
+    </div>
+  </div>
+
+  <p class="dim small">
+    Goals are funded top to bottom: cash first, then investments, then what you
+    put away each month. Move a goal up to fund it sooner. Retirement money
+    isn't counted — it can't be spent on these without a penalty — and no
+    investment growth is assumed.
+  </p>
+
+  <div class="card scroll-x">
+    <table class="goals">
+      <thead>
+        <tr>
+          <th></th>
+          <th>Goal</th>
+          <th class="num">Target</th>
+          <th>By</th>
+          <th>Covered today</th>
+          <th>Where it stands</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (g of p.goals; track g.id; let first = $first; let last = $last) {
+          <tr>
+            <td class="order">
+              <button type="button" class="arrow" (click)="move(g, -1)" [disabled]="first"
+                      [attr.aria-label]="'Move ' + g.name + ' up'">↑</button>
+              <button type="button" class="arrow" (click)="move(g, 1)" [disabled]="last"
+                      [attr.aria-label]="'Move ' + g.name + ' down'">↓</button>
+            </td>
+            <td>
+              <input type="text" class="name" [value]="g.name"
+                     (change)="rename(g, $any($event.target).value)" aria-label="Goal name" />
+            </td>
+            <td class="num">
+              @if (g.months_of_spending !== null) {
+                <input type="text" inputmode="decimal" class="size" [value]="g.months_of_spending"
+                       (change)="resize(g, $any($event.target).value)" aria-label="Months of spending" />
+                <span class="dim small">months</span>
+                <span class="why dim">= {{ g.target | usd }}</span>
+              } @else {
+                <input type="text" inputmode="decimal" class="size money" [value]="g.amount"
+                       (change)="resize(g, $any($event.target).value)" aria-label="Target amount" />
+              }
+            </td>
+            <td>
+              <input type="month" [value]="g.target_date ? g.target_date.slice(0, 7) : ''"
+                     (change)="redate(g, $any($event.target).value)" aria-label="Target month" />
+              @if (!g.target_date) {
+                <span class="why dim">when you get there</span>
+              }
+            </td>
+            <td class="cover">
+              <div class="bar" role="img"
+                   [attr.aria-label]="(g.covered_cash | usd) + ' cash and ' + (g.covered_invested | usd) + ' invested'">
+                <span class="cash" [style.width.%]="pct(g.covered_cash, g)"></span>
+                <span class="inv" [style.width.%]="pct(g.covered_invested, g)"></span>
+              </div>
+              <span class="why dim">
+                @if (!isZero(g.covered_cash)) { {{ g.covered_cash | usd }} cash }
+                @if (!isZero(g.covered_cash) && !isZero(g.covered_invested)) { · }
+                @if (!isZero(g.covered_invested)) { {{ g.covered_invested | usd }} invested }
+                @if (isZero(g.covered_cash) && isZero(g.covered_invested)) { nothing yet }
+              </span>
+            </td>
+            <td class="status">
+              @if (covered(g)) {
+                <span class="ok">Covered</span>
+                @if (!isZero(g.covered_invested)) {
+                  <span class="why dim">would mean selling investments</span>
+                }
+              } @else if (g.target_date) {
+                <span class="num">{{ g.monthly_needed | usd }}</span>/month
+                @if (g.on_track) {
+                  <span class="why ok">on track</span>
+                } @else if (g.reached_on) {
+                  <span class="why over">{{ month(g.reached_on) }} at your pace — {{ late(g) }} month{{ late(g) === 1 ? '' : 's' }} late</span>
+                } @else {
+                  <span class="why over">not reachable at your pace</span>
+                }
+              } @else if (g.reached_on) {
+                Reached {{ month(g.reached_on) }}
+                <span class="why dim">{{ g.remaining | usd }} still to go</span>
+              } @else {
+                <span class="over">Not within 50 years</span>
+                <span class="why dim">{{ g.remaining | usd }} still to go</span>
+              }
+            </td>
+            <td class="actions">
+              <button type="button" class="link-button" (click)="remove(g)">Remove</button>
+            </td>
+          </tr>
+        }
+        <tr class="add">
+          <td></td>
+          <td>
+            <input type="text" class="name" placeholder="New goal" [value]="newName()"
+                   (input)="newName.set($any($event.target).value)" aria-label="New goal name" />
+          </td>
+          <td class="num">
+            <input type="text" inputmode="decimal" class="size" [class.money]="!newInMonths()"
+                   [placeholder]="newInMonths() ? 'months' : '0.00'" [value]="newSize()"
+                   (input)="newSize.set($any($event.target).value)" aria-label="New goal target" />
+            <label class="why dim">
+              <input type="checkbox" [checked]="newInMonths()"
+                     (change)="newInMonths.set($any($event.target).checked)" />
+              in months of spending
+            </label>
+          </td>
+          <td>
+            <input type="month" [value]="newDate()" (change)="newDate.set($any($event.target).value)"
+                   aria-label="New goal target month" />
+          </td>
+          <td></td>
+          <td></td>
+          <td class="actions">
+            <button type="button" (click)="add()" [disabled]="!newName().trim() || !newSize().trim()">Add</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  @if (!isZero(p.unassigned_cash) || !isZero(p.unassigned_invested)) {
+    <p class="dim small">
+      Not assigned to any goal: {{ p.unassigned_cash | usd }} cash,
+      {{ p.unassigned_invested | usd }} invested.
+    </p>
+  }
+}

@@ -220,12 +220,20 @@ def _measured_employer(
             yours[line.account_id] = yours.get(line.account_id, ZERO) + line.amount
     if not yours:
         return {}
-    paid = _paid_in(db, list(yours), start, end)
+    # Retirement plans only. An ESPP line points at the brokerage it buys
+    # into, so the goals know that money is reachable; nobody else pays in
+    # there, and it is not a plan with an employer's share to measure.
     names = dict(
         db.execute(
-            select(Account.id, Account.name).where(Account.id.in_(list(yours)))
+            select(Account.id, Account.name)
+            .where(Account.id.in_(list(yours)))
+            .where(Account.is_retirement.is_(True))
         ).all()
     )
+    yours = {k: v for k, v in yours.items() if k in names}
+    if not yours:
+        return {}
+    paid = _paid_in(db, list(yours), start, end)
     return {
         names[account_id]: max(
             ZERO,

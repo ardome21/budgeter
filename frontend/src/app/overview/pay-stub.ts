@@ -46,7 +46,7 @@ export class PayStubForm {
   historyStart = input<string | null>(null);
   /** What the bank typically received in a month, for the check line. */
   typicalTakeHome = input<string | null>(null);
-  /** Retirement accounts a saving line can be paid into. */
+  /** Investment accounts a saving line can be paid into. */
   plans = signal<AccountRow[]>([]);
   saved = output<void>();
   closed = output<void>();
@@ -105,7 +105,7 @@ export class PayStubForm {
   ngOnInit(): void {
     this.api
       .accounts()
-      .subscribe((all) => this.plans.set(all.filter((a) => a.is_retirement)));
+      .subscribe((all) => this.plans.set(all.filter((a) => a.account_type === 'investment')));
     const current = this.stubs()[0];
     if (current) {
       this.month.set(current.effective_from.slice(0, 7));

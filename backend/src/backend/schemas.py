@@ -548,3 +548,47 @@ class OverviewOut(BaseModel):
     pay_breakdown: PayBreakdown | None
     flow: list[FlowMonth]
     history_start: date | None
+
+
+# --- goals --------------------------------------------------------------------
+
+
+class GoalIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    # One or the other: dollars, or months of typical spending.
+    amount: Money | None = Field(None, ge=0)
+    months_of_spending: Decimal | None = Field(None, ge=0, le=99)
+    target_date: date | None = None
+
+
+class GoalRow(BaseModel):
+    id: int
+    name: str
+    amount: Money | None
+    months_of_spending: Decimal | None
+    target_date: date | None
+    # In dollars, whichever way the goal is sized.
+    target: Money
+    covered_cash: Money
+    covered_invested: Money
+    remaining: Money
+    # Dated goals only: what is left over the months to go.
+    monthly_needed: Money | None
+    # The month the goal would be reached at today's pace; null if not
+    # within fifty years.
+    reached_on: date | None
+    on_track: bool
+
+
+class GoalPlan(BaseModel):
+    cash: Money
+    invested: Money
+    unassigned_cash: Money
+    unassigned_invested: Money
+    monthly_saving: Money
+    monthly_kept: Money
+    monthly_from_pay: Money
+    typical_spent: Money
+    monthly_needed: Money
+    short_by: Money
+    goals: list[GoalRow]

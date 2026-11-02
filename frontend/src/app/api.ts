@@ -7,6 +7,8 @@ import {
   Budget,
   BudgetPlan,
   Category,
+  GoalInput,
+  GoalPlan,
   LinkedItem,
   MonthSummary,
   RegularCharge,
@@ -66,6 +68,28 @@ export class Api {
   deletePayStub(effectiveFrom: string): Observable<void> {
     const [year, m] = effectiveFrom.split('-').map(Number);
     return this.http.delete<void>(`/api/pay/${year}/${m}`);
+  }
+
+  // --- goals --------------------------------------------------------------
+
+  goals(): Observable<GoalPlan> {
+    return this.http.get<GoalPlan>('/api/goals');
+  }
+
+  addGoal(goal: GoalInput): Observable<GoalPlan> {
+    return this.http.post<GoalPlan>('/api/goals', goal);
+  }
+
+  updateGoal(id: number, goal: GoalInput): Observable<GoalPlan> {
+    return this.http.put<GoalPlan>(`/api/goals/${id}`, goal);
+  }
+
+  deleteGoal(id: number): Observable<GoalPlan> {
+    return this.http.delete<GoalPlan>(`/api/goals/${id}`);
+  }
+
+  reorderGoals(ids: number[]): Observable<GoalPlan> {
+    return this.http.put<GoalPlan>('/api/goals-order', ids);
   }
 
   // --- net worth ------------------------------------------------------------
