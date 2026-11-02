@@ -23,6 +23,7 @@ from .models import (
     Category,
     CategoryKind,
     Holding,
+    MerchantRule,
     Security,
     Transaction,
 )
@@ -355,19 +356,14 @@ def _alike(a: Transaction, b: Transaction) -> bool:
     )
 
 
-def upcoming_charges(
-    db: Session, month: date, today: date | None = None
-) -> list[dict]:
-    """Regular charges that have landed in each of the last three months and
-    not yet in this one.
+def regular_charges(db: Session, month: date) -> list[Transaction]:
+    """The charges that recur, as they last came: one row from the month
+    before `month` for each, that has a match in each of the two before it.
 
     Worked out from the rows, not stored: a charge that stops recurring stops
-    being predicted after one month without anyone cancelling anything. Each
-    is expected for the amount it was last month, on the day it came last
-    month — a price rise shows up the first month it lands.
+    being regular after one month without anyone cancelling anything.
     """
-    start, end = month_bounds(month)
-    today = today or date.today()
+    start = month.replace(day=1)
     months = [previous_month(start)]
     for _ in range(2):
         months.append(previous_month(months[-1]))
@@ -375,10 +371,8 @@ def upcoming_charges(
         list(db.scalars(_spending(*month_bounds(m)).where(Transaction.amount > 0)))
         for m in months
     ]
-    # Pending counts as arrived: rent that is pending is not still to come.
-    this_month = list(db.scalars(_spending(start, end, include_pending=True)))
 
-    found = []
+    found: list[Transaction] = []
     for charge in history[0]:
         key = _merchant_of(charge)
         if any(
@@ -392,6 +386,48 @@ def upcoming_charges(
         )
         if not regular:
             continue
+        # One per bill, even when last month charged it twice.
+        if any(_merchant_of(f) == key and _alike(charge, f) for f in found):
+            continue
+        found.append(charge)
+    return found
+
+
+def regular_list(db: Session, month: date) -> list[dict]:
+    """The regular charges for the Budget screen, each with where it is
+    filed and whether that is your rule or the bank's label."""
+    rules = {r.merchant: r.category_id for r in db.scalars(select(MerchantRule))}
+    rows = [
+        {
+            "merchant": _merchant_of(c),
+            "amount": c.amount,
+            "day": c.occurred_on.day,
+            "category_id": c.category_id,
+            "category_name": c.category.name,
+            "ruled": _merchant_of(c) in rules,
+        }
+        for c in regular_charges(db, month)
+    ]
+    rows.sort(key=lambda r: (r["category_name"], r["merchant"], r["amount"]))
+    return rows
+
+
+def upcoming_charges(
+    db: Session, month: date, today: date | None = None
+) -> list[dict]:
+    """Regular charges that have not come yet this month.
+
+    Each is expected for the amount it was last month, on the day it came last
+    month — a price rise shows up the first month it lands.
+    """
+    start, end = month_bounds(month)
+    today = today or date.today()
+    # Pending counts as arrived: rent that is pending is not still to come.
+    this_month = list(db.scalars(_spending(start, end, include_pending=True)))
+
+    found = []
+    for charge in regular_charges(db, start):
+        key = _merchant_of(charge)
         # Already here this month — at any amount near it, on any day.
         if any(
             _merchant_of(t) == key
@@ -399,14 +435,10 @@ def upcoming_charges(
             for t in this_month
         ):
             continue
-        # One prediction per bill, even when last month charged it twice.
-        if any(f["merchant"] == key and _alike(charge, f["_charge"]) for f in found):
-            continue
         day = min(charge.occurred_on.day, (end - start).days)
         expected_on = start.replace(day=day)
         found.append(
             {
-                "_charge": charge,
                 "merchant": key,
                 "category_name": charge.category.name,
                 "amount": charge.amount,
@@ -417,8 +449,6 @@ def upcoming_charges(
                 "late": expected_on < today,
             }
         )
-    for f in found:
-        del f["_charge"]
     found.sort(key=lambda f: (f["expected_on"], f["merchant"]))
     return found
 

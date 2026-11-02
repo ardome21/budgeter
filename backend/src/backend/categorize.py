@@ -4,13 +4,14 @@ One function, used by every path that writes a row, for the same reason
 `merchants.resolve` is one function: when this was written out by hand at each
 call site it came out correct in three places and missing in two.
 
-The bank decides. Plaid's label goes through the map — detailed first, then
-primary — and only when neither is mapped does a row land in `Uncategorised`.
-There used to be a rung above that: "where you last filed this merchant". It
-was there so a correction would stick, and it needed a history of corrections
-that is never going to exist. A row you change by hand is still never
-overwritten — revisions and re-syncs leave `category_id` alone — it just does
-not teach anything to the next row.
+The bank decides, unless you have said otherwise for that merchant. A
+`MerchantRule` comes first ("Netflix is a subscription"), then Plaid's label
+through the map — detailed first, then primary — and only when nothing
+answers does a row land in `Uncategorised`. There used to be a rung that
+learned from edits: "where you last filed this merchant". It is gone, and the
+rule is not it: a rule is set on purpose, from the list of regular charges,
+while an edit to one row stays an edit to one row — revisions and re-syncs
+leave `category_id` alone, but it teaches nothing to the next.
 
 Three rules are not conveniences. `LOAN_PAYMENTS_CREDIT_CARD_PAYMENT` resolves
 to a TRANSFER category: a card payment is last month's spending moving between
@@ -31,7 +32,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Category, CategoryKind, PlaidCategoryMap
+from .models import Category, CategoryKind, MerchantRule, PlaidCategoryMap
 
 UNCATEGORISED = "Uncategorised"
 
@@ -88,10 +89,36 @@ def resolve_category(
     detailed: str | None = None,
     primary: str | None = None,
     description: str | None = None,
+    merchant: str | None = None,
 ) -> Category:
-    """The category to file a row under. Never None — see `fallback`."""
+    """The category to file a row under. Never None — see `fallback`.
+
+    The descriptor rules come before your merchant rules on purpose: they
+    exist so a transfer never counts as spending, and no rule should be able
+    to undo that by accident.
+    """
     return (
         by_description(db, description)
+        or by_rule(db, merchant or description)
         or from_plaid(db, detailed, primary)
+        or fallback(db)
+    )
+
+
+def by_rule(db: Session, merchant: str | None) -> Category | None:
+    if not merchant:
+        return None
+    return db.scalar(
+        select(Category)
+        .join(MerchantRule, MerchantRule.category_id == Category.id)
+        .where(MerchantRule.merchant == merchant)
+    )
+
+
+def bank_guess(db: Session, txn) -> Category:
+    """Where a row would go with no merchant rule: what the bank's labels say."""
+    return (
+        by_description(db, txn.description)
+        or from_plaid(db, txn.plaid_category_detailed, txn.plaid_category_primary)
         or fallback(db)
     )

@@ -173,8 +173,8 @@ def _file_merchant(
 def refile_uncategorised(db: Session = Depends(get_session)) -> RefileOut:
     """Run every unfiled row back through the resolver.
 
-    For rows that arrived before their Plaid label was mapped: add the mapping
-    in Settings, press this, and they follow. Rows nothing can place are left
+    For rows that arrived before their Plaid label was mapped: add the mapping,
+    press this, and they follow. Rows nothing can place are left
     where they are rather than guessed at.
     """
     unfiled = db.scalars(
@@ -191,6 +191,7 @@ def refile_uncategorised(db: Session = Depends(get_session)) -> RefileOut:
             txn.plaid_category_detailed,
             txn.plaid_category_primary,
             txn.description,
+            txn.merchant,
         )
         if category.id == txn.category_id:
             continue

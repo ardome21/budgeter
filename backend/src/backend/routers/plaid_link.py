@@ -350,7 +350,7 @@ def _write_new(
                 plaid_transaction_id=txn.transaction_id,
                 account_id=account.id,
                 category_id=resolve_category(
-                    db, txn.pfc_detailed, txn.pfc_primary, txn.name
+                    db, txn.pfc_detailed, txn.pfc_primary, txn.name, merchant
                 ).id,
                 occurred_on=txn.occurred_on,
                 amount=txn.amount,
@@ -643,11 +643,11 @@ def _adopt_posted(db: Session, added: list) -> int:
             continue
         guessed = resolve_category(
             db, row.plaid_category_detailed, row.plaid_category_primary,
-            row.description,
+            row.description, row.merchant,
         ).id
         if row.category_id == guessed:
             row.category_id = resolve_category(
-                db, txn.pfc_detailed, txn.pfc_primary, txn.name
+                db, txn.pfc_detailed, txn.pfc_primary, txn.name, row.merchant
             ).id
         row.plaid_transaction_id = txn.transaction_id
         row.pending = False

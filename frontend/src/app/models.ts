@@ -112,6 +112,17 @@ export interface BudgetPlan {
   income: BudgetPlanRow[];
 }
 
+/** A charge that has come in each of the last three months. */
+export interface RegularCharge {
+  merchant: string;
+  amount: string;
+  day: number;
+  category_id: number;
+  category_name: string;
+  /** Filed by your merchant rule rather than the bank's label. */
+  ruled: boolean;
+}
+
 export interface CategorySpend {
   category_id: number;
   category_name: string;

@@ -62,6 +62,30 @@ class CategoryOut(Base):
     transaction_count: int = 0
 
 
+class RegularCharge(BaseModel):
+    merchant: str
+    # As it last came, and on which day of the month.
+    amount: Money
+    day: int
+    category_id: int
+    category_name: str
+    # Filed by your merchant rule rather than by the bank's label.
+    ruled: bool
+
+
+class MerchantRuleIn(BaseModel):
+    merchant: str = Field(min_length=1, max_length=120)
+    # None clears the rule, and the rows it moved go back to the bank's label.
+    category_id: int | None
+
+
+class MerchantRuleOut(BaseModel):
+    merchant: str
+    category_id: int | None
+    # How many rows were re-filed to match.
+    moved: int
+
+
 # --- accounts ---------------------------------------------------------------
 
 

@@ -7,7 +7,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.models import Balance, Category, CategoryKind, PlaidCategoryMap
+from backend import categorize
+from backend.models import (
+    Balance,
+    Category,
+    CategoryKind,
+    PlaidCategoryMap,
+    Transaction,
+)
 
 
 def test_money_crosses_the_wire_as_a_string(
@@ -394,3 +401,61 @@ def test_a_category_the_plaid_map_points_at_can_still_be_deleted(
     assert session.scalar(
         select(PlaidCategoryMap).where(PlaidCategoryMap.plaid_category == "TEST_LOANS")
     ) is None
+
+
+def _three_months(add, account, category, merchant="Netflix", amount="21.64"):
+    for m in (6, 7, 8):
+        add(account=account, category=category, amount=amount,
+            occurred_on=date(2025, m, 2), merchant=merchant)
+
+
+def test_regular_charges_are_listed_with_where_they_are_filed(
+    client: TestClient, add_transaction, account, spending_category
+):
+    _three_months(add_transaction, account, spending_category)
+
+    rows = client.get("/api/regular", params={"month": "2025-09-01"}).json()
+
+    assert [(r["merchant"], r["amount"], r["day"], r["ruled"]) for r in rows] == [
+        ("Netflix", "21.64", 2, False)
+    ]
+
+
+def test_a_merchant_rule_refiles_its_history_but_not_a_hand_filed_row(
+    client: TestClient, session: Session, add_transaction, account,
+    spending_category,
+):
+    """Netflix is a subscription, from now on and back through its history.
+    A charge you filed elsewhere by hand stays where you put it."""
+    subs = Category(name="Subscriptions Test", kind=CategoryKind.SPENDING)
+    elsewhere = Category(name="Gifts Test", kind=CategoryKind.SPENDING)
+    session.add_all([subs, elsewhere])
+    session.flush()
+    _three_months(add_transaction, account, spending_category)
+    gift = add_transaction(account=account, category=elsewhere, amount="21.64",
+                           occurred_on=date(2025, 8, 20), merchant="Netflix")
+    # The other rows sit where the bank's label put them: no label, so the
+    # fallback. Filed under Groceries by the fixture instead, so say so.
+    netflix = select(Transaction).where(Transaction.merchant == "Netflix")
+    for txn in session.scalars(netflix):
+        if txn.id != gift.id:
+            txn.category_id = categorize.fallback(session).id
+    session.flush()
+
+    body = client.put("/api/merchant-rules",
+                      json={"merchant": "Netflix", "category_id": subs.id}).json()
+
+    assert body["moved"] == 3
+    session.expire_all()
+    filed = {t.id: t.category_id for t in session.scalars(
+        select(Transaction).where(Transaction.merchant == "Netflix"))}
+    assert filed.pop(gift.id) == elsewhere.id
+    assert set(filed.values()) == {subs.id}
+    # And the next one follows the rule.
+    assert categorize.resolve_category(session, merchant="Netflix").id == subs.id
+
+    cleared = client.put("/api/merchant-rules",
+                         json={"merchant": "Netflix", "category_id": None}).json()
+    assert cleared["moved"] == 3
+    after = categorize.resolve_category(session, merchant="Netflix")
+    assert after.name == "Uncategorised"

@@ -7,6 +7,7 @@ import { Budget, BudgetPlan, BudgetPlanRow } from '../models';
 import { fromCents, toCents } from '../money';
 import { UsdPipe } from '../usd';
 import { Categories } from './categories';
+import { Regular } from './regular';
 
 /** Where a column of proposals comes from. `current` is the budget in force. */
 type Source = 'last' | 'typical' | 'current';
@@ -29,7 +30,7 @@ type Source = 'last' | 'typical' | 'current';
  */
 @Component({
   selector: 'app-budget',
-  imports: [NgTemplateOutlet, RouterLink, UsdPipe, Categories],
+  imports: [NgTemplateOutlet, RouterLink, UsdPipe, Categories, Regular],
   templateUrl: './budget.html',
   styleUrl: './budget.scss',
 })
@@ -46,6 +47,8 @@ export class BudgetPage {
   saving = signal(false);
   saved = signal(false);
   error = signal<string | null>(null);
+  /** Bumped when a category is added, renamed or removed. */
+  categoryVersion = signal(0);
 
   /** The budget in force was set for this very month, not carried into it. */
   ownBudget = computed(() => {

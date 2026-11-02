@@ -54,6 +54,7 @@ describe('BudgetPage', () => {
           useValue: {
             budgetPlan: () => of(p),
             categories: () => of([]),
+            regular: () => of([]),
             setBudgets: (_y: number, _m: number, rows: Budget[]) => {
               saved = rows;
               return of(rows);

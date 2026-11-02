@@ -9,6 +9,7 @@ import {
   Category,
   LinkedItem,
   MonthSummary,
+  RegularCharge,
   NetWorth,
   Portfolio,
   Refiled,
@@ -139,6 +140,23 @@ export class Api {
     rows: Budget[],
   ): Observable<Budget[]> {
     return this.http.put<Budget[]>(`/api/budgets/${year}/${month}`, rows);
+  }
+
+  /** Charges that came in each of the last three months, and where each is filed. */
+  regular(): Observable<RegularCharge[]> {
+    return this.http.get<RegularCharge[]>('/api/regular');
+  }
+
+  /** File every charge from a merchant under a category, history included.
+   *  Null goes back to the bank's label. */
+  setMerchantRule(
+    merchant: string,
+    categoryId: number | null,
+  ): Observable<{ merchant: string; category_id: number | null; moved: number }> {
+    return this.http.put<{ merchant: string; category_id: number | null; moved: number }>(
+      '/api/merchant-rules',
+      { merchant, category_id: categoryId },
+    );
   }
 
   // --- linked banks ---------------------------------------------------------

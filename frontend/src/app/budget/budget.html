@@ -166,7 +166,8 @@
     </button>
   </div>
 
-  <app-categories (changed)="reload()" />
+  <app-regular [version]="categoryVersion()" (changed)="reload()" />
+  <app-categories (changed)="reload(); categoryVersion.set(categoryVersion() + 1)" />
 } @else if (!error()) {
   <p class="dim">Loading…</p>
 }

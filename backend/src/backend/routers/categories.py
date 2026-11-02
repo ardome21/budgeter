@@ -3,18 +3,28 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
+from ..categorize import UNCATEGORISED, bank_guess, by_description
 from ..db import get_session
-from ..models import Budget, Category, PlaidCategoryMap, Transaction
-from ..queries import budget_plan
+from ..models import (
+    Budget,
+    Category,
+    MerchantRule,
+    PlaidCategoryMap,
+    Transaction,
+)
+from ..queries import budget_plan, regular_list
 from ..schemas import (
     BudgetIn,
     BudgetOut,
     BudgetPlan,
     CategoryIn,
     CategoryOut,
+    MerchantRuleIn,
+    MerchantRuleOut,
+    RegularCharge,
 )
 
 router = APIRouter(tags=["categories"])
@@ -103,6 +113,7 @@ def delete_category(category_id: int, db: Session = Depends(get_session)) -> Non
     db.execute(
         delete(PlaidCategoryMap).where(PlaidCategoryMap.category_id == category_id)
     )
+    db.execute(delete(MerchantRule).where(MerchantRule.category_id == category_id))
     db.delete(category)
     db.commit()
 
@@ -142,3 +153,65 @@ def set_budgets(
         db.add(Budget(category_id=row.category_id, month=when, amount=row.amount))
     db.commit()
     return list(db.scalars(select(Budget).where(Budget.month == when)))
+
+
+@router.get("/regular", response_model=list[RegularCharge])
+def regular(month: date | None = None, db: Session = Depends(get_session)) -> list:
+    """The charges that came in each of the three months before `month` (this
+    one by default), and where each is filed."""
+    return regular_list(db, month or date.today())  # noqa: DTZ011
+
+
+@router.put("/merchant-rules", response_model=MerchantRuleOut)
+def set_merchant_rule(
+    body: MerchantRuleIn, db: Session = Depends(get_session)
+) -> MerchantRuleOut:
+    """File everything from one merchant under one category, from now on and
+    back through its history.
+
+    Moves the rows that are where the bank's label or the old rule put them,
+    or unfiled. A row you filed somewhere else by hand stays: that was a
+    decision about that one charge. With `category_id` None the rule goes,
+    and the rows it moved go back to what the bank's label says.
+    """
+    rule = db.scalar(select(MerchantRule).where(MerchantRule.merchant == body.merchant))
+    old = rule.category_id if rule else None
+    if body.category_id is not None and db.get(Category, body.category_id) is None:
+        raise HTTPException(404, "no such category")
+
+    if body.category_id is None:
+        if rule is not None:
+            db.delete(rule)
+    elif rule is None:
+        db.add(MerchantRule(merchant=body.merchant, category_id=body.category_id))
+    else:
+        rule.category_id = body.category_id
+
+    unfiled = db.scalar(select(Category.id).where(Category.name == UNCATEGORISED))
+    moved = 0
+    rows = db.scalars(
+        select(Transaction).where(
+            or_(
+                Transaction.merchant == body.merchant,
+                Transaction.merchant.is_(None)
+                & (Transaction.description == body.merchant),
+            )
+        )
+    )
+    for txn in rows:
+        guess = bank_guess(db, txn).id
+        if txn.category_id not in {guess, old, unfiled}:
+            continue
+        # The same order `resolve_category` uses for new rows: a descriptor
+        # rule (a transfer) first, then this rule, then the bank's label.
+        target = (
+            guess if body.category_id is None or by_description(db, txn.description)
+            else body.category_id
+        )
+        if txn.category_id != target:
+            txn.category_id = target
+            moved += 1
+    db.commit()
+    return MerchantRuleOut(
+        merchant=body.merchant, category_id=body.category_id, moved=moved
+    )

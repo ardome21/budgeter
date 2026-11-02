@@ -301,6 +301,28 @@ class PlaidCategoryMap(Base):
         return f"<PlaidCategoryMap {self.plaid_category}>"
 
 
+class MerchantRule(Base):
+    """Where everything from one merchant is filed, chosen by you.
+
+    The one way a category choice reaches future rows. Set deliberately, from
+    the list of regular charges, never learned from an edit: a hand-filed
+    Amazon charge under Travel says nothing about the next one, but "Netflix
+    is a subscription" does. Checked before Plaid's label and after the
+    descriptor rules, which exist to stop a transfer counting as spending.
+    """
+
+    __tablename__ = "merchant_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # The merchant string as it sits on the rows — see `Transaction.merchant`.
+    merchant: Mapped[str] = mapped_column(String(120), unique=True)
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("categories.id", ondelete="CASCADE")
+    )
+
+    category: Mapped["Category"] = relationship()
+
+
 class Budget(Base):
     """What one category was meant to cost in one month.
 
