@@ -1,6 +1,7 @@
-import { Component, computed, input, output, signal } from '@angular/core';
+import { Component, ElementRef, computed, inject, input, linkedSignal, output, signal } from '@angular/core';
 
 import { AccountGroup, NetWorthPoint } from '../models';
+import { change } from '../money';
 import { UsdPipe } from '../usd';
 
 /** A group as the legend shows it: its name, and how much of it is selected. */
@@ -32,6 +33,9 @@ const STACK: AccountGroup[] = [
   'loan',
 ];
 
+/** The tooltip at its widest (19rem) plus its gap from the edge it hangs off. */
+const CARD_ROOM = 320;
+
 /** Beyond this many days the per-day markers would merge into a smear. */
 const MARKERS_UP_TO = 62;
 
@@ -59,6 +63,14 @@ interface Tick {
  * and the arrow keys walk it when the chart has focus. Everything the tooltip
  * shows was summed by the server — the only arithmetic here is geometry, done
  * on `Number()` copies that never reach the screen as money.
+ *
+ * Dragging across the plot (or Shift + arrows) picks a span, and the tooltip
+ * then speaks for the change across it instead of for one day: net, and what
+ * each group added or took away. Those are the one sum made here, and they
+ * are made exactly, from the server's two totals (`change` in money.ts). A
+ * click, Escape, or a new range clears it. The card never sits on the span:
+ * it hangs off whichever side has room, and floats just under the plot,
+ * centred on the span, when the span leaves room on neither.
  */
 @Component({
   selector: 'app-networth-chart',
@@ -80,6 +92,20 @@ export class NetWorthChart {
   hover = signal<number | null>(null);
   /** The group being pointed at, in the plot or the legend; the rest recede. */
   lit = signal<AccountGroup | null>(null);
+
+  /**
+   * The span being compared, as day indices in the order they were picked:
+   * `from` is where the drag began. Forgotten whenever the days change,
+   * since an index into another range is another day.
+   */
+  pick = linkedSignal<NetWorthPoint[], { from: number; to: number } | null>({
+    source: this.points,
+    computation: () => null,
+  });
+  private dragging = false;
+  /** The plot's width in pixels, read when a span is picked: placing the card needs it. */
+  private plotWidth = signal(0);
+  private host = inject<ElementRef<HTMLElement>>(ElementRef);
 
   private values = computed(() => this.points().map((p) => Number(p.net)));
 
@@ -257,12 +283,92 @@ export class NetWorthChart {
     };
   });
 
+  /**
+   * The change from the earlier picked day to the later, or null with no span.
+   * Every figure is `later − earlier` of two server totals, so the groups add
+   * up to the net. A group absent on one side counts as zero there.
+   */
+  span = computed(() => {
+    const pick = this.pick();
+    if (!pick || pick.from === pick.to) return null;
+    const [a, b] = pick.from < pick.to ? [pick.from, pick.to] : [pick.to, pick.from];
+    const start = this.points()[a];
+    const end = this.points()[b];
+    const total = (p: NetWorthPoint, g: AccountGroup) =>
+      p.groups.find((d) => d.group === g)?.total ?? '0';
+    const groups = this.groups()
+      .filter((l) => [start, end].some((p) => p.groups.some((d) => d.group === l.key)))
+      .map((l) => ({ group: l.key, label: l.label, change: change(total(end, l.key), total(start, l.key)) }));
+    const from = Number(start.net);
+    const net = change(end.net, start.net);
+    const left = this.x(a);
+    const right = this.x(b);
+    return {
+      start,
+      end,
+      days: Math.round((local(end.as_of).getTime() - local(start.as_of).getTime()) / 86_400_000),
+      net,
+      // A ratio, not money, so a float is fine. Against a start at or below
+      // zero a percentage says nothing true, so there isn't one.
+      percent: from > 0 ? percent(Number(net) / from) : null,
+      assets: change(end.assets, start.assets),
+      liabilities: change(end.liabilities, start.liabilities),
+      groups,
+      left,
+      right,
+      ends: [a, b].map((i) => ({ left: this.x(i), top: this.y(this.values()[i]) })),
+      ...this.place(left, right),
+    };
+  });
+
+  /**
+   * Where the span's card goes: off the right edge, else off the left, else
+   * under the plot, centred on the span but kept inside the plot's width.
+   * Never on the span, and always on screen while it is picked.
+   */
+  private place(left: number, right: number): { side: 'right' | 'left' | 'below'; at: number } {
+    const width = this.plotWidth();
+    if (((100 - right) / 100) * width >= CARD_ROOM) return { side: 'right', at: right };
+    if ((left / 100) * width >= CARD_ROOM) return { side: 'left', at: left };
+    const half = width ? (CARD_ROOM / 2 / width) * 100 : 50;
+    const middle = (left + right) / 2;
+    return { side: 'below', at: Math.min(Math.max(middle, half), 100 - half) };
+  }
+
+  private measure(): void {
+    this.plotWidth.set(this.host.nativeElement.querySelector('.plot')?.clientWidth ?? 0);
+  }
+
   move(event: PointerEvent): void {
+    const i = this.dayAt(event);
+    this.hover.set(i);
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    this.lit.set(this.bandAt(i, ((event.clientY - rect.top) / rect.height) * 100));
+    if (this.dragging) this.pick.update((p) => p && { ...p, to: i });
+  }
+
+  /** Starts a span at the day under the pointer. Held, so the drag survives leaving the plot. */
+  press(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    const i = this.dayAt(event);
+    this.dragging = true;
+    this.measure();
+    this.pick.set({ from: i, to: i });
+    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+  }
+
+  /** Ends the drag. One day picked is a click, and a click clears. */
+  release(): void {
+    if (!this.dragging) return;
+    this.dragging = false;
+    const pick = this.pick();
+    if (pick && pick.from === pick.to) this.pick.set(null);
+  }
+
+  private dayAt(event: PointerEvent): number {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
     const fraction = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-    const i = Math.round(fraction * (this.points().length - 1));
-    this.hover.set(i);
-    this.lit.set(this.bandAt(i, ((event.clientY - rect.top) / rect.height) * 100));
+    return Math.round(fraction * (this.points().length - 1));
   }
 
   leave(): void {
@@ -279,6 +385,10 @@ export class NetWorthChart {
   }
 
   key(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && this.pick()) {
+      this.pick.set(null);
+      return;
+    }
     const last = this.points().length - 1;
     const i = this.hover() ?? last;
     const next =
@@ -289,11 +399,19 @@ export class NetWorthChart {
       : null;
     if (next === null) return;
     event.preventDefault();
-    this.hover.set(Math.min(last, Math.max(0, next)));
+    const to = Math.min(last, Math.max(0, next));
+    // Shift stretches a span from where the crosshair was; a plain step leaves any span be.
+    if (event.shiftKey) this.measure();
+    if (event.shiftKey) this.pick.update((p) => ({ from: p?.from ?? i, to }));
+    this.hover.set(to);
   }
 
   focus(): void {
     if (this.hover() === null) this.hover.set(this.points().length - 1);
+  }
+
+  short(iso: string): string {
+    return short(iso);
   }
 
   day(iso: string): string {
@@ -342,6 +460,12 @@ function compact(v: number): string {
   const body =
     a >= 1e6 ? `${trim(a / 1e6)}M` : a >= 1e3 ? `${trim(a / 1e3)}K` : `${Math.round(a)}`;
   return `${sign}$${body}`;
+}
+
+/** 0.0234 → "+2.3%". */
+function percent(ratio: number): string {
+  const sign = ratio > 0 ? '+' : ratio < 0 ? '−' : '';
+  return `${sign}${Math.abs(ratio * 100).toFixed(1)}%`;
 }
 
 function trim(v: number): string {

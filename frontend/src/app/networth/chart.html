@@ -9,8 +9,11 @@
     class="plot"
     tabindex="0"
     role="img"
-    aria-label="Net worth over time. Arrow keys move between days."
+    aria-label="Net worth over time. Arrow keys move between days; Shift and the arrows, or a drag, compares two."
+    (pointerdown)="press($event)"
     (pointermove)="move($event)"
+    (pointerup)="release()"
+    (pointercancel)="release()"
     (pointerleave)="leave()"
     (focus)="focus()"
     (blur)="leave()"
@@ -56,6 +59,13 @@
       <path class="line" [attr.d]="path()" />
     </svg>
 
+    @if (span(); as s) {
+      <div class="span" [style.left.%]="s.left" [style.width.%]="s.right - s.left"></div>
+      @for (e of s.ends; track $index) {
+        <div class="dot" [style.left.%]="e.left" [style.top.%]="e.top"></div>
+      }
+    }
+
     @for (m of markers(); track $index) {
       <div class="marker" [style.left.%]="m.left" [style.top.%]="m.top"></div>
     }
@@ -63,7 +73,46 @@
     @if (current(); as c) {
       <div class="crosshair" [style.left.%]="c.left"></div>
       <div class="dot" [style.left.%]="c.left" [style.top.%]="c.top"></div>
+    }
 
+    @if (span(); as s) {
+      <!-- The change across the span: the net first, then what each group put
+           in or took out. They add up. Hung off whichever side has room, or
+           under the plot when the span fills it, so it never covers the days
+           being compared and never moves the page. -->
+      <div
+        class="tooltip"
+        [class.flip]="s.side === 'left'"
+        [class.below]="s.side === 'below'"
+        [style.left.%]="s.at"
+        role="status"
+      >
+        <div class="when">
+          {{ short(s.start.as_of) }} → {{ short(s.end.as_of) }} · {{ s.days }} {{ s.days === 1 ? 'day' : 'days' }}
+          @if (s.start.estimated || s.end.estimated) { <span class="tag">rebuilt</span> }
+        </div>
+        <div class="net num" [class.up]="s.net.startsWith('+')" [class.down]="s.net.startsWith('-')">
+          {{ s.net | usd }}
+          @if (s.percent) { <span class="pct">{{ s.percent }}</span> }
+        </div>
+        <div class="split dim">
+          <span>{{ s.start.net | usd }} → {{ s.end.net | usd }}</span>
+        </div>
+        <div class="split dim">
+          <span>Assets <span class="num">{{ s.assets | usd }}</span></span>
+          <span>Owed <span class="num">{{ s.liabilities | usd }}</span></span>
+        </div>
+
+        <div class="group">
+          @for (g of s.groups; track g.group) {
+            <div class="row head" [class.lit]="lit() === g.group">
+              <span><i class="swatch" [class]="'g-' + g.group"></i>{{ g.label }}</span>
+              <span class="num">{{ g.change | usd }}</span>
+            </div>
+          }
+        </div>
+      </div>
+    } @else if (current(); as c) {
       <!-- Values lead and labels follow: the reader already knows which day
            they are on and wants the number. -->
       <div class="tooltip" [class.flip]="c.flip" [style.left.%]="c.left" role="status">

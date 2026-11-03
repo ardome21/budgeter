@@ -1,4 +1,4 @@
-import { fromCents, toCents } from './money';
+import { change, fromCents, toCents } from './money';
 
 describe('money', () => {
   it('reads what people type', () => {
@@ -19,5 +19,14 @@ describe('money', () => {
     const sum = [toCents('0.10')!, toCents('0.20')!].reduce((a, b) => a + b);
     expect(fromCents(sum)).toBe('0.30');
     expect(fromCents(-5n)).toBe('-0.05');
+  });
+
+  it('takes one day from another, signed, to as many places as either has', () => {
+    expect(change('1200.50', '1000.00')).toBe('+200.50');
+    expect(change('90.00', '100.25')).toBe('-10.25');
+    expect(change('-300.00', '-500.00')).toBe('+200.00');
+    expect(change('0.10', '0.10')).toBe('0.00');
+    expect(change('22.7034', '22.70')).toBe('+0.0034');
+    expect(change('0.30', '0.95')).toBe('-0.65');
   });
 });
